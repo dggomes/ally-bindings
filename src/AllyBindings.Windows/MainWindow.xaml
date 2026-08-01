@@ -70,7 +70,10 @@
         </Grid>
       </Border>
 
-      <TabControl x:Name="WorkspaceTabs" Grid.Column="1" SelectedIndex="0" Background="Transparent" BorderThickness="0" Padding="0">
+      <TabControl x:Name="WorkspaceTabs" Grid.Column="1" SelectedIndex="0" Background="Transparent" Foreground="White" BorderThickness="0" Padding="0">
+        <TabControl.Resources>
+          <Style TargetType="TabItem"><Setter Property="Foreground" Value="White" /></Style>
+        </TabControl.Resources>
         <TabControl.Template>
           <ControlTemplate TargetType="TabControl">
             <Border Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}">
@@ -176,7 +179,7 @@
 
             <Border Grid.Row="1" Background="{StaticResource PanelBrush}" CornerRadius="18" Padding="18" Margin="0,14">
               <Grid>
-                <Grid.ColumnDefinitions><ColumnDefinition Width="280" /><ColumnDefinition Width="*" /><ColumnDefinition Width="280" /></Grid.ColumnDefinitions>
+                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="180" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
                 <ScrollViewer VerticalScrollBarVisibility="Auto" PanningMode="VerticalOnly">
                   <ItemsControl ItemsSource="{Binding LeftBindings}">
                     <ItemsControl.ItemTemplate>

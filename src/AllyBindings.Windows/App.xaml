@@ -69,7 +69,8 @@
       <Setter Property="Padding" Value="10,7" />
       <Setter Property="Margin" Value="0,5,0,10" />
       <Setter Property="Background" Value="#111624" />
-      <Setter Property="Foreground" Value="White" />
+      <!-- The stock Windows ComboBox template renders a light field; dark text remains readable across themes. -->
+      <Setter Property="Foreground" Value="#111624" />
       <Setter Property="BorderBrush" Value="#394157" />
     </Style>
 
