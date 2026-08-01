@@ -63,11 +63,13 @@ function Invoke-RejectedHelperPeer {
         }
     }
     finally {
-        if ($process -and -not $process.HasExited) {
-            $process.Kill($true)
-            $process.WaitForExit()
+        if ($process) {
+            if (-not $process.HasExited) {
+                $process.Kill($true)
+                $process.WaitForExit()
+            }
+            $process.Dispose()
         }
-        $process?.Dispose()
         $server.Dispose()
     }
 }
