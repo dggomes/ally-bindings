@@ -85,8 +85,8 @@ public sealed class ArmouryCaptureSequenceValidatorTests
         var result = ArmouryCaptureSequenceValidator.Validate(
             ValidReports(),
             windows,
-            truncatedRecordCount: 0,
-            allReportsMatchConfirmedDevice: true,
+            captureFailureCount: 0,
+            captureScopeVerified: true,
             targetIdentityStable: true);
 
         Assert.False(result.IsConclusive);
@@ -103,8 +103,8 @@ public sealed class ArmouryCaptureSequenceValidatorTests
         var result = ArmouryCaptureSequenceValidator.Validate(
             ValidReports(),
             windows,
-            truncatedRecordCount: 0,
-            allReportsMatchConfirmedDevice: true,
+            captureFailureCount: 0,
+            captureScopeVerified: true,
             targetIdentityStable: true);
 
         Assert.True(result.IsConclusive);
@@ -121,8 +121,8 @@ public sealed class ArmouryCaptureSequenceValidatorTests
         var result = ArmouryCaptureSequenceValidator.Validate(
             reports,
             windows,
-            truncatedRecordCount: 0,
-            allReportsMatchConfirmedDevice: true,
+            captureFailureCount: 0,
+            captureScopeVerified: true,
             targetIdentityStable: true);
 
         Assert.False(result.IsConclusive);
@@ -133,26 +133,26 @@ public sealed class ArmouryCaptureSequenceValidatorTests
     [InlineData(1, true, true)]
     [InlineData(0, false, true)]
     [InlineData(0, true, false)]
-    public void Rejects_truncation_device_mismatch_or_identity_change(
-        int truncatedRecordCount,
-        bool deviceMatches,
+    public void Rejects_dropped_events_unverified_scope_or_identity_change(
+        int captureFailureCount,
+        bool captureScopeVerified,
         bool targetStable)
     {
-        var result = Validate(ValidReports(), truncatedRecordCount, deviceMatches, targetStable);
+        var result = Validate(ValidReports(), captureFailureCount, captureScopeVerified, targetStable);
 
         Assert.False(result.IsConclusive);
     }
 
     private static ArmouryCaptureSequenceValidation Validate(
         IReadOnlyList<ArmouryCaptureReportEvidence> reports,
-        int truncatedRecordCount = 0,
-        bool deviceMatches = true,
+        int captureFailureCount = 0,
+        bool captureScopeVerified = true,
         bool targetStable = true) =>
         ArmouryCaptureSequenceValidator.Validate(
             reports,
             Windows(),
-            truncatedRecordCount,
-            deviceMatches,
+            captureFailureCount,
+            captureScopeVerified,
             targetStable);
 
     private static ArmouryCaptureReportEvidence[] ValidReports() =>

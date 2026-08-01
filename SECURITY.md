@@ -35,7 +35,7 @@ You should receive an acknowledgement through GitHub. Public disclosure and rele
 - There is no account, telemetry, cloud sync or network listener.
 - Update checks use the public GitHub Releases API and HTTPS asset downloads.
 - Release asset SHA-256 verification detects corruption or mismatched downloads; releases are not yet Authenticode-signed.
-- Passive capture is an explicit operation using a separately installed USBPcap driver, filtered to one confirmed USB device address.
+- Passive capture is an explicit, temporarily elevated in-app operation using Windows' built-in USB ETW providers with `FullDataBusTrace`. Before any self-elevation, the normal process holds its exact on-disk executable open without write/delete sharing for its lifetime, closing the replacement race even in a user-writable install folder. The USB event stream is system-wide while active, but no capture driver or raw ETL/PCAP is installed or retained; only bounded metadata-decoded candidate fields are written for private review, and they cannot unlock writes or clear recovery state.
 - Capture bundles are private diagnostics and are never uploaded automatically.
 - ASUS custom and recovery writes remain source-locked pending physical protocol validation.
 

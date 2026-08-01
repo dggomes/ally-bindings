@@ -20,7 +20,7 @@ A lightweight Windows tray application that lets Daniel rotate named controller 
 - [x] Explicit hold-chord-then-RT editor activation, separate from carousel rotation.
 - [x] M1/M2 profile sources and controller-button/trigger targets.
 - [x] ASUS feature-report backend implemented behind closed custom/recovery validation gates; no M1/M2 write is enabled before physical capture analysis.
-- [x] Passive USBPcap Armoury logger with exact feature-report extraction, action markers, device-only filtering, hashes and export bundle.
+- [x] Integrated Windows USB ETW Armoury logger with bounded in-memory candidate filtering, action markers, hashes and privacy-minimised review bundle; no external driver/tool and no unlock/recovery authority before physical schema validation.
 - [x] WPF profile/shortcut editor, tray mode and opt-in sign-in startup.
 - [x] Ctrl+Alt+F12 panic/default shortcut.
 - [x] Redacted diagnostics export.

@@ -30,12 +30,32 @@ public partial class App : System.Windows.Application
     private bool _updateCheckInProgress;
     private bool _armouryCaptureInProgress;
     private bool _allowExitWithPendingRearMapping;
+    private System.IO.FileStream? _executableIntegrityLock;
 
     public AppConfiguration Configuration { get; private set; } = AppConfiguration.CreateDefault();
 
     protected override void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);
+        if (ArmouryEtwCaptureHelper.TryParseArguments(e.Args, out var etwSessionId, out var parentProcessId))
+        {
+            ShutdownMode = ShutdownMode.OnExplicitShutdown;
+            _ = RunEtwCaptureHelperAsync(etwSessionId, parentProcessId);
+            return;
+        }
+
+        var executablePath = Environment.ProcessPath
+            ?? throw new InvalidOperationException("Windows did not expose the current Ally Bindings executable path.");
+        // Keep the exact on-disk image read-only for this process lifetime. The
+        // same locked path is what ShellExecute elevates for ETW capture, closing
+        // the user-writable-directory replacement window. The updater replaces
+        // it only after this process exits and releases the handle.
+        _executableIntegrityLock = new System.IO.FileStream(
+            executablePath,
+            System.IO.FileMode.Open,
+            System.IO.FileAccess.Read,
+            System.IO.FileShare.Read);
+
         _singleInstance = new Mutex(initiallyOwned: true, @"Local\AllyBindings.SingleInstance", out var createdNew);
         if (!createdNew)
         {
@@ -50,6 +70,12 @@ public partial class App : System.Windows.Application
             e.Args.Contains("--background", StringComparer.OrdinalIgnoreCase),
             e.Args.Contains("--updated", StringComparer.OrdinalIgnoreCase),
             updateSuccessMarker);
+    }
+
+    private async Task RunEtwCaptureHelperAsync(Guid sessionId, int parentProcessId)
+    {
+        var exitCode = await ArmouryEtwCaptureHelper.RunAsync(sessionId, parentProcessId);
+        Shutdown(exitCode);
     }
 
     private async Task InitializeAsync(bool startInBackground, bool startedAfterUpdate, string? updateSuccessMarker)
@@ -489,7 +515,7 @@ public partial class App : System.Windows.Application
         _armouryCaptureInProgress = true;
         await _operationGate.WaitAsync();
         ArmouryCaptureSession? session = null;
-        var staleRecoveryMarker = _backendNeedsRestore;
+
         static void RequireCaptureStep(string message, string title)
         {
             if (Forms.MessageBox.Show(
@@ -498,29 +524,30 @@ public partial class App : System.Windows.Application
                     Forms.MessageBoxButtons.OKCancel,
                     Forms.MessageBoxIcon.Information) != Forms.DialogResult.OK)
             {
-                throw new OperationCanceledException("The capture was cancelled. Any running USBPcap process was stopped and no bundle was accepted as evidence.");
+                throw new OperationCanceledException("The capture was cancelled. The integrated ETW session was stopped and no bundle was accepted as evidence.");
             }
         }
         try
         {
             _mainWindow.SetArmouryCaptureBusy(true);
             var proceed = Forms.MessageBox.Show(
-                "This starts a passive, device-address-filtered USBPcap session. Ally Bindings will send no HID reports and its ASUS write backend is source locked.\n\n" +
-                "You will deliberately change M1/M2 three times through Armoury Crate so we can compare its exact packets. USBPcap must already be installed (normally via Wireshark); Ally Bindings will not install a kernel driver.\n\nContinue?",
+                "This starts a temporary Windows USB ETW session inside Ally Bindings. Windows will request administrator approval for the capture helper. No driver, Wireshark or USBPcap is installed, and no raw system-wide trace is written.\n\n" +
+                "You will deliberately change M1/M2 three times through Armoury Crate so we can collect candidate bus payloads for hardware review. Ally Bindings will send no HID reports, cannot clear recovery state from this capture, and its ASUS write backend remains source locked.\n\nContinue?",
                 "Capture Armoury M1/M2 protocol",
                 Forms.MessageBoxButtons.OKCancel,
                 Forms.MessageBoxIcon.Information) == Forms.DialogResult.OK;
             if (!proceed) return;
 
             _cycle.Cancel();
-            _mainWindow.SetArmouryCaptureStatus("Discovering the ASUS N-KEY USB address…");
+            _mainWindow.SetArmouryCaptureStatus("Confirming the ASUS feature-report interface…");
             var captureService = new ArmouryCaptureService();
             var target = await captureService.DiscoverTargetAsync();
             RequireCaptureStep(
-                $"Confirm this is the controller you intend to inspect:\n\nCapture device: {target.ControlDevice}\nUSB address: {target.Address}\nDescription: {string.Join(" | ", target.Descriptions)}\n\nNo capture has started yet. Click Cancel if this is not the ASUS N-KEY / ROG Ally controller.",
-                "Confirm device-only capture");
+                $"Confirm this is the ROG Ally controller you intend to inspect:\n\nModel: {target.Model}\nCompatible ASUS HID interfaces: {string.Join(" | ", target.DeviceIds)}\n\nNo ETW session has started yet. Click Cancel if this identity is unexpected.",
+                "Confirm integrated Windows capture");
             session = await captureService.StartAsync(target);
-            _mainWindow.SetArmouryCaptureStatus("Capture running. Follow the Armoury prompts; this app remains write-locked.");
+            _mainWindow.SetArmouryCaptureStatus(
+                $"Integrated ETW capture running through {string.Join(" + ", session.EnabledProviders)}. Follow the Armoury prompts; this app remains write-locked.");
 
             session.MarkAction("step-started-m1-a-m2-b");
             RequireCaptureStep(
@@ -540,30 +567,12 @@ public partial class App : System.Windows.Application
                 "Capture step 3 of 3 · Armoury defaults");
             session.MarkAction("armoury-reset-m1-m2-to-default");
 
-            RequireCaptureStep(
-                "Switch to the black USBPcap console, press q to stop cleanly, then return here and click OK. Do not close the console with X.",
-                "Stop passive capture");
             var result = await captureService.CompleteAsync(session);
             session = null;
-            if (staleRecoveryMarker && result.IsConclusive)
-            {
-                Configuration = Configuration with
-                {
-                    ActiveProfileId = MappingProfile.Default.Id,
-                    AsusRearButtonMappingActive = false,
-                };
-                _backendNeedsRestore = false;
-                await _profileStore.SaveAsync(Configuration);
-                _configurationWarnings = _configurationWarnings
-                    .Append("Cleared the stale recovery marker after the user-confirmed Armoury Reset to Default capture step; Ally Bindings sent no reset report.")
-                    .ToList();
-            }
-
             _mainWindow.SetArmouryCaptureStatus(
-                $"Capture {(result.IsConclusive ? "CONCLUSIVE" : "INCONCLUSIVE")}: {result.FeatureReportCount} report 0x5A packet(s), {result.RearMappingReportCount} structurally valid candidate(s). Bundle: {result.BundlePath}");
-            _mainWindow.SetStatus(result.IsConclusive
-                ? "Passive Armoury capture is structurally conclusive. ASUS writes remain locked pending human analysis."
-                : $"Passive Armoury capture is INCONCLUSIVE: {string.Join(" ", result.AssessmentReasons)} ASUS writes remain locked.");
+                $"Capture complete — review required: {result.FeatureReportCount} report 0x5A candidate(s), {result.RearMappingReportCount} structurally valid candidate(s). Bundle: {result.BundlePath}");
+            _mainWindow.SetStatus(
+                $"ETW candidates captured for hardware review. They cannot unlock ASUS writes or clear recovery state: {string.Join(" ", result.AssessmentReasons)}");
             Process.Start(new ProcessStartInfo
             {
                 FileName = "explorer.exe",
@@ -864,6 +873,8 @@ public partial class App : System.Windows.Application
         TryCleanup(() => _updateService?.Dispose());
         TryCleanup(() => _controllerMonitor?.Dispose());
         TryCleanup(() => _panicHotKey?.Dispose());
+        TryCleanup(() => _executableIntegrityLock?.Dispose());
+        _executableIntegrityLock = null;
         ReleaseSingleInstanceMutex();
         base.OnExit(e);
     }

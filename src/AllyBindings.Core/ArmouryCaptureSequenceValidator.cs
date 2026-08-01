@@ -32,8 +32,8 @@ internal static class ArmouryCaptureSequenceValidator
     public static ArmouryCaptureSequenceValidation Validate(
         IReadOnlyList<ArmouryCaptureReportEvidence> reports,
         IReadOnlyList<ArmouryCaptureStepWindow> windows,
-        int truncatedRecordCount,
-        bool allReportsMatchConfirmedDevice,
+        int captureFailureCount,
+        bool captureScopeVerified,
         bool targetIdentityStable)
     {
         ArgumentNullException.ThrowIfNull(reports);
@@ -99,13 +99,13 @@ internal static class ArmouryCaptureSequenceValidator
             }
         }
 
-        if (truncatedRecordCount != 0)
+        if (captureFailureCount != 0)
         {
-            reasons.Add($"The PCAP contains {truncatedRecordCount} truncated record(s).");
+            reasons.Add($"The ETW collector recorded {captureFailureCount} dropped, oversized or undecodable event(s).");
         }
-        if (!allReportsMatchConfirmedDevice)
+        if (!captureScopeVerified)
         {
-            reasons.Add("A parsed report did not match the confirmed USB device address.");
+            reasons.Add("The capture scope could not be verified as the integrated filtered USB ETW session.");
         }
         if (!targetIdentityStable)
         {

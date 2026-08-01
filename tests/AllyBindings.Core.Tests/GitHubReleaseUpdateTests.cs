@@ -31,8 +31,32 @@ public sealed class GitHubReleaseUpdateTests : IDisposable
         var candidate = GitHubReleaseUpdateSelector.Select([release], new Version(0, 1), includePrerelease: true);
 
         Assert.NotNull(candidate);
-        Assert.Equal(new Version(0, 2), candidate.Version);
+        Assert.Equal(new Version(0, 2, 0, 0), candidate.Version);
         Assert.Equal(new string('a', 64), candidate.Sha256);
+    }
+
+    [Fact]
+    public void Orders_preview_identifiers_and_stable_release_using_semver_rules()
+    {
+        var preview2 = CreateRelease("v0.2.0-preview.2", prerelease: true);
+        var stable = CreateRelease("v0.2.0", prerelease: false);
+
+        var nextPreview = GitHubReleaseUpdateSelector.Select(
+            [preview2],
+            "0.2.0-preview.1+commit.sha",
+            includePrerelease: true);
+        var stableUpgrade = GitHubReleaseUpdateSelector.Select(
+            [stable],
+            "0.2.0-preview.2",
+            includePrerelease: true);
+        var noDowngrade = GitHubReleaseUpdateSelector.Select(
+            [preview2],
+            "0.2.0",
+            includePrerelease: true);
+
+        Assert.Equal("v0.2.0-preview.2", nextPreview?.TagName);
+        Assert.Equal("v0.2.0", stableUpgrade?.TagName);
+        Assert.Null(noDowngrade);
     }
 
     [Fact]
@@ -122,6 +146,23 @@ public sealed class GitHubReleaseUpdateTests : IDisposable
         Assert.False(File.Exists(escaped));
         Assert.False(Directory.Exists(staging));
     }
+
+    private static GitHubRelease CreateRelease(string tag, bool prerelease) => new()
+    {
+        TagName = tag,
+        Name = tag,
+        Prerelease = prerelease,
+        HtmlUrl = $"https://github.com/dggomes/ally-bindings/releases/tag/{tag}",
+        Assets =
+        [
+            new GitHubReleaseAsset
+            {
+                Name = $"AllyBindings-{tag}-win-x64.zip",
+                BrowserDownloadUrl = $"https://github.com/dggomes/ally-bindings/releases/download/{tag}/AllyBindings-{tag}-win-x64.zip",
+                Digest = $"sha256:{new string('b', 64)}",
+            },
+        ],
+    };
 
     private string CreateArchive(Action<ZipArchive> populate)
     {

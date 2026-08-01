@@ -20,24 +20,23 @@ This supports a narrow direct-write backend; it does **not** make M1/M2 readable
 Implementation safety gates:
 
 1. Both custom and recovery writes are source locked until the passive Armoury capture below is reviewed.
-2. USBPcap must identify exactly one ASUS N-KEY USB address; no whole-root-hub fallback is allowed.
-3. The capture parser accepts only outbound HID class-interface `SET_REPORT(feature)` control transfers and retains the exact payload.
+2. The app must confirm the supported ROG Ally model and compatible ASUS feature-report interfaces before starting Windows USB ETW, then revalidate that identity after capture.
+3. The real-time ETW filter retains only metadata-decoded 50–64-byte binary fields containing the exact ASUS `5A D1 02 08 2C` rear-mapping prefix; zero padding is preserved, non-zero trailing bytes fail exact validation, and no raw ETL is written.
 4. Before a later build can unlock writes, Armoury's `M1=A/M2=B`, `M1=X/M2=Y`, and Reset-to-Default reports must be compared byte-for-byte with the clean-room builder.
 5. The later write path must still require exact DMI manufacturer/model, known ASUS VID/PID, an openable report `0x5A`, and mapping zone `0x08`.
 6. Standard mappings remain preview-only and are labelled as such.
 
-Known limitation: there is no proven read-back path for preserving a user's custom Armoury M1/M2 assignment. The validation run deliberately changes mappings through Armoury and finishes with Armoury's own reset. Photograph/export any custom assignments first. The capture ZIP is private diagnostic data because its raw PCAP contains traffic from the selected ASUS composite USB device.
+Known limitation: there is no proven read-back path for preserving a user's custom Armoury M1/M2 assignment. The validation run deliberately changes mappings through Armoury and finishes with Armoury's own reset. Photograph/export any custom assignments first. The ETW stream is system-wide while active; the capture ZIP is private diagnostic data containing only bounded matching candidate fields, not a raw system trace.
 
 ## Passive Armoury capture gate
 
-1. Install Wireshark's USBPcap component and reboot if requested; Ally Bindings never installs the kernel driver.
-2. Run **Capture Armoury M1/M2 protocol (passive)**.
-3. Confirm the selected USBPcap tree is the ASUS N-KEY device and no broad capture was used.
-4. Apply the three prompted Armoury states: `M1=A/M2=B`, `M1=X/M2=Y`, then Armoury Reset to Default.
-5. Press `q` in the capture console to stop cleanly.
-6. Retain the generated PCAP, extracted JSON, action markers, manifest and SHA-256 hash.
-7. Compare report setup (`21 09 5A 03`), mapping prefix (`5A D1 02 08 2C`), action ordering/slots, wire length, interface number, and default modifier bytes.
-8. Keep both write gates closed on any unexplained extra command, mismatch, truncated report, ambiguous device identity or absent reset packet.
+1. Run **Capture Armoury M1/M2 protocol (passive)**; no separate capture software is required.
+2. Confirm the displayed ROG Ally model and compatible ASUS feature-report interfaces.
+3. Accept Windows' one-time UAC prompt for the same Ally Bindings executable acting as the temporary ETW helper.
+4. Apply the three prompted Armoury states: `M1=A/M2=B`, `M1=X/M2=Y`, then Armoury Reset to Default. Capture stops automatically.
+5. Retain the filtered JSON, action markers, manifest and SHA-256 hash; verify the manifest says `rawSystemTraceWritten: false`.
+6. Compare mapping prefix (`5A D1 02 08 2C`), action ordering/slots, complete 50-byte vector plus any preserved zero padding, provider/event/field metadata and default modifier bytes.
+7. Keep both write gates closed on any unexplained extra command, mismatch, dropped/oversized event, ambiguous device identity, unavailable provider or absent reset packet.
 
 Research references:
 

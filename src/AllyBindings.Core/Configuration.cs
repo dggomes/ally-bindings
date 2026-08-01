@@ -124,8 +124,9 @@ public static partial class ConfigurationValidator
             SchemaVersion = CurrentSchemaVersion,
             ActiveProfileId = activeProfile,
             ControllerIndex = input.ControllerIndex is >= 0 and <= 3 ? input.ControllerIndex : null,
-            AsusRearButtonMappingActive =
-                input.EnableAsusRearButtonMappings && input.AsusRearButtonMappingActive,
+            // Operational recovery state, not a user preference. Disabling the
+            // feature must not erase evidence that firmware may still need reset.
+            AsusRearButtonMappingActive = input.AsusRearButtonMappingActive,
             Shortcut = new ShortcutSettings
             {
                 Buttons = shortcutButtons,

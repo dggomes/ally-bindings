@@ -32,13 +32,19 @@ dotnet publish (Join-Path $repo "src/AllyBindings.Windows/AllyBindings.Windows.c
     --output $publishDir
 Assert-NativeSuccess "dotnet publish"
 
+# Public preview packages do not ship portable symbols. They add no runtime
+# value, expose source paths, and violate the lean single-app package contract.
+Get-ChildItem -LiteralPath $publishDir -Filter '*.pdb' -File | Remove-Item -Force
+
 Copy-Item (Join-Path $repo "README.md") $publishDir
 Copy-Item (Join-Path $repo "CHANGELOG.md") $publishDir
 Copy-Item (Join-Path $repo "SECURITY.md") $publishDir
 Copy-Item (Join-Path $repo "LICENSE") $publishDir
-Copy-Item (Join-Path $repo "docs/HARDWARE-SPIKE.md") $publishDir
 Copy-Item (Join-Path $repo "THIRD-PARTY-NOTICES.md") $publishDir
+Copy-Item (Join-Path $repo "CONTRIBUTING.md") $publishDir
+Copy-Item (Join-Path $repo "docs") (Join-Path $publishDir "docs") -Recurse
 New-Item -ItemType Directory -Path (Join-Path $publishDir "LICENSES") -Force | Out-Null
-Copy-Item (Join-Path $repo "LICENSES/HidSharp-Apache-2.0.txt") (Join-Path $publishDir "LICENSES")
+Copy-Item (Join-Path $repo "LICENSES/*") (Join-Path $publishDir "LICENSES")
 Compress-Archive -Path "$publishDir/*" -DestinationPath $zipPath -CompressionLevel Optimal
+& (Join-Path $repo 'scripts/test-release-package.ps1') -PackageRoot $publishDir -ZipPath $zipPath
 Write-Output "Created $zipPath"

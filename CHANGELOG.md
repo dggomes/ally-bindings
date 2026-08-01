@@ -6,15 +6,17 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Thi
 
 ## [Unreleased]
 
+## [v0.2.0-preview.1] - 2026-08-01
+
 ### Added
 
 - M1/M2 profile fields and a clean-room ASUS rear-button report builder.
 - A source-locked ASUS backend that refuses both custom and recovery writes pending physical protocol validation.
-- A passive Armoury Crate capture workflow using device-address-filtered USBPcap traffic.
-- Exact HID `SET_REPORT(feature)` extraction with setup bytes, interface, bus/device identity, declared/captured lengths, timestamps and complete payloads.
+- A passive Armoury Crate capture workflow using Windows' built-in USB ETW providers inside Ally Bindings, with no USBPcap/Wireshark install.
+- Real-time `FullDataBusTrace` filtering that retains only bounded metadata-decoded 50–64-byte binary fields containing the ASUS rear-mapping candidate prefix, timestamps, provider/event/field metadata and report hashes; no raw ETL/PCAP is written.
 - Action-window validation for `M1=A / M2=B`, `M1=X / M2=Y`, and Armoury's Reset to Default.
-- Conclusive/inconclusive capture verdicts; missing, duplicate, extra, malformed, reordered, mismatched, out-of-window or truncated evidence fails closed.
-- Private capture bundles containing the raw PCAP, extracted JSON, manifest, action markers and SHA-256 evidence.
+- Review-required capture diagnostics; unvalidated ETW candidates cannot unlock writes or clear recovery state, and missing, duplicate, extra, malformed, reordered, mismatched, out-of-window, lost or truncated evidence fails closed.
+- Private capture bundles containing filtered JSON, manifest, action markers and SHA-256 evidence.
 - RT confirmation while the shortcut chord remains held to open the editor.
 - Automatic daily update checks and independently configurable preview-release checks.
 - Verified one-click updater with staged replacement, application/configuration backups and rollback.
@@ -32,10 +34,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Thi
 ### Security
 
 - ASUS custom and recovery writes no longer expose caller-controlled approval parameters.
-- Passive capture refuses broad root-hub collection, requires confirmation of the selected ASUS USB device address before creating a PCAP and revalidates the identity after capture.
+- Passive capture confirms the ROG Ally model and compatible ASUS HID interfaces before self-elevating the same executable for ETW, then revalidates that identity afterwards.
 - Native resets require the recovery gate explicitly; custom mappings require both custom and recovery authorization so a mapping can never be enabled without its rollback path.
-- Unexpected extra HID payload bytes are retained and cause exact-vector comparison to fail instead of being discarded.
-- USBPcap is launched through a tracked `start /wait` wrapper and a kill-on-close Windows Job Object established before capture begins.
+- Missing providers, lost/oversized/dropped ETW events, duplicate/extra report vectors and target identity changes remain review-required and cannot affect write or recovery state.
+- The temporary ETW session stops cooperatively on completion, cancellation, timeout or parent disconnect; its fixed name lets the next capture reclaim a session orphaned by a hard process crash.
 
 ## [v0.01] - 2026-08-01
 
@@ -61,3 +63,4 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Thi
 - Releases are not Authenticode-signed.
 
 [v0.01]: https://github.com/dggomes/ally-bindings/releases/tag/v0.01
+[v0.2.0-preview.1]: https://github.com/dggomes/ally-bindings/releases/tag/v0.2.0-preview.1

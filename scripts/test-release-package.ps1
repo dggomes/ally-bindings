@@ -1,0 +1,56 @@
+param(
+    [string]$PackageRoot = (Join-Path (Split-Path -Parent $PSScriptRoot) 'artifacts/AllyBindings-win-x64'),
+    [string]$ZipPath = "$PackageRoot.zip",
+    [long]$MaximumExecutableBytes = 200MB,
+    [long]$MaximumZipBytes = 80MB
+)
+
+$ErrorActionPreference = 'Stop'
+
+$required = @(
+    'AllyBindings.exe',
+    'README.md',
+    'CHANGELOG.md',
+    'SECURITY.md',
+    'LICENSE',
+    'THIRD-PARTY-NOTICES.md',
+    'CONTRIBUTING.md',
+    'docs/ARCHITECTURE.md',
+    'docs/HARDWARE-SPIKE.md',
+    'LICENSES/HidSharp-Apache-2.0.txt',
+    'LICENSES/TraceEvent-MIT.txt'
+)
+foreach ($relative in $required) {
+    $path = Join-Path $PackageRoot $relative
+    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+        throw "Release package is missing required artifact: $relative"
+    }
+}
+
+$unexpected = Get-ChildItem -LiteralPath $PackageRoot -Recurse -File | Where-Object {
+    $_.Extension -eq '.pdb' -or $_.Name -match '(?i)usbpcap|wireshark'
+}
+if ($unexpected) {
+    throw "Release package contains developer/capture dependency files: $($unexpected.FullName -join ', ')"
+}
+
+$exe = Get-Item -LiteralPath (Join-Path $PackageRoot 'AllyBindings.exe')
+if ($exe.Length -gt $MaximumExecutableBytes) {
+    throw "AllyBindings.exe is $($exe.Length) bytes, above the lean-install budget of $MaximumExecutableBytes bytes."
+}
+if (-not (Test-Path -LiteralPath $ZipPath -PathType Leaf)) {
+    throw "Release ZIP is missing: $ZipPath"
+}
+$zip = Get-Item -LiteralPath $ZipPath
+if ($zip.Length -gt $MaximumZipBytes) {
+    throw "Release ZIP is $($zip.Length) bytes, above the lean-install budget of $MaximumZipBytes bytes."
+}
+
+$notices = Get-Content -Raw -LiteralPath (Join-Path $PackageRoot 'THIRD-PARTY-NOTICES.md')
+foreach ($dependency in @('HidSharp', 'Microsoft.Diagnostics.Tracing.TraceEvent')) {
+    if ($notices.IndexOf($dependency, [StringComparison]::OrdinalIgnoreCase) -lt 0) {
+        throw "Third-party notices do not identify $dependency."
+    }
+}
+
+Write-Output "Release package validated: exe=$($exe.Length) bytes; zip=$($zip.Length) bytes; no PDB/USBPcap/Wireshark files."

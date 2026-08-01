@@ -1,27 +1,46 @@
+using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
 using System.IO.Compression;
+using System.IO.Pipes;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
-using System.Text.RegularExpressions;
 using AllyBindings.Core;
 
 namespace AllyBindings.Windows;
 
-internal sealed partial class ArmouryCaptureService
+internal sealed class ArmouryCaptureService
 {
-    private static readonly TimeSpan ToolTimeout = TimeSpan.FromSeconds(15);
     private static readonly TimeSpan CaptureStartTimeout = TimeSpan.FromSeconds(30);
-    private static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = true };
-
-    public Task<ArmouryCaptureTarget> DiscoverTargetAsync(CancellationToken cancellationToken = default)
+    private static readonly TimeSpan CaptureStopTimeout = TimeSpan.FromSeconds(30);
+    private const int MaximumPipeEnvelopeCharacters = 512 * 1024;
+    private static readonly JsonSerializerOptions JsonOptions = new()
     {
-        var toolPath = FindUsbPcapCommand()
-            ?? throw new InvalidOperationException(
-                "USBPcap is not installed. Install Wireshark with the USBPcap component, reboot if its installer asks, then retry. Ally Bindings will never install a kernel capture driver automatically.");
-        return FindTargetAsync(toolPath, cancellationToken);
+        PropertyNameCaseInsensitive = true,
+        WriteIndented = true,
+    };
+
+    public async Task<ArmouryCaptureTarget> DiscoverTargetAsync(CancellationToken cancellationToken = default)
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            throw new PlatformNotSupportedException("The integrated USB ETW logger is available only on Windows.");
+        }
+
+        var device = new AsusRearButtonHidDevice();
+        var status = await device.InitializeAsync(cancellationToken).ConfigureAwait(false);
+        if (!status.IsSupportedModel)
+        {
+            throw new InvalidOperationException(status.Message);
+        }
+        if (!status.IsAvailable || status.DeviceIds.Count == 0)
+        {
+            throw new InvalidOperationException(
+                "No compatible ASUS feature-report 0x5A interface was found. No ETW session was started.");
+        }
+        return new(status.Model, status.DeviceIds.Order(StringComparer.OrdinalIgnoreCase).ToArray());
     }
 
     public async Task<ArmouryCaptureSession> StartAsync(
@@ -29,85 +48,72 @@ internal sealed partial class ArmouryCaptureService
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(confirmedTarget);
-        var target = await FindTargetAsync(confirmedTarget.ToolPath, cancellationToken).ConfigureAwait(false);
-        if (!IsSameTarget(confirmedTarget, target))
+        var currentTarget = await DiscoverTargetAsync(cancellationToken).ConfigureAwait(false);
+        if (!IsSameTarget(confirmedTarget, currentTarget))
         {
             throw new InvalidOperationException(
-                "The selected ASUS USB device identity changed before capture began. No PCAP was created; discover and confirm the device again.");
+                "The confirmed ASUS HID identity changed before ETW capture began. No capture was started.");
         }
 
-        var toolPath = target.ToolPath;
-        var directory = CreateCaptureDirectory();
-        var enumerationPath = Path.Combine(directory, "usbpcap-selected-device.txt");
-        await File.WriteAllTextAsync(
-            enumerationPath,
-            $"Control device: {target.ControlDevice}{Environment.NewLine}" +
-            $"USB address: {target.Address}{Environment.NewLine}" +
-            $"Matched descriptions:{Environment.NewLine}- {string.Join($"{Environment.NewLine}- ", target.Descriptions)}{Environment.NewLine}",
-            cancellationToken).ConfigureAwait(false);
-
-        var pcapPath = Path.Combine(directory, "armoury-usb-device-only.pcap");
-        var scriptPath = Path.Combine(directory, "run-passive-capture.cmd");
-        var ownerReadyPath = Path.Combine(directory, "ally-bindings-owns-capture.signal");
-        await File.WriteAllTextAsync(
-            scriptPath,
-            BuildCaptureScript(toolPath, target, pcapPath, ownerReadyPath),
-            new UTF8Encoding(encoderShouldEmitUTF8Identifier: false),
-            cancellationToken).ConfigureAwait(false);
-
-        var process = Process.Start(new ProcessStartInfo
-        {
-            FileName = Environment.GetEnvironmentVariable("COMSPEC") ?? "cmd.exe",
-            Arguments = $"/d /c \"\"{scriptPath}\"\"",
-            WorkingDirectory = directory,
-            UseShellExecute = true,
-            WindowStyle = ProcessWindowStyle.Normal,
-        }) ?? throw new InvalidOperationException("Windows did not start the USBPcap capture console.");
-
-        CaptureProcessJob? processJob = null;
+        var sessionId = Guid.NewGuid();
+        var pipe = new NamedPipeServerStream(
+            ArmouryEtwCapturePipe.GetPipeName(sessionId),
+            PipeDirection.InOut,
+            1,
+            PipeTransmissionMode.Byte,
+            PipeOptions.Asynchronous | PipeOptions.CurrentUserOnly);
+        Process? helper = null;
         try
         {
-            processJob = CaptureProcessJob.Assign(process);
-            await File.WriteAllTextAsync(ownerReadyPath, "owned", cancellationToken).ConfigureAwait(false);
-            await WaitForCaptureStartAsync(process, pcapPath, cancellationToken).ConfigureAwait(false);
-            var session = new ArmouryCaptureSession(process, processJob, directory, pcapPath, target, toolPath);
+            var executable = Environment.ProcessPath
+                ?? throw new InvalidOperationException("Windows did not expose the current Ally Bindings executable path.");
+            var startInfo = new ProcessStartInfo
+            {
+                FileName = executable,
+                UseShellExecute = true,
+                Verb = "runas",
+                WindowStyle = ProcessWindowStyle.Hidden,
+            };
+            startInfo.ArgumentList.Add(ArmouryEtwCaptureHelper.HelperArgument);
+            startInfo.ArgumentList.Add(sessionId.ToString("D"));
+            startInfo.ArgumentList.Add(Environment.ProcessId.ToString(System.Globalization.CultureInfo.InvariantCulture));
+            helper = Process.Start(startInfo)
+                ?? throw new InvalidOperationException("Windows did not start the elevated in-app ETW capture helper.");
+
+            var connection = await WaitForReadyAsync(helper, pipe, cancellationToken).ConfigureAwait(false);
+            var directory = Path.Combine(
+                ArmouryEtwCapturePipe.GetCaptureRoot(),
+                $"armoury-etw-{DateTimeOffset.UtcNow:yyyyMMdd-HHmmss}-{sessionId:D}");
+            Directory.CreateDirectory(directory);
+            var session = new ArmouryCaptureSession(
+                sessionId,
+                helper,
+                pipe,
+                connection.Reader,
+                connection.Writer,
+                directory,
+                confirmedTarget,
+                connection.Ready.EnabledProviders.Select(provider => provider.Name).ToArray());
             session.MarkAction("capture-started");
             return session;
         }
+        catch (Win32Exception ex) when (ex.NativeErrorCode == 1223)
+        {
+            helper?.Dispose();
+            pipe.Dispose();
+            throw new OperationCanceledException(
+                "Windows elevation was cancelled. The temporary ETW logger was not started and no USB data was retained.",
+                ex,
+                cancellationToken);
+        }
         catch
         {
-            if (processJob is null)
+            if (helper is not null)
             {
-                try
-                {
-                    if (!process.HasExited) process.Kill(entireProcessTree: true);
-                }
-                catch
-                {
-                    // Best effort fallback when the stronger Job Object boundary could not be established.
-                }
+                StopHelper(helper);
+                helper.Dispose();
             }
-            else
-            {
-                processJob.Dispose();
-            }
-            try
-            {
-                if (!process.HasExited) process.WaitForExit(5_000);
-            }
-            catch
-            {
-                // Best effort only; termination was requested above.
-            }
-            process.Dispose();
-            try
-            {
-                Directory.Delete(directory, recursive: true);
-            }
-            catch
-            {
-                // A failed startup is never accepted as evidence. Windows may briefly retain a driver handle.
-            }
+            pipe.Dispose();
             throw;
         }
     }
@@ -117,88 +123,63 @@ internal sealed partial class ArmouryCaptureService
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(session);
-        if (!session.Process.HasExited)
+        await session.PipeWriter.WriteLineAsync("stop").ConfigureAwait(false);
+        var envelope = await ReadEnvelopeAsync(session.PipeReader, CaptureStopTimeout, cancellationToken).ConfigureAwait(false);
+        if (!envelope.Type.Equals("result", StringComparison.Ordinal) || envelope.Output is null)
         {
-            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            timeout.CancelAfter(TimeSpan.FromSeconds(30));
-            try
-            {
-                await session.Process.WaitForExitAsync(timeout.Token).ConfigureAwait(false);
-            }
-            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
-            {
-                throw new InvalidOperationException(
-                    "The capture is still running. Return to the USBPcap console and press q, then retry completion.");
-            }
+            throw new InvalidDataException(envelope.Error ?? "The in-app ETW helper returned no filtered evidence.");
         }
-        if (session.Process.ExitCode != 0)
-        {
-            throw new InvalidOperationException($"USBPcap exited with code {session.Process.ExitCode}; no capture is being claimed as valid.");
-        }
-
+        await WaitForHelperExitAsync(session.HelperProcess, cancellationToken).ConfigureAwait(false);
+        var output = envelope.Output;
         session.MarkAction("capture-stopped");
-        UsbPcapParseResult parsed;
-        await using (var stream = new FileStream(
-            session.PcapPath,
-            FileMode.Open,
-            FileAccess.Read,
-            FileShare.Read,
-            bufferSize: 64 * 1024,
-            useAsync: true))
-        {
-            parsed = UsbPcapHidFeatureReportParser.Parse(stream);
-        }
 
-        var featureReports = parsed.Reports
-            .Where(report => report.ReportId == AsusRearButtonProtocol.FeatureReportId)
-            .ToList();
-        var analyses = featureReports
+        var reports = output.Reports
             .Select((report, index) => AnalyseReport(index + 1, report))
             .ToList();
         var targetIdentityStable = await IsTargetIdentityStableAsync(session, cancellationToken).ConfigureAwait(false);
-        var assessment = AssessCapture(session, parsed, analyses, targetIdentityStable);
-        var pcapHash = await ComputeSha256Async(session.PcapPath, cancellationToken).ConfigureAwait(false);
-        var reportPath = Path.Combine(session.Directory, "feature-reports.json");
-        var manifestPath = Path.Combine(session.Directory, "manifest.json");
-        var instructionsPath = Path.Combine(session.Directory, "README.txt");
-
-        await WriteJsonAsync(reportPath, new
+        var assessment = AssessCapture(session, output, reports, targetIdentityStable);
+        var outputBytes = SerializeJson(output);
+        var evidenceHash = Convert.ToHexString(SHA256.HashData(outputBytes)).ToLowerInvariant();
+        var reportBytes = SerializeJson(new
         {
-            schemaVersion = 1,
+            schemaVersion = 3,
             actions = session.Actions,
             assessment,
-            reports = analyses,
-            parser = new
+            reports,
+            etw = new
             {
-                parsed.RecordCount,
-                parsed.TruncatedRecordCount,
-                allHidFeatureReportCount = parsed.Reports.Count,
-                report5ACount = featureReports.Count,
+                output.EnabledProviders,
+                output.ObservedEventCount,
+                output.EventsLost,
+                output.OversizedEventCount,
+                output.PayloadDecodeFailureCount,
+                output.AmbiguousCandidateCount,
+                output.DroppedMatchingReportCount,
+                retainedReportCount = reports.Count,
+                fullDataBusTraceKeyword = $"0x{ArmouryEtwCaptureHelper.FullDataTraceKeywords:X}",
+                privacy = "A system-wide USB ETW stream was filtered in memory. Only bounded candidate binary fields were retained; no raw ETL was written.",
             },
-        }, cancellationToken).ConfigureAwait(false);
-        await WriteJsonAsync(manifestPath, new
+        });
+        var manifestBytes = SerializeJson(new
         {
-            schemaVersion = 1,
+            schemaVersion = 3,
             capturedAtUtc = DateTimeOffset.UtcNow,
             applicationVersion = typeof(ArmouryCaptureService).Assembly.GetName().Version?.ToString(),
-            source = "USBPcap device-address-filtered passive capture",
-            selectedUsbDevice = new
+            source = "Windows built-in USB ETW real-time FullDataBusTrace session",
+            selectedAsusHid = session.Target,
+            evidence = new
             {
-                session.Target.ControlDevice,
-                session.Target.Address,
-                session.Target.Descriptions,
-            },
-            usbPcapVersion = FileVersionInfo.GetVersionInfo(session.ToolPath).FileVersion,
-            rawCapture = new
-            {
-                file = Path.GetFileName(session.PcapPath),
-                sha256 = pcapHash,
-                bytes = new FileInfo(session.PcapPath).Length,
+                file = ArmouryEtwCapturePipe.ResultFileName,
+                sha256 = evidenceHash,
+                bytes = outputBytes.Length,
+                rawSystemTraceWritten = false,
+                hardwareUnlockEvidence = false,
             },
             expectedProtocol = new
             {
-                hidSetup = "21 09 5A 03 <interface> <length>",
                 rearMappingPrefix = "5A D1 02 08 2C",
+                minimumReportLength = AsusRearButtonProtocol.ReportLength,
+                maximumReportLength = UsbEtwHidFeatureReportExtractor.MaximumWireReportLength,
                 expectedReportId = "5A",
             },
             writeGates = new
@@ -207,256 +188,170 @@ internal sealed partial class ArmouryCaptureService
                 recoveryWritesApproved = ArmouryProtocolValidation.RecoveryWritesApproved,
             },
             assessment,
-        }, cancellationToken).ConfigureAwait(false);
-        await File.WriteAllTextAsync(instructionsPath, BuildReadme(featureReports.Count, assessment), cancellationToken).ConfigureAwait(false);
+        });
+        var readmeBytes = Encoding.UTF8.GetBytes(BuildReadme(reports.Count, assessment));
 
-        var bundlePath = Path.Combine(session.Directory, $"ally-bindings-armoury-capture-{DateTimeOffset.UtcNow:yyyyMMdd-HHmmss}.zip");
-        CreateBundle(bundlePath, session.PcapPath, reportPath, manifestPath, instructionsPath);
+        var outputPath = Path.Combine(session.Directory, ArmouryEtwCapturePipe.ResultFileName);
+        var reportPath = Path.Combine(session.Directory, "feature-reports.json");
+        var manifestPath = Path.Combine(session.Directory, "manifest.json");
+        var instructionsPath = Path.Combine(session.Directory, "README.txt");
+        await WriteArtifactAsync(outputPath, outputBytes, cancellationToken).ConfigureAwait(false);
+        await WriteArtifactAsync(reportPath, reportBytes, cancellationToken).ConfigureAwait(false);
+        await WriteArtifactAsync(manifestPath, manifestBytes, cancellationToken).ConfigureAwait(false);
+        await WriteArtifactAsync(instructionsPath, readmeBytes, cancellationToken).ConfigureAwait(false);
+
+        var bundlePath = Path.Combine(
+            session.Directory,
+            $"ally-bindings-armoury-etw-{DateTimeOffset.UtcNow:yyyyMMdd-HHmmss}.zip");
+        CreateBundle(bundlePath,
+            (ArmouryEtwCapturePipe.ResultFileName, outputBytes),
+            ("feature-reports.json", reportBytes),
+            ("manifest.json", manifestBytes),
+            ("README.txt", readmeBytes));
         session.Dispose();
         return new(
             bundlePath,
-            session.PcapPath,
-            featureReports.Count,
-            analyses.Count(analysis => analysis.IsStructurallyValidRearMapping),
+            outputPath,
+            reports.Count,
+            reports.Count(report => report.IsStructurallyValidRearMapping),
             assessment.IsConclusive,
             assessment.Reasons,
-            pcapHash);
+            evidenceHash);
     }
 
-    private static async Task<ArmouryCaptureTarget> FindTargetAsync(
-        string toolPath,
+    private static async Task<EtwPipeConnection> WaitForReadyAsync(
+        Process helper,
+        NamedPipeServerStream pipe,
         CancellationToken cancellationToken)
     {
-        var interfaceOutput = await RunToolAsync(toolPath, ["--extcap-interfaces"], cancellationToken).ConfigureAwait(false);
-        var controlDevices = InterfaceRegex().Matches(interfaceOutput)
-            .Select(match => match.Groups["value"].Value)
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .ToList();
-        if (controlDevices.Count == 0)
-        {
-            throw new InvalidOperationException("USBPcap is installed, but it exposed no capture control devices.");
-        }
-
-        var targets = new List<ArmouryCaptureTarget>();
-        foreach (var controlDevice in controlDevices)
-        {
-            var output = await RunToolAsync(
-                toolPath,
-                ["--extcap-interface", controlDevice, "--extcap-config"],
-                cancellationToken).ConfigureAwait(false);
-            var groups = DeviceRegex().Matches(output)
-                .Select(match => new
-                {
-                    Address = ushort.Parse(match.Groups["address"].Value, System.Globalization.CultureInfo.InvariantCulture),
-                    Description = match.Groups["display"].Value,
-                })
-                .GroupBy(item => item.Address);
-            foreach (var group in groups)
-            {
-                var descriptions = group.Select(item => item.Description).Distinct().ToArray();
-                if (descriptions.Any(IsAsusNKeyDescription))
-                {
-                    targets.Add(new(toolPath, controlDevice, group.Key, descriptions));
-                }
-            }
-        }
-
-        var exactTargets = targets
-            .Where(target => target.Descriptions.Any(description =>
-                description.Contains("ASUS N-KEY", StringComparison.OrdinalIgnoreCase)))
-            .ToList();
-        if (exactTargets.Count == 1)
-        {
-            return exactTargets[0];
-        }
-        if (targets.Count == 1)
-        {
-            return targets[0];
-        }
-        if (targets.Count == 0)
-        {
-            throw new InvalidOperationException(
-                "USBPcap could not identify an ASUS N-KEY device. No broad root-hub capture was started; this is a privacy fail-closed condition.");
-        }
-        throw new InvalidOperationException(
-            $"USBPcap found {targets.Count} possible ASUS N-KEY USB devices. No capture was started because the device filter was ambiguous.");
-    }
-
-    private static bool IsAsusNKeyDescription(string description)
-    {
-        var hasAsusIdentity =
-            description.Contains("ASUS", StringComparison.OrdinalIgnoreCase) ||
-            description.Contains("ROG ALLY", StringComparison.OrdinalIgnoreCase);
-        var hasNKeyIdentity =
-            description.Contains("N-KEY", StringComparison.OrdinalIgnoreCase) ||
-            description.Contains("N KEY", StringComparison.OrdinalIgnoreCase) ||
-            description.Contains("N_KEY", StringComparison.OrdinalIgnoreCase);
-        return hasAsusIdentity && hasNKeyIdentity;
-    }
-
-    private static async Task<string> RunToolAsync(
-        string toolPath,
-        IReadOnlyList<string> arguments,
-        CancellationToken cancellationToken)
-    {
-        using var process = new Process
-        {
-            StartInfo = new ProcessStartInfo
-            {
-                FileName = toolPath,
-                UseShellExecute = false,
-                CreateNoWindow = true,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-            },
-        };
-        foreach (var argument in arguments)
-        {
-            process.StartInfo.ArgumentList.Add(argument);
-        }
-        if (!process.Start())
-        {
-            throw new InvalidOperationException("Windows did not start USBPcapCMD for device discovery.");
-        }
-        var outputTask = process.StandardOutput.ReadToEndAsync(cancellationToken);
-        var errorTask = process.StandardError.ReadToEndAsync(cancellationToken);
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        timeout.CancelAfter(ToolTimeout);
+        timeout.CancelAfter(CaptureStartTimeout);
         try
         {
-            await process.WaitForExitAsync(timeout.Token).ConfigureAwait(false);
+            var connectTask = pipe.WaitForConnectionAsync(timeout.Token);
+            var exitTask = helper.WaitForExitAsync(timeout.Token);
+            var completed = await Task.WhenAny(connectTask, exitTask).ConfigureAwait(false);
+            if (completed == exitTask)
+            {
+                await exitTask.ConfigureAwait(false);
+                throw new InvalidOperationException(
+                    $"The elevated in-app ETW helper exited before connecting (exit code {helper.ExitCode}).");
+            }
+            await connectTask.ConfigureAwait(false);
+            if (!GetNamedPipeClientProcessId(pipe.SafePipeHandle, out var clientProcessId) ||
+                clientProcessId != (uint)helper.Id)
+            {
+                throw new InvalidOperationException(
+                    "The ETW named-pipe client was not the elevated Ally Bindings helper process.");
+            }
+
+            var reader = new StreamReader(pipe, Encoding.UTF8, detectEncodingFromByteOrderMarks: false, leaveOpen: true);
+            var writer = new StreamWriter(pipe, new UTF8Encoding(false), leaveOpen: true)
+            {
+                AutoFlush = true,
+            };
+            var envelope = await ReadEnvelopeAsync(reader, CaptureStartTimeout, cancellationToken).ConfigureAwait(false);
+            if (!envelope.Type.Equals("ready", StringComparison.Ordinal) || envelope.Ready is null)
+            {
+                reader.Dispose();
+                writer.Dispose();
+                throw new InvalidOperationException(envelope.Error ?? "The in-app ETW helper did not become ready.");
+            }
+            return new(reader, writer, envelope.Ready);
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
-            process.Kill(entireProcessTree: true);
-            throw new InvalidOperationException("USBPcap device discovery timed out safely; no capture was started.");
+            StopHelper(helper);
+            throw new TimeoutException("Windows did not start the in-app USB ETW session within 30 seconds.");
         }
-        var output = await outputTask.ConfigureAwait(false);
-        var error = await errorTask.ConfigureAwait(false);
-        if (process.ExitCode != 0)
-        {
-            throw new InvalidOperationException($"USBPcap device discovery failed with code {process.ExitCode}: {error.Trim()}");
-        }
-        return output;
     }
 
-    private static async Task WaitForCaptureStartAsync(
-        Process process,
-        string pcapPath,
+    private static async Task<EtwPipeEnvelope> ReadEnvelopeAsync(
+        StreamReader reader,
+        TimeSpan timeoutDuration,
         CancellationToken cancellationToken)
     {
-        var deadline = DateTimeOffset.UtcNow + CaptureStartTimeout;
-        while (DateTimeOffset.UtcNow < deadline)
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeout.CancelAfter(timeoutDuration);
+        string? line;
+        try
         {
-            cancellationToken.ThrowIfCancellationRequested();
-            if (process.HasExited)
-            {
-                throw new InvalidOperationException($"USBPcap exited before capture began (code {process.ExitCode}).");
-            }
-            if (File.Exists(pcapPath) && new FileInfo(pcapPath).Length >= 24)
-            {
-                return;
-            }
-            await Task.Delay(250, cancellationToken).ConfigureAwait(false);
+            line = await ReadBoundedLineAsync(reader, MaximumPipeEnvelopeCharacters, timeout.Token).ConfigureAwait(false);
         }
-        throw new InvalidOperationException(
-            "USBPcap did not create a capture within 30 seconds. If a UAC prompt is open, reject it and retry when ready.");
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            throw new TimeoutException("The in-app USB ETW helper stopped responding.");
+        }
+        if (line is null)
+        {
+            throw new InvalidDataException("The in-app USB ETW helper disconnected without a result.");
+        }
+        return JsonSerializer.Deserialize<EtwPipeEnvelope>(line, JsonOptions)
+            ?? throw new InvalidDataException("The in-app USB ETW helper returned an empty message.");
     }
 
-    private static string? FindUsbPcapCommand()
+    private static async Task<string?> ReadBoundedLineAsync(
+        StreamReader reader,
+        int maximumCharacters,
+        CancellationToken cancellationToken)
     {
-        var programFiles = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles);
-        var programFilesX86 = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86);
-        var candidates = new[]
+        var result = new StringBuilder(Math.Min(maximumCharacters, 4096));
+        var buffer = new char[1024];
+        while (true)
         {
-            Path.Combine(programFiles, "USBPcap", "USBPcapCMD.exe"),
-            Path.Combine(programFiles, "Wireshark", "extcap", "USBPcapCMD.exe"),
-            Path.Combine(programFilesX86, "USBPcap", "USBPcapCMD.exe"),
-            Path.Combine(programFilesX86, "Wireshark", "extcap", "USBPcapCMD.exe"),
-        }.Where(path => !string.IsNullOrWhiteSpace(path));
-        foreach (var candidate in candidates)
-        {
-            if (File.Exists(candidate))
+            var read = await reader.ReadAsync(buffer.AsMemory(), cancellationToken).ConfigureAwait(false);
+            if (read == 0) return result.Length == 0 ? null : result.ToString();
+            for (var index = 0; index < read; index++)
             {
-                return candidate;
-            }
-        }
-
-        foreach (var directory in (Environment.GetEnvironmentVariable("PATH") ?? "")
-                     .Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
-        {
-            var candidate = Path.Combine(directory, "USBPcapCMD.exe");
-            if (File.Exists(candidate))
-            {
-                return candidate;
+                if (buffer[index] == '\n') return result.ToString().TrimEnd('\r');
+                if (result.Length == maximumCharacters)
+                {
+                    throw new InvalidDataException("The ETW helper response exceeded its maximum length.");
+                }
+                result.Append(buffer[index]);
             }
         }
-        return null;
     }
 
-    private static string CreateCaptureDirectory()
+    private static async Task WaitForHelperExitAsync(
+        Process helper,
+        CancellationToken cancellationToken)
     {
-        var root = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "AllyBindings",
-            "captures");
-        Directory.CreateDirectory(root);
-        var directory = Path.Combine(root, $"armoury-{DateTimeOffset.UtcNow:yyyyMMdd-HHmmss-fff}");
-        Directory.CreateDirectory(directory);
-        return directory;
-    }
-
-    private static string BuildCaptureScript(
-        string toolPath,
-        ArmouryCaptureTarget target,
-        string pcapPath,
-        string ownerReadyPath)
-    {
-        ValidateCmdPath(toolPath);
-        ValidateCmdPath(pcapPath);
-        ValidateCmdPath(target.ControlDevice);
-        ValidateCmdPath(ownerReadyPath);
-        return "@echo off\r\n" +
-               "title Ally Bindings - passive Armoury capture - press q to stop\r\n" +
-               "echo Passive device-only USB capture. Ally Bindings sends no controller reports.\r\n" +
-               "echo Keep this window open while following the prompts, then press q to stop.\r\n" +
-               ":wait_for_ally_bindings_owner\r\n" +
-               $"if not exist \"{ownerReadyPath}\" (\r\n" +
-               "  ping 127.0.0.1 -n 2 >nul\r\n" +
-               "  goto wait_for_ally_bindings_owner\r\n" +
-               ")\r\n" +
-               $"start \"\" /wait \"{toolPath}\" -d \"{target.ControlDevice}\" --devices {target.Address} --inject-descriptors -s 65535 -o \"{pcapPath}\"\r\n" +
-               "set \"captureExit=%ERRORLEVEL%\"\r\n" +
-               "exit /b %captureExit%\r\n";
-    }
-
-    private static void ValidateCmdPath(string value)
-    {
-        if (value.IndexOfAny(['\r', '\n', '"', '&', '|', '<', '>', '^', '!', '%']) >= 0)
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeout.CancelAfter(CaptureStopTimeout);
+        try
         {
-            throw new InvalidOperationException("A capture path contained characters that are unsafe for a Windows command script.");
+            await helper.WaitForExitAsync(timeout.Token).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            StopHelper(helper);
+            throw new TimeoutException("The in-app USB ETW helper did not stop within 30 seconds.");
+        }
+        if (helper.ExitCode != 0)
+        {
+            throw new InvalidOperationException(
+                $"The in-app USB ETW helper failed while completing capture (exit code {helper.ExitCode}).");
         }
     }
 
-    private static CapturedReportAnalysis AnalyseReport(int index, CapturedHidFeatureReport report)
+    private static CapturedReportAnalysis AnalyseReport(int index, UsbEtwFeatureReport report)
     {
-        var payload = Convert.FromHexString(report.PayloadHex);
-        var structurallyValid = report.PayloadReportIdMatches &&
-            report.LengthMatchesDeclared &&
+        var payload = report.Report;
+        var structurallyValid =
             payload.Length >= AsusRearButtonProtocol.ReportLength &&
+            payload.Length <= UsbEtwHidFeatureReportExtractor.MaximumWireReportLength &&
             payload.AsSpan().StartsWith(new byte[] { 0x5A, 0xD1, 0x02, 0x08, 0x2C });
         return new(
             index,
             report.Timestamp,
-            report.Bus,
-            report.Device,
-            report.InterfaceNumber,
-            report.DeclaredLength,
-            report.CapturedLength,
-            report.LengthMatchesDeclared,
-            report.PayloadReportIdMatches,
-            report.SetupHex,
-            report.PayloadHex,
+            report.ProviderName,
+            report.EventName,
+            report.EventId,
+            report.SourceField,
+            report.SourceOffset,
+            Convert.ToHexString(payload),
+            report.Sha256,
             structurallyValid,
             structurallyValid && AsusRearButtonProtocol.MatchesWireReport(payload, AsusRearButtonProtocol.BuildMappingReport(ControllerButton.A, ControllerButton.B)),
             structurallyValid && AsusRearButtonProtocol.MatchesWireReport(payload, AsusRearButtonProtocol.BuildMappingReport(ControllerButton.X, ControllerButton.Y)),
@@ -465,7 +360,7 @@ internal sealed partial class ArmouryCaptureService
 
     private static CaptureAssessment AssessCapture(
         ArmouryCaptureSession session,
-        UsbPcapParseResult parsed,
+        EtwCaptureOutput output,
         IReadOnlyList<CapturedReportAnalysis> reports,
         bool targetIdentityStable)
     {
@@ -494,11 +389,20 @@ internal sealed partial class ArmouryCaptureService
                 Marker("armoury-reset-m1-m2-to-default"),
                 ArmouryCaptureExpectedReport.NativeReset),
         };
+        var captureFailure =
+            output.EventsLost != 0 ||
+            output.OversizedEventCount != 0 ||
+            output.PayloadDecodeFailureCount != 0 ||
+            output.AmbiguousCandidateCount != 0 ||
+            output.DroppedMatchingReportCount != 0;
         var validation = ArmouryCaptureSequenceValidator.Validate(
             evidence,
             windows,
-            parsed.TruncatedRecordCount,
-            reports.All(report => report.Device == session.Target.Address),
+            captureFailure ? 1 : 0,
+            // Candidate payloads cannot become unlock evidence until physical
+            // Ally validation binds the Windows-build-specific ETW schema to
+            // the confirmed HID interface and SET_REPORT setup packet.
+            captureScopeVerified: false,
             targetIdentityStable);
         return new(
             validation.IsConclusive,
@@ -508,13 +412,13 @@ internal sealed partial class ArmouryCaptureService
             validation.Reasons);
     }
 
-    private static async Task<bool> IsTargetIdentityStableAsync(
+    private async Task<bool> IsTargetIdentityStableAsync(
         ArmouryCaptureSession session,
         CancellationToken cancellationToken)
     {
         try
         {
-            var current = await FindTargetAsync(session.ToolPath, cancellationToken).ConfigureAwait(false);
+            var current = await DiscoverTargetAsync(cancellationToken).ConfigureAwait(false);
             return IsSameTarget(session.Target, current);
         }
         catch
@@ -524,224 +428,190 @@ internal sealed partial class ArmouryCaptureService
     }
 
     private static bool IsSameTarget(ArmouryCaptureTarget expected, ArmouryCaptureTarget actual) =>
-        expected.Address == actual.Address &&
-        string.Equals(expected.ControlDevice, actual.ControlDevice, StringComparison.OrdinalIgnoreCase) &&
-        expected.Descriptions.Order(StringComparer.OrdinalIgnoreCase)
-            .SequenceEqual(actual.Descriptions.Order(StringComparer.OrdinalIgnoreCase), StringComparer.OrdinalIgnoreCase);
+        string.Equals(expected.Model, actual.Model, StringComparison.OrdinalIgnoreCase) &&
+        expected.DeviceIds.Order(StringComparer.OrdinalIgnoreCase)
+            .SequenceEqual(actual.DeviceIds.Order(StringComparer.OrdinalIgnoreCase), StringComparer.OrdinalIgnoreCase);
 
-    private static async Task<string> ComputeSha256Async(string path, CancellationToken cancellationToken)
+    private static void StopHelper(Process helper)
     {
-        await using var stream = File.OpenRead(path);
-        var hash = await SHA256.HashDataAsync(stream, cancellationToken).ConfigureAwait(false);
-        return Convert.ToHexString(hash).ToLowerInvariant();
+        try
+        {
+            if (!helper.HasExited && !helper.WaitForExit(5_000))
+            {
+                helper.Kill(entireProcessTree: true);
+                helper.WaitForExit(5_000);
+            }
+        }
+        catch
+        {
+            try
+            {
+                if (!helper.HasExited) helper.Kill(entireProcessTree: true);
+            }
+            catch
+            {
+                // Best effort; TraceEventSession also stops its session on helper disposal/process exit.
+            }
+        }
     }
 
-    private static async Task WriteJsonAsync(
-        string path,
-        object value,
-        CancellationToken cancellationToken) =>
-        await File.WriteAllTextAsync(
-            path,
-            JsonSerializer.Serialize(value, JsonOptions),
-            cancellationToken).ConfigureAwait(false);
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool GetNamedPipeClientProcessId(
+        Microsoft.Win32.SafeHandles.SafePipeHandle pipe,
+        out uint clientProcessId);
 
-    private static void CreateBundle(string bundlePath, params string[] files)
+    private static byte[] SerializeJson(object value) =>
+        JsonSerializer.SerializeToUtf8Bytes(value, JsonOptions);
+
+    private static async Task WriteArtifactAsync(
+        string path,
+        byte[] content,
+        CancellationToken cancellationToken)
     {
-        using var archive = ZipFile.Open(bundlePath, ZipArchiveMode.Create);
-        foreach (var file in files)
+        await using var stream = new FileStream(
+            path,
+            FileMode.CreateNew,
+            FileAccess.Write,
+            FileShare.None,
+            bufferSize: 4096,
+            useAsync: true);
+        await stream.WriteAsync(content, cancellationToken).ConfigureAwait(false);
+        await stream.FlushAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    private static void CreateBundle(
+        string bundlePath,
+        params (string Name, byte[] Content)[] artifacts)
+    {
+        using var stream = new FileStream(bundlePath, FileMode.CreateNew, FileAccess.Write, FileShare.None);
+        using var archive = new ZipArchive(stream, ZipArchiveMode.Create, leaveOpen: false);
+        foreach (var artifact in artifacts)
         {
-            archive.CreateEntryFromFile(file, Path.GetFileName(file), CompressionLevel.Optimal);
+            var entry = archive.CreateEntry(artifact.Name, CompressionLevel.Optimal);
+            using var entryStream = entry.Open();
+            entryStream.Write(artifact.Content);
         }
     }
 
     private static string BuildReadme(int reportCount, CaptureAssessment assessment) =>
-        $"Ally Bindings passive Armoury Crate capture{Environment.NewLine}" +
-        $"Extracted ASUS feature-report 0x5A count: {reportCount}{Environment.NewLine}{Environment.NewLine}" +
-        $"Assessment: {(assessment.IsConclusive ? "CONCLUSIVE" : "INCONCLUSIVE")}{Environment.NewLine}" +
-        (assessment.Reasons.Count == 0 ? string.Empty : string.Join(Environment.NewLine, assessment.Reasons.Select(reason => $"- {reason}")) + Environment.NewLine) +
-        "The capture was filtered to the selected ASUS N-KEY USB device address. It may still contain traffic from other interfaces of that one composite device, so treat the ZIP as private diagnostic data. No broad root-hub capture was used. Ally Bindings did not issue any HID write during this workflow; only Armoury Crate actions requested by the prompts changed mappings. Hardware writes remain source locked pending analysis.";
+        $"Ally Bindings integrated Windows USB ETW Armoury capture{Environment.NewLine}" +
+        $"Retained ASUS rear-mapping report candidates: {reportCount}{Environment.NewLine}{Environment.NewLine}" +
+        $"Assessment: REVIEW REQUIRED — NOT HARDWARE UNLOCK EVIDENCE{Environment.NewLine}" +
+        (assessment.Reasons.Count == 0
+            ? string.Empty
+            : string.Join(Environment.NewLine, assessment.Reasons.Select(reason => $"- {reason}")) + Environment.NewLine) +
+        "Windows' built-in USB ETW providers were consumed in real time with FullDataBusTrace. No USBPcap/Wireshark driver, raw ETL, or raw PCAP was written. The USB ETW stream is system-wide while active, but only bounded metadata-decoded binary fields containing the ASUS 5A D1 02 08 2C candidate prefix appear in this bundle. These candidates are not treated as target-device SET_REPORT proof until validated on a physical ROG Ally against the Windows-build-specific event schema. Ally Bindings sent no HID write and cannot clear recovery state from this capture. Hardware writes remain source locked.";
 
-    [GeneratedRegex(@"interface \{value=(?<value>[^}]+)\}", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
-    private static partial Regex InterfaceRegex();
-
-    [GeneratedRegex(@"value \{arg=\d+\}\{value=(?<address>\d+)(?:_\d+)?\}\{display=(?<display>[^}]*)\}", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
-    private static partial Regex DeviceRegex();
 }
 
 internal sealed class ArmouryCaptureSession(
-    Process process,
-    CaptureProcessJob processJob,
+    Guid sessionId,
+    Process helperProcess,
+    NamedPipeServerStream pipe,
+    StreamReader pipeReader,
+    StreamWriter pipeWriter,
     string directory,
-    string pcapPath,
     ArmouryCaptureTarget target,
-    string toolPath) : IDisposable
+    IReadOnlyList<string> enabledProviders) : IDisposable
 {
-    public Process Process { get; } = process;
+    private int _disposed;
+
+    public Guid SessionId { get; } = sessionId;
+    public Process HelperProcess { get; } = helperProcess;
+    public NamedPipeServerStream Pipe { get; } = pipe;
+    public StreamReader PipeReader { get; } = pipeReader;
+    public StreamWriter PipeWriter { get; } = pipeWriter;
     public string Directory { get; } = directory;
-    public string PcapPath { get; } = pcapPath;
     public ArmouryCaptureTarget Target { get; } = target;
-    public string ToolPath { get; } = toolPath;
+    public IReadOnlyList<string> EnabledProviders { get; } = enabledProviders;
     public List<CaptureActionMarker> Actions { get; } = [];
 
     public void MarkAction(string action) => Actions.Add(new(DateTimeOffset.UtcNow, action));
 
     public void Dispose()
     {
-        processJob.Dispose();
-        try
-        {
-            if (!Process.HasExited) Process.WaitForExit(5_000);
-        }
-        catch
-        {
-            // The kill-on-close job remains the authoritative lifecycle boundary.
-        }
-        Process.Dispose();
+        if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
+        TryDispose(PipeWriter);
+        TryDispose(PipeReader);
+        TryDispose(Pipe);
+        TryDispose(HelperProcess);
     }
 
     public void CancelAndDelete()
     {
-        Dispose();
         try
         {
-            System.IO.Directory.Delete(Directory, recursive: true);
+            PipeWriter.WriteLine("cancel");
+            if (!HelperProcess.HasExited && !HelperProcess.WaitForExit(5_000))
+            {
+                HelperProcess.Kill(entireProcessTree: true);
+                HelperProcess.WaitForExit(5_000);
+            }
         }
         catch
         {
-            // A cancelled capture is never bundled or accepted; Windows may briefly retain a driver handle.
-        }
-    }
-}
-
-internal sealed class CaptureProcessJob : IDisposable
-{
-    private const uint JobObjectExtendedLimitInformationClass = 9;
-    private const uint JobObjectLimitKillOnJobClose = 0x00002000;
-    private IntPtr _handle;
-
-    private CaptureProcessJob(IntPtr handle) => _handle = handle;
-
-    public static CaptureProcessJob Assign(Process process)
-    {
-        var handle = CreateJobObject(IntPtr.Zero, null);
-        if (handle == IntPtr.Zero)
-        {
-            throw new InvalidOperationException($"Windows could not create the capture lifecycle job (error {Marshal.GetLastWin32Error()}).");
-        }
-
-        var job = new CaptureProcessJob(handle);
-        var limits = new JobObjectExtendedLimitInformation
-        {
-            BasicLimitInformation = new JobObjectBasicLimitInformation
+            try
             {
-                LimitFlags = JobObjectLimitKillOnJobClose,
-            },
-        };
-        if (!SetInformationJobObject(
-                handle,
-                JobObjectExtendedLimitInformationClass,
-                ref limits,
-                (uint)Marshal.SizeOf<JobObjectExtendedLimitInformation>()) ||
-            !AssignProcessToJobObject(handle, process.Handle))
-        {
-            var error = Marshal.GetLastWin32Error();
-            job.Dispose();
-            throw new InvalidOperationException($"Windows could not bind USBPcap to the Ally Bindings lifecycle (error {error}). Capture was not started.");
+                if (!HelperProcess.HasExited) HelperProcess.Kill(entireProcessTree: true);
+            }
+            catch
+            {
+                // Best effort; cancelled evidence is never accepted.
+            }
         }
-        return job;
-    }
-
-    public void Dispose()
-    {
-        var handle = Interlocked.Exchange(ref _handle, IntPtr.Zero);
-        if (handle != IntPtr.Zero)
+        finally
         {
-            CloseHandle(handle);
+            Dispose();
+            try
+            {
+                System.IO.Directory.Delete(Directory, recursive: true);
+            }
+            catch
+            {
+                // No evidence from a cancelled capture is accepted.
+            }
         }
     }
 
-    [StructLayout(LayoutKind.Sequential)]
-    private struct JobObjectBasicLimitInformation
+    private static void TryDispose(IDisposable disposable)
     {
-        public long PerProcessUserTimeLimit;
-        public long PerJobUserTimeLimit;
-        public uint LimitFlags;
-        public UIntPtr MinimumWorkingSetSize;
-        public UIntPtr MaximumWorkingSetSize;
-        public uint ActiveProcessLimit;
-        public UIntPtr Affinity;
-        public uint PriorityClass;
-        public uint SchedulingClass;
+        try
+        {
+            disposable.Dispose();
+        }
+        catch
+        {
+            // Lifecycle cleanup is best effort; capture evidence is gated separately.
+        }
     }
-
-    [StructLayout(LayoutKind.Sequential)]
-    private struct IoCounters
-    {
-        public ulong ReadOperationCount;
-        public ulong WriteOperationCount;
-        public ulong OtherOperationCount;
-        public ulong ReadTransferCount;
-        public ulong WriteTransferCount;
-        public ulong OtherTransferCount;
-    }
-
-    [StructLayout(LayoutKind.Sequential)]
-    private struct JobObjectExtendedLimitInformation
-    {
-        public JobObjectBasicLimitInformation BasicLimitInformation;
-        public IoCounters IoInfo;
-        public UIntPtr ProcessMemoryLimit;
-        public UIntPtr JobMemoryLimit;
-        public UIntPtr PeakProcessMemoryUsed;
-        public UIntPtr PeakJobMemoryUsed;
-    }
-
-    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
-    private static extern IntPtr CreateJobObject(IntPtr jobAttributes, string? name);
-
-    [DllImport("kernel32.dll", SetLastError = true)]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    private static extern bool SetInformationJobObject(
-        IntPtr job,
-        uint informationClass,
-        ref JobObjectExtendedLimitInformation information,
-        uint informationLength);
-
-    [DllImport("kernel32.dll", SetLastError = true)]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    private static extern bool AssignProcessToJobObject(IntPtr job, IntPtr process);
-
-    [DllImport("kernel32.dll")]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    private static extern bool CloseHandle(IntPtr handle);
 }
 
-internal sealed record ArmouryCaptureTarget(
-    string ToolPath,
-    string ControlDevice,
-    ushort Address,
-    IReadOnlyList<string> Descriptions);
+internal sealed record EtwPipeConnection(
+    StreamReader Reader,
+    StreamWriter Writer,
+    EtwCaptureReady Ready);
+
+internal sealed record ArmouryCaptureTarget(string Model, IReadOnlyList<string> DeviceIds);
 internal sealed record CaptureActionMarker(DateTimeOffset TimestampUtc, string Action);
 internal sealed record ArmouryCaptureResult(
     string BundlePath,
-    string RawCapturePath,
+    string EvidencePath,
     int FeatureReportCount,
     int RearMappingReportCount,
     bool IsConclusive,
     IReadOnlyList<string> AssessmentReasons,
-    string RawCaptureSha256);
+    string EvidenceSha256);
 internal sealed record CapturedReportAnalysis(
     int Index,
     DateTimeOffset Timestamp,
-    ushort Bus,
-    ushort Device,
-    ushort InterfaceNumber,
-    ushort DeclaredLength,
-    int CapturedLength,
-    bool LengthMatchesDeclared,
-    bool PayloadReportIdMatches,
-    string SetupHex,
+    string ProviderName,
+    string EventName,
+    int EventId,
+    string SourceField,
+    int SourceOffset,
     string PayloadHex,
+    string PayloadSha256,
     bool IsStructurallyValidRearMapping,
     bool MatchesRequestedM1A_M2B,
     bool MatchesRequestedM1X_M2Y,

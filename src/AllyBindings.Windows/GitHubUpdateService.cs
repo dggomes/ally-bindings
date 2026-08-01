@@ -28,6 +28,12 @@ public sealed class GitHubUpdateService : IDisposable
     public static Version CurrentVersion =>
         Assembly.GetExecutingAssembly().GetName().Version ?? new Version(0, 0, 0);
 
+    public static string CurrentSemanticVersion =>
+        Assembly.GetExecutingAssembly()
+            .GetCustomAttribute<AssemblyInformationalVersionAttribute>()?
+            .InformationalVersion.Split('+', 2)[0]
+        ?? CurrentVersion.ToString(3);
+
     public async Task<UpdateCandidate?> CheckAsync(bool includePrerelease, CancellationToken cancellationToken = default)
     {
         ThrowIfDisposed();
@@ -38,7 +44,7 @@ public sealed class GitHubUpdateService : IDisposable
             stream,
             new JsonSerializerOptions { PropertyNameCaseInsensitive = true },
             cancellationToken) ?? [];
-        return GitHubReleaseUpdateSelector.Select(releases, CurrentVersion, includePrerelease, ReleaseRepository);
+        return GitHubReleaseUpdateSelector.Select(releases, CurrentSemanticVersion, includePrerelease, ReleaseRepository);
     }
 
     public async Task<PreparedUpdate> DownloadAndPrepareAsync(

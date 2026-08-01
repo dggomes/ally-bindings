@@ -40,18 +40,24 @@ jobs:
       - name: Publish self-contained x64 app
         shell: pwsh
         run: ./scripts/package.ps1 -SkipTests
+      - name: Enforce release package contents and size budget
+        shell: pwsh
+        run: ./scripts/test-release-package.ps1
       - name: Exercise updater replacement and startup handshake
         shell: powershell
         run: ./scripts/test-updater-installer.ps1 -PackageRoot artifacts/AllyBindings-win-x64 -RepositoryRoot $PWD
       - name: Exercise updater config and binary rollback
         shell: powershell
         run: ./scripts/test-updater-rollback.ps1 -RepositoryRoot $PWD
-      - name: Assert passive capture cannot write or capture a whole root hub
+      - name: Assert integrated capture write-lock and privacy boundaries
         shell: powershell
         run: ./scripts/test-capture-safety.ps1
+      - name: Verify required Windows USB ETW providers and FullDataBusTrace
+        shell: pwsh
+        run: ./scripts/test-etw-provider.ps1
       - name: Validate changelog release-note extraction
         shell: pwsh
-        run: ./scripts/get-release-notes.ps1 -Tag v0.01 -OutputPath artifacts/release-notes-test.md
+        run: ./scripts/get-release-notes.ps1 -Tag v0.2.0-preview.1 -OutputPath artifacts/release-notes-test.md
       - uses: actions/upload-artifact@v4
         with:
           name: AllyBindings-win-x64

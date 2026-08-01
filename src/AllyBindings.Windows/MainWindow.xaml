@@ -101,11 +101,11 @@
               <CheckBox IsChecked="{Binding EnableAsusRearButtonMappings}" IsEnabled="{Binding CanEnableAsusRearButtonMappings}" Margin="0,0,0,5">
                 <TextBlock Text="Enable ASUS M1/M2 hardware mappings (locked pending capture analysis)" TextWrapping="Wrap" />
               </CheckBox>
-              <TextBlock Text="Ally Bindings cannot write M1/M2 in this build. The passive logger below captures Armoury Crate's exact reports first; only a later validated build can unlock writes. Standard buttons remain preview-only."
+              <TextBlock Text="Ally Bindings cannot write M1/M2 in this build. The integrated logger below uses Windows USB ETW and retains only matching ASUS rear-mapping events; it installs no driver and writes no raw system-wide trace. Only a later validated build can unlock writes. Standard buttons remain preview-only."
                          Foreground="#F3B75B" TextWrapping="Wrap" Margin="24,0,0,12" />
-              <TextBlock x:Name="ArmouryCaptureStatusText" Text="No Armoury protocol capture has been run. USBPcap is required and is never installed automatically."
+              <TextBlock x:Name="ArmouryCaptureStatusText" Text="No Armoury protocol capture has been run. Windows will request one-time administrator approval when capture starts; no separate capture software is required."
                          Foreground="{StaticResource MutedBrush}" TextWrapping="Wrap" Margin="24,0,0,8" />
-              <Button x:Name="ArmouryCaptureButton" Content="Capture Armoury M1/M2 protocol (passive)" Click="CaptureArmouryProtocol_Click" HorizontalAlignment="Left" Margin="24,0,0,14" />
+              <Button x:Name="ArmouryCaptureButton" Content="Capture Armoury M1/M2 protocol with Windows ETW (UAC)" Click="CaptureArmouryProtocol_Click" HorizontalAlignment="Left" Margin="24,0,0,14" />
               <CheckBox IsChecked="{Binding RunAtStartup}" Margin="0,0,0,12">
                 <TextBlock Text="Run in the tray when I sign in (required for the controller shortcut before opening the window)" TextWrapping="Wrap" />
               </CheckBox>

@@ -59,7 +59,7 @@ Windows 10 2004+ WPF host:
 - View + Menu default chord with hold/release/debounce gating.
 - Non-activating, always-on-top profile overlay.
 - RT confirmation while the configured chord remains held to open the editor.
-- Device-address-filtered USBPcap logger and parser for Armoury M1/M2 feature reports.
+- Integrated, temporarily elevated Windows USB ETW logger with an in-memory exact-prefix filter for Armoury M1/M2 feature reports.
 - Positively gated ASUS HID adapter whose custom and reset writes are source-disabled pending capture analysis.
 - Tray icon, startup registration and Ctrl+Alt+F12 panic/default hotkey.
 - Profile/shortcut editor and truthful backend state.
@@ -129,10 +129,11 @@ Backend results distinguish a selected app profile from a mapping physically app
 - Both primary and secondary paddle slots receive the selected action to avoid retaining a stale Armoury secondary action.
 - `CustomWritesApproved` and `RecoveryWritesApproved` are both `false`; profile, panic, exit and stale-marker paths therefore send no ASUS report.
 - Native reset authorization depends only on `RecoveryWritesApproved`; custom mappings require both validation gates so they cannot be enabled without an approved recovery path.
-- The passive logger enumerates USBPcap interfaces, accepts exactly one ASUS N-KEY address, obtains explicit confirmation before creating a PCAP, invokes `USBPcapCMD --devices <address>` through a tracked `start /wait` wrapper, and revalidates the same device identity after capture.
-- The parser accepts only outbound HID class-interface `SET_REPORT(feature)` control transfers and retains complete captured payloads alongside declared/captured lengths. Exact matches require report-ID, length, prefix and complete wire-vector agreement.
-- A capture is conclusive only when exactly one correct report appears in each bounded action window and there are no duplicate, extra, malformed, mismatched, out-of-window or truncated ASUS report records; every other result is labelled inconclusive and cannot become unlock evidence.
-- The raw PCAP and extracted report JSON are hashed and bundled locally. Device ambiguity fails closed; broad root-hub capture is forbidden.
+- The passive logger confirms the supported ROG Ally model plus compatible ASUS HID feature-report interfaces, obtains explicit confirmation, self-elevates the same executable, enables UCX/USBXHCI/USBHUB3 with `FullDataBusTrace`, and revalidates the identity after capture.
+- The system-wide ETW stream is filtered in memory. The callback retains only bounded metadata-decoded binary fields beginning `5A D1 02 08 2C`, with provider/event metadata and a per-candidate SHA-256; it never writes a broad trace.
+- Sequence matching is diagnostic only. Every capture remains review-required and cannot unlock writes or clear recovery state until physical Ally validation binds the Windows-build-specific ETW schema, selected interface, control-transfer setup packet and payload boundary.
+- Filtered report JSON is hashed and bundled locally. No raw ETL/PCAP is created. Missing providers, oversized/dropped events, device ambiguity and target-identity changes fail closed.
+- The helper uses a fixed ETW session name so a later run reclaims any logger orphaned by an uncatchable hard process termination; normal cancellation and parent disconnect stop cooperatively.
 - No physical controller is hidden and no virtual output is created by this backend.
 
 A real backend must additionally stream normalized input through `MappingEngine`, produce exactly one virtual Xbox device and prove fail-open recovery. No physical-device hide action belongs in the generic UI/core layer.
@@ -145,7 +146,7 @@ A real backend must additionally stream normalized input through `MappingEngine`
 4. Ctrl+Alt+F12 does not depend on the controller chord/profile.
 5. Disconnect cancels uncommitted selections.
 6. Startup registration is per-user, opt-in and removable.
-7. Launching the app installs no driver and requires no elevation; an explicit passive capture requires a separately installed USBPcap driver and its UAC prompt.
+7. Launching the app installs no driver and requires no elevation; explicit passive capture requests one-time elevation for the same executable's temporary ETW helper and installs nothing.
 8. Normal diagnostics contain status/config metadata, not controller input history. Capture bundles are separate private artifacts created only on explicit request.
 9. No code injection, Armoury database mutation, macros or network service.
 10. No custom or recovery M1/M2 report can be emitted while either source-level validation gate is closed.

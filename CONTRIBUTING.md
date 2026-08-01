@@ -25,7 +25,7 @@ dotnet test AllyBindings.sln --configuration Release
 ./scripts/package.ps1
 ```
 
-Core tests run on Windows, macOS and Linux. The WPF application can be cross-compiled with Windows targeting enabled, but packaging, update/rollback and USBPcap lifecycle behavior must be verified on Windows.
+Core tests run on Windows, macOS and Linux. The WPF application can be cross-compiled with Windows targeting enabled, but packaging, update/rollback and integrated USB ETW lifecycle behavior must be verified on Windows.
 
 ## Pull requests
 
@@ -47,8 +47,8 @@ dotnet test AllyBindings.sln --configuration Release
 
 ## Safety rules
 
-- Capture paths must remain passive and device-address filtered.
-- Never silently fall back to whole-root-hub USB capture.
+- Capture paths must remain passive and filter event data in memory to the exact ASUS rear-mapping report shape.
+- Never persist a broad USB ETW trace or unrelated USB event payload.
 - Never inject into Armoury Crate, Xbox or games.
 - Never mutate Armoury databases.
 - Never install a driver automatically.

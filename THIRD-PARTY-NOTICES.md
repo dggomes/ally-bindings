@@ -10,3 +10,14 @@ Ally Bindings uses [HidSharp](https://software.seekye.com/hidsharp) for access t
 - Full bundled license: [`LICENSES/HidSharp-Apache-2.0.txt`](LICENSES/HidSharp-Apache-2.0.txt)
 
 The self-contained package includes HidSharp's compiled assembly. No G-Helper, Handheld Companion, or ROGueENEMY source code is included; those projects were used as independent protocol-research references listed in `docs/HARDWARE-SPIKE.md`.
+
+## Microsoft.Diagnostics.Tracing.TraceEvent 3.2.5
+
+Ally Bindings uses [TraceEvent](https://www.nuget.org/packages/Microsoft.Diagnostics.Tracing.TraceEvent/3.2.5) to consume Windows' built-in USB ETW providers in real time without installing a capture driver.
+
+- Copyright: .NET Foundation and contributors
+- License: MIT
+- Source: <https://github.com/microsoft/perfview>
+- Full bundled license: [`LICENSES/TraceEvent-MIT.txt`](LICENSES/TraceEvent-MIT.txt)
+
+TraceEvent's Microsoft .NET transitive dependencies are also distributed under MIT-compatible .NET Foundation licences. They provide ETW/event decoding, JSON, immutable collections, pipes, logging abstractions and Windows security APIs; Ally Bindings does not use them for telemetry or upload capture data.

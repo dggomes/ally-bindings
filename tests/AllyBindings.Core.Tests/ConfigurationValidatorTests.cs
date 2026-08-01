@@ -109,7 +109,7 @@ public sealed class ConfigurationValidatorTests
     }
 
     [Fact]
-    public void Recovery_marker_is_cleared_when_hardware_opt_in_is_off()
+    public void Recovery_marker_survives_when_hardware_opt_in_is_off()
     {
         var result = ConfigurationValidator.Normalize(new AppConfiguration
         {
@@ -117,6 +117,6 @@ public sealed class ConfigurationValidatorTests
             AsusRearButtonMappingActive = true,
         });
 
-        Assert.False(result.Configuration.AsusRearButtonMappingActive);
+        Assert.True(result.Configuration.AsusRearButtonMappingActive);
     }
 }

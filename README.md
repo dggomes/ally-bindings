@@ -9,7 +9,7 @@ A lightweight, local-first Windows controller-profile selector for Xbox Remote P
 
 Ally Bindings lets you save named mappings, rotate them from the controller, and see the pending choice in a small overlay. It is intentionally conservative: the current public build exercises the complete profile-selection experience without hiding the physical controller, creating a virtual controller, or writing unvalidated ASUS controller settings.
 
-> **Project status: preview.** The latest published release is `v0.01`. Standard-button remapping is preview-only, and M1/M2 writes are locked until a passive Armoury Crate capture has been reviewed on physical hardware. See [Current capabilities](#current-capabilities) before installing.
+> **Project status: preview.** This source tree targets `v0.2.0-preview.1`. Standard-button remapping is preview-only, and M1/M2 writes are locked until passive Armoury Crate capture data has been reviewed on physical hardware. See [Current capabilities](#current-capabilities) before installing.
 
 Ally Bindings is an independent project and is not affiliated with ASUS, ROG, Microsoft or Xbox.
 
@@ -47,7 +47,7 @@ Selecting a profile currently updates Ally Bindings' state and UX. It does **not
 - Windows 11 x64. Windows 10 2004+ is the build target, but the physical validation target is Windows 11 on the ROG Xbox Ally X.
 - An XInput-compatible controller; the built-in Ally X controller is the intended target.
 - No administrator rights for normal launch.
-- Optional passive protocol capture: separately installed, signed [USBPcap 1.5.4.0](https://github.com/desowin/usbpcap/releases/tag/1.5.4.0), followed by a reboot. Capture elevation is requested by USBPcap, not by normal Ally Bindings use.
+- Optional passive protocol capture uses Windows' built-in USB ETW providers. It installs no driver or separate application; Windows requests one-time elevation only while the in-app capture helper is active.
 
 ## Install
 
@@ -92,32 +92,30 @@ Face-button-only chords such as `A + B` are supported but discouraged while the 
 
 ## Passive Armoury protocol capture
 
-The next release includes a deliberately passive logger for proving what Armoury Crate sends when changing M1/M2 assignments. This must happen **before** Ally Bindings enables any ASUS controller-setting write.
+This preview includes a deliberately passive logger for investigating what Armoury Crate sends when changing M1/M2 assignments. This must happen **before** Ally Bindings enables any ASUS controller-setting write.
 
 The logger:
 
-- discovers exactly one ASUS N-KEY / ROG Ally USB device address;
-- asks the user to confirm it before any PCAP is created and revalidates the same identity after capture;
-- invokes USBPcap with `--devices <address>` and refuses whole-root-hub capture;
-- binds the capture process tree to a Windows kill-on-close job before USBPcap is allowed to start;
-- extracts outbound HID `SET_REPORT(feature)` payloads without truncating unexpected bytes;
+- confirms the supported ROG Ally model and compatible ASUS feature-report interfaces before any ETW session starts, then revalidates that identity afterwards;
+- self-elevates the same Ally Bindings executable for the temporary ETW session—there is no second app, installed service or capture driver;
+- consumes Windows' `Microsoft-Windows-USB-UCX`, `Microsoft-Windows-USB-USBXHCI`, and `Microsoft-Windows-USB-USBHUB3` providers in real time with `FullDataBusTrace`;
+- never writes a raw ETL/PCAP; the USB stream is system-wide while active, but only bounded metadata-decoded 50–64-byte binary fields containing the `5A D1 02 08 2C` candidate prefix are retained;
 - records action windows for `M1=A / M2=B`, `M1=X / M2=Y`, and Armoury's Reset to Default;
-- requires exactly one expected report in each bounded action window and labels missing, duplicate, extra, malformed, mismatched, reordered, out-of-window or truncated evidence **INCONCLUSIVE**;
-- keeps custom and recovery writes source-locked regardless of the capture verdict;
+- records sequence diagnostics but labels every capture **REVIEW REQUIRED** until physical Ally validation binds the Windows-build-specific event schema to the confirmed HID interface and outbound feature `SET_REPORT`;
+- keeps custom and recovery writes source-locked and never clears recovery state from a capture;
 - requires recovery authorization before custom mappings can ever be enabled, while reset writes still require the recovery gate explicitly;
-- creates a ZIP with the raw PCAP, extracted JSON, manifest and SHA-256 hash.
+- creates a ZIP with the filtered evidence JSON, action markers, manifest and SHA-256 hash.
 
 ### One-time capture procedure
 
 1. Photograph or export any custom Armoury M1/M2 assignments.
-2. Install the signed [USBPcap 1.5.4.0 release](https://github.com/desowin/usbpcap/releases/tag/1.5.4.0) and reboot if requested. Do not disable Windows security controls or use test-signing mode.
-3. In Ally Bindings, open **Safety & diagnostics** and choose **Capture Armoury M1/M2 protocol (passive)**.
-4. Accept USBPcap's UAC prompt and verify the displayed device is the ASUS N-KEY / ROG Ally controller.
-5. Follow the prompts to apply `M1=A / M2=B`, then `M1=X / M2=Y`, then Armoury's **Reset to Default**.
-6. Press `q` in the black USBPcap console to stop cleanly.
-7. Keep the generated ZIP under `%LOCALAPPDATA%\AllyBindings\captures\` and share it only deliberately.
+2. In Ally Bindings, open **Safety & diagnostics** and choose **Capture Armoury M1/M2 protocol with Windows ETW (UAC)**.
+3. Confirm the displayed ROG Ally model and compatible ASUS HID interfaces.
+4. Accept Windows' one-time UAC prompt for Ally Bindings' integrated ETW helper.
+5. Follow the prompts to apply `M1=A / M2=B`, then `M1=X / M2=Y`, then Armoury's **Reset to Default**. The helper stops automatically.
+6. Keep the generated ZIP under `%LOCALAPPDATA%\AllyBindings\captures\` and share it only deliberately.
 
-The PCAP is filtered to one composite USB device, but it may still contain traffic from other interfaces on that device. Treat the bundle as **private diagnostic data**. No verdict automatically unlocks writes; the capture requires human review and a later source change.
+The app never writes the broad ETW stream to disk. It keeps only bounded ASUS report candidates, but the bundle still records controller configuration bytes and should be treated as **private diagnostic data**. No verdict automatically unlocks writes; the capture requires human review and a later source change.
 
 More detail: [hardware validation runbook](docs/HARDWARE-SPIKE.md).
 
@@ -142,7 +140,7 @@ The updater protects against corruption and mismatched downloads. Until releases
 - The permanent Default profile cannot be edited or deleted.
 - `Ctrl+Alt+F12` provides a keyboard recovery/default path.
 - The current build sends no custom or recovery ASUS M1/M2 report.
-- Passive capture fails closed on device ambiguity and never falls back to a broad USB root-hub capture.
+- Passive capture fails closed on device ambiguity, unavailable ETW providers, dropped events or target-identity changes; no raw system-wide trace is written.
 - Normal diagnostics contain configuration/status metadata, not input history. Capture bundles are separate, explicit private artifacts.
 
 Please report security concerns privately using the process in [SECURITY.md](SECURITY.md), not a public issue.
@@ -164,11 +162,11 @@ Core tests also run on macOS and Linux:
 dotnet test tests/AllyBindings.Core.Tests/AllyBindings.Core.Tests.csproj -c Release
 ```
 
-The WPF app can be cross-compiled with Windows targeting enabled, but Windows packaging, updater rollback and USBPcap lifecycle checks must pass on a Windows runner.
+The WPF app can be cross-compiled with Windows targeting enabled, but Windows packaging, updater rollback and integrated ETW lifecycle checks must pass on a Windows runner.
 
 ## Repository map
 
-- `src/AllyBindings.Core` — profile/configuration model, persistence, mapping engine, backend contracts, carousel state machine and USBPcap parser.
+- `src/AllyBindings.Core` — profile/configuration model, persistence, mapping engine, backend contracts, carousel state machine and privacy-filtered ETW payload extractor.
 - `src/AllyBindings.Windows` — WPF UI, tray, overlay, XInput polling, startup registration, updater and passive capture orchestration.
 - `tests/AllyBindings.Core.Tests` — deterministic core and protocol-parser tests.
 - `docs/ARCHITECTURE.md` — boundaries, data flow and safety invariants.
