@@ -1,0 +1,52 @@
+name: build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  core:
+    name: Core tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+      - run: dotnet test tests/AllyBindings.Core.Tests/AllyBindings.Core.Tests.csproj --configuration Release --logger "trx;LogFileName=core.trx"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: core-test-results
+          path: tests/AllyBindings.Core.Tests/TestResults/
+
+  windows:
+    name: Windows build and package
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+      - name: Restore
+        run: dotnet restore AllyBindings.sln
+      - name: Test
+        run: dotnet test AllyBindings.sln --no-restore --configuration Release --logger "trx;LogFileName=windows.trx"
+      - name: Publish self-contained x64 app
+        shell: pwsh
+        run: ./scripts/package.ps1 -SkipTests
+      - uses: actions/upload-artifact@v4
+        with:
+          name: AllyBindings-win-x64
+          path: artifacts/AllyBindings-win-x64.zip
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: windows-test-results
+          path: "**/TestResults/*.trx"

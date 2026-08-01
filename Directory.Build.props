@@ -1,0 +1,10 @@
+<Project>
+  <PropertyGroup>
+    <Version>0.1.0-preview.1</Version>
+    <Authors>Daniel Gomes</Authors>
+    <Product>Ally Bindings</Product>
+    <RepositoryUrl>https://github.com/dggomes/ally-bindings</RepositoryUrl>
+    <Deterministic>true</Deterministic>
+    <ContinuousIntegrationBuild Condition="'$(CI)' == 'true'">true</ContinuousIntegrationBuild>
+  </PropertyGroup>
+</Project>

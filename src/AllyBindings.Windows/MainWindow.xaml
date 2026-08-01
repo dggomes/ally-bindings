@@ -1,0 +1,119 @@
+<Window x:Class="AllyBindings.Windows.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Ally Bindings" Width="1040" Height="720" MinWidth="900" MinHeight="620"
+        Background="{StaticResource SurfaceBrush}" Foreground="White"
+        WindowStartupLocation="CenterScreen">
+  <Grid Margin="24">
+    <Grid.RowDefinitions>
+      <RowDefinition Height="Auto" />
+      <RowDefinition Height="*" />
+      <RowDefinition Height="Auto" />
+    </Grid.RowDefinitions>
+
+    <Grid Grid.Row="0" Margin="0,0,0,20">
+      <Grid.ColumnDefinitions><ColumnDefinition /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+      <StackPanel>
+        <TextBlock Text="Ally Bindings" FontSize="30" FontWeight="SemiBold" />
+        <TextBlock Text="Per-game controller layouts for Xbox Remote Play" Foreground="{StaticResource MutedBrush}" Margin="0,4,0,0" />
+      </StackPanel>
+      <Border Grid.Column="1" Background="{StaticResource PanelBrush}" CornerRadius="12" Padding="14,9">
+        <StackPanel Orientation="Horizontal">
+          <Ellipse x:Name="ControllerDot" Width="9" Height="9" Fill="#ECA94D" Margin="0,0,8,0" />
+          <TextBlock x:Name="ControllerStatusText" Text="Looking for controller…" VerticalAlignment="Center" />
+        </StackPanel>
+      </Border>
+    </Grid>
+
+    <Grid Grid.Row="1">
+      <Grid.ColumnDefinitions>
+        <ColumnDefinition Width="260" />
+        <ColumnDefinition Width="18" />
+        <ColumnDefinition Width="*" />
+      </Grid.ColumnDefinitions>
+
+      <Border Grid.Column="0" Background="{StaticResource PanelBrush}" CornerRadius="16" Padding="14">
+        <Grid>
+          <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
+          <TextBlock Text="Profiles" FontSize="17" FontWeight="SemiBold" Margin="6,3,0,12" />
+          <ListBox x:Name="ProfilesList" Grid.Row="1" ItemsSource="{Binding Profiles}"
+                   SelectedItem="{Binding SelectedProfile}" DisplayMemberPath="Name"
+                   Background="Transparent" Foreground="White" BorderThickness="0" />
+          <StackPanel Grid.Row="2" Orientation="Horizontal" Margin="0,12,0,0">
+            <Button Content="Add" Click="AddProfile_Click" />
+            <Button Content="Delete" Click="DeleteProfile_Click" />
+          </StackPanel>
+        </Grid>
+      </Border>
+
+      <ScrollViewer Grid.Column="2" VerticalScrollBarVisibility="Auto">
+        <StackPanel>
+          <Border Background="{StaticResource PanelBrush}" CornerRadius="16" Padding="20" Margin="0,0,0,14">
+            <StackPanel>
+              <TextBlock Text="Selected profile" FontSize="17" FontWeight="SemiBold" />
+              <TextBlock Text="Name" Foreground="{StaticResource MutedBrush}" Margin="0,14,0,0" />
+              <TextBox Text="{Binding SelectedProfile.Name, UpdateSourceTrigger=PropertyChanged}" IsEnabled="{Binding CanEditSelected}" />
+              <CheckBox Content="Include in controller rotation" IsChecked="{Binding SelectedProfile.Enabled}" IsEnabled="{Binding CanEditSelected}" Margin="0,0,0,12" />
+              <DataGrid ItemsSource="{Binding SelectedProfile.Bindings}" IsEnabled="{Binding CanEditSelected}" AutoGenerateColumns="False" CanUserAddRows="False"
+                        HeadersVisibility="Column" Height="235" Background="#15161E" Foreground="White"
+                        RowBackground="#15161E" AlternatingRowBackground="#1C1E28" BorderThickness="0">
+                <DataGrid.Columns>
+                  <DataGridTextColumn Header="Physical button" Binding="{Binding Source}" IsReadOnly="True" Width="*" />
+                  <DataGridTemplateColumn Header="Output button" Width="*">
+                    <DataGridTemplateColumn.CellTemplate>
+                      <DataTemplate>
+                        <ComboBox ItemsSource="{Binding DataContext.ButtonOptions, RelativeSource={RelativeSource AncestorType=Window}}"
+                                  SelectedItem="{Binding Target, UpdateSourceTrigger=PropertyChanged}" Margin="2" />
+                      </DataTemplate>
+                    </DataGridTemplateColumn.CellTemplate>
+                  </DataGridTemplateColumn>
+                </DataGrid.Columns>
+              </DataGrid>
+              <StackPanel Orientation="Horizontal" Margin="0,14,0,0">
+                <Button Content="Save changes" Click="Save_Click" />
+                <Button Content="Select profile" Click="Apply_Click" />
+              </StackPanel>
+            </StackPanel>
+          </Border>
+
+          <Border Background="{StaticResource PanelBrush}" CornerRadius="16" Padding="20" Margin="0,0,0,14">
+            <StackPanel>
+              <TextBlock Text="Controller shortcut" FontSize="17" FontWeight="SemiBold" />
+              <TextBlock Text="Hold the chord to show the next profile. Release and repeat to rotate; stop to commit." Foreground="{StaticResource MutedBrush}" TextWrapping="Wrap" Margin="0,5,0,12" />
+              <Grid>
+                <Grid.ColumnDefinitions><ColumnDefinition /><ColumnDefinition Width="14" /><ColumnDefinition /></Grid.ColumnDefinitions>
+                <StackPanel><TextBlock Text="Button 1" Foreground="{StaticResource MutedBrush}" /><ComboBox ItemsSource="{Binding ButtonOptions}" SelectedItem="{Binding ShortcutButton1}" /></StackPanel>
+                <StackPanel Grid.Column="2"><TextBlock Text="Button 2" Foreground="{StaticResource MutedBrush}" /><ComboBox ItemsSource="{Binding ButtonOptions}" SelectedItem="{Binding ShortcutButton2}" /></StackPanel>
+              </Grid>
+              <Grid>
+                <Grid.ColumnDefinitions><ColumnDefinition /><ColumnDefinition Width="14" /><ColumnDefinition /></Grid.ColumnDefinitions>
+                <StackPanel><TextBlock Text="Hold time (ms)" Foreground="{StaticResource MutedBrush}" /><TextBox Text="{Binding HoldMilliseconds}" /></StackPanel>
+                <StackPanel Grid.Column="2"><TextBlock Text="Commit delay (ms)" Foreground="{StaticResource MutedBrush}" /><TextBox Text="{Binding CommitDelayMilliseconds}" /></StackPanel>
+              </Grid>
+              <TextBlock x:Name="ShortcutWarningText" Foreground="#F3B75B" TextWrapping="Wrap" />
+            </StackPanel>
+          </Border>
+
+          <Border Background="{StaticResource PanelBrush}" CornerRadius="16" Padding="20">
+            <StackPanel>
+              <TextBlock Text="Safety &amp; diagnostics" FontSize="17" FontWeight="SemiBold" />
+              <TextBlock x:Name="BackendStatusText" Foreground="{StaticResource MutedBrush}" TextWrapping="Wrap" Margin="0,8,0,12" />
+              <CheckBox IsChecked="{Binding RunAtStartup}" Margin="0,0,0,12">
+                <TextBlock Text="Run in the tray when I sign in (required for the controller shortcut before opening the window)" TextWrapping="Wrap" />
+              </CheckBox>
+              <StackPanel Orientation="Horizontal">
+                <Button Content="Restore Default (Ctrl+Alt+F12)" Click="Panic_Click" />
+                <Button Content="Copy diagnostics" Click="CopyDiagnostics_Click" />
+              </StackPanel>
+            </StackPanel>
+          </Border>
+        </StackPanel>
+      </ScrollViewer>
+    </Grid>
+
+    <Grid Grid.Row="2" Margin="0,16,0,0">
+      <TextBlock x:Name="StatusText" Foreground="{StaticResource MutedBrush}" VerticalAlignment="Center" />
+      <Button Content="Hide to tray" HorizontalAlignment="Right" Click="Hide_Click" />
+    </Grid>
+  </Grid>
+</Window>

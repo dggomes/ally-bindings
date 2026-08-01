@@ -1,113 +1,134 @@
 # Architecture and safety boundaries
 
-## Product decision
+## Product boundary
 
-Ally Bindings is **a controller-mapping selector**, not an Armoury Crate replacement. It solves a narrow problem: one local Remote Play executable needs multiple user-selectable control layouts.
+Ally Bindings is a local controller-mapping selector for the case where multiple streamed Xbox titles share one Windows Remote Play process. It does not modify Armoury Crate records or infer the game inside the video stream.
 
-The app will not attempt to modify Armoury Crate's internal game-profile records. Asus does not publish a supported automation interface for selecting a profile at runtime, and config-file/service reverse engineering would be fragile across Armoury updates.
-
-## Design principles
-
-1. **Local only.** No account, telemetry, cloud service, or network listener.
-2. **Explicit selection.** The app does not pretend it knows which streamed game is playing.
-3. **Fail open.** If the remapping backend crashes or cannot start, the physical controller must remain usable as a normal controller.
-4. **One obvious escape hatch.** A hardware-independent panic hotkey restores `Default` immediately.
-5. **No privileged installation without consent.** Any input/filter driver is optional, clearly named, signed where possible, and installed only after Daniel approves it on the Ally X.
-6. **Do not break Ally controls.** The Command Centre button, touch controls, sleep/wake, and Armoury Crate must be explicitly regression-tested.
-
-## Components
+## Runtime shape
 
 ```text
-┌───────────────────────────┐
-│ WinUI 3 tray + overlay UI │
-│ profiles / hotkeys / log  │
-└─────────────┬─────────────┘
-              │ profile selection
-┌─────────────▼─────────────┐
-│ Mapping engine            │
-│ pure, testable transforms │
-└───────┬───────────┬───────┘
-        │           │
-  physical input    virtual output
-        │           │
-┌───────▼───┐   ┌───▼────────────────┐
-│ Ally input│   │ virtual Xbox pad    │
-│ adapter   │   │ adapter             │
-└───────────┘   └──────────┬─────────┘
-                            │
-                    Xbox Remote Play
+XInput controller
+      │ snapshots (read-only today)
+      ▼
+┌─────────────────────────┐
+│ Windows host            │
+│ XInput monitor          │
+│ chord recognizer        │
+│ tray / WPF main window  │
+│ non-activating overlay  │
+└──────────┬──────────────┘
+           │ selection
+           ▼
+┌─────────────────────────┐       ┌──────────────────────────┐
+│ AllyBindings.Core       │       │ JSON profile store       │
+│ profile cycle machine   │◄─────►│ %LOCALAPPDATA%           │
+│ pure mapping transform  │       │ temp + backup + recovery │
+│ backend contract        │       └──────────────────────────┘
+└──────────┬──────────────┘
+           │ apply/restore
+           ▼
+┌─────────────────────────┐
+│ Controller backend      │
+│ Preview (implemented)   │
+│ Physical/virtual (gate) │
+└─────────────────────────┘
 ```
 
-### UI host
+## Projects
 
-- **Target:** .NET 8+, C#, WinUI 3 / Windows App SDK.
-- **Reason:** native Windows feel, low idle footprint, straightforward tray/global-hotkey support, no Electron runtime.
-- **Responsibilities:** profile list/editor, hotkey registration, overlay/toast, safe startup/shutdown, diagnostics export.
+### `AllyBindings.Core`
 
-### Profile store
+Cross-platform .NET 8 library with no Windows UI dependency:
 
-Profiles are local JSON under `%LOCALAPPDATA%\AllyBindings\profiles.json`, atomically written with a timestamped backup. Example:
+- XInput-compatible normalized controller state.
+- Named profiles and one-to-one button mappings.
+- Configuration validation/normalization.
+- Atomic JSON persistence with backup and corrupt-file recovery.
+- Pure mapping transform.
+- Backend health/apply contract.
+- Deterministic controller-chord carousel state machine.
+- PII/input-history-free diagnostics projection.
+
+### `AllyBindings.Windows`
+
+Windows 10 2004+ WPF host:
+
+- 20 ms XInput polling through `xinput1_4.dll`.
+- Controller index auto-discovery or persisted preferred index.
+- View + Menu default chord with hold/release/debounce gating.
+- Non-activating, always-on-top profile overlay.
+- `Open application` carousel sentinel.
+- Tray icon, startup registration and Ctrl+Alt+F12 panic/default hotkey.
+- Profile/shortcut editor and truthful backend state.
+
+WPF was chosen over WinUI 3 for this narrow tray utility: fewer deployment/runtime moving parts, native Windows rendering and straightforward cross-target compilation. There is no Electron/browser runtime.
+
+## Profile format
+
+The canonical path is `%LOCALAPPDATA%\AllyBindings\config.json`. The entire user state is one schema-versioned document so profile and shortcut changes commit together.
 
 ```json
 {
   "schemaVersion": 1,
-  "activeProfile": "default",
+  "activeProfileId": "elden-ring",
+  "controllerIndex": null,
+  "runAtStartup": true,
+  "shortcut": {
+    "buttons": ["View", "Menu"],
+    "holdMilliseconds": 250,
+    "commitDelayMilliseconds": 900
+  },
   "profiles": [
-    {
-      "id": "lies-of-p",
-      "name": "Lies of P",
-      "bindings": {
-        "rearLeft": "leftStickClick",
-        "rearRight": "rightStickClick"
-      }
-    }
+    { "id": "default", "name": "Default", "enabled": true, "bindings": {} },
+    { "id": "elden-ring", "name": "Elden Ring", "enabled": true, "bindings": { "A": "B" } }
   ]
 }
 ```
 
-V1 supports only one-to-one standard gamepad mappings. Chords, turbo, rapid-fire, delays, scripts, and macros are deliberately excluded.
+Writes go to a same-directory temporary file, preserve the prior valid file as `.bak`, then replace the canonical file. Invalid JSON is copied to a timestamped `.corrupt-*` file before returning to Default.
 
-### Mapping engine
+## Carousel state machine
 
-A pure C# library receives a normalized controller state and a selected `Profile`, returning a normalized output state. It knows nothing about ASUS, drivers, UI, or Remote Play. This is the main testable unit.
+The controller shortcut is deliberately pure/testable:
 
-### Hardware adapters
+1. Detect all configured buttons down.
+2. Require the hold threshold.
+3. Emit one selection per press, never key-repeat while held.
+4. Require release before another selection.
+5. Reset the inactivity timer after release.
+6. Commit after the inactivity timeout.
+7. Cancel pending selection if the controller disconnects.
 
-The input/output layer is intentionally an interface until proven on the physical Ally X:
+Cycle items are enabled profiles followed by `Open application`. The first activation advances from the active profile to the next item.
+
+## Backend contract
 
 ```csharp
-interface IControllerBackend : IAsyncDisposable
+public interface IControllerBackend : IAsyncDisposable
 {
-    Task StartAsync(CancellationToken cancellationToken);
-    Task ApplyAsync(MappingProfile profile, CancellationToken cancellationToken);
-    Task RestorePassthroughAsync(CancellationToken cancellationToken);
     BackendStatus GetStatus();
+    Task<BackendStatus> InitializeAsync(CancellationToken cancellationToken = default);
+    Task<BackendApplyResult> ApplyAsync(MappingProfile profile, CancellationToken cancellationToken = default);
+    Task<BackendApplyResult> RestoreDefaultAsync(CancellationToken cancellationToken = default);
 }
 ```
 
-The hardware spike decides whether a safe backend exists. Candidate approaches are evaluated in `HARDWARE-SPIKE.md`; none is committed to yet.
+Backend results distinguish a selected app profile from a mapping physically applied to controller output. The included preview backend always keeps physical passthrough intact and returns `AppliedToController = false`.
 
-## Why automatic Xbox-title detection is out of scope
+A real backend must additionally stream normalized input through `MappingEngine`, produce exactly one virtual Xbox device and prove fail-open recovery. No physical-device hide action belongs in the generic UI/core layer.
 
-Remote Play transfers a video/audio stream. Windows usually knows the local client process, not the Xbox title rendered inside that stream. Window-title scraping, OCR, or accessibility-tree guessing would be brittle and could switch a layout incorrectly in the middle of play.
+## Safety invariants
 
-A one-action profile picker is the reliable UX. A later auto-detection module is acceptable only if the Xbox client exposes a stable, documented local title signal and it can be tested against sleep/reconnect/title changes.
+1. Never hide a physical controller before a healthy output device exists.
+2. Never claim a profile was applied when only app state changed.
+3. `Default` always exists and cannot carry remaps.
+4. Ctrl+Alt+F12 does not depend on the controller chord/profile.
+5. Disconnect cancels uncommitted selections.
+6. Startup registration is per-user, opt-in and removable.
+7. Launching the app installs no driver and requires no elevation.
+8. Diagnostics contain status/config metadata, not controller input history.
+9. No code injection, Armoury mutation, macros or network service.
 
-## Security and compatibility boundaries
+## Release gate
 
-- Never inject into Xbox, Armoury Crate, Xbox Game Bar, or any game process.
-- Never alter anti-cheat-related processes or claim competitive-game compatibility.
-- Never hide a physical controller before a virtual output is confirmed healthy.
-- Show the active backend and whether physical passthrough is intact.
-- Require an explicit reboot/driver-install acknowledgement only if a selected backend needs it.
-- Keep all mapping data readable and exportable.
-
-## Acceptance criteria for release
-
-1. From Remote Play, a profile switches in at most two user actions and takes effect in under one second.
-2. No duplicate input reaches Remote Play.
-3. `Default` restores a standard controller layout.
-4. Command Centre and the configured panic-reset path work before, during, and after a profile switch.
-5. Suspend/resume and Remote Play reconnect return to a usable controller state.
-6. Closing/crashing the app leaves a usable controller path.
-7. The app has no outbound network calls.
+The UI/core/package may ship as preview. A build must not be called a working remapper until the real backend passes every hard-fail condition in `HARDWARE-SPIKE.md` on Daniel's Ally X, including duplicate-input, Command Centre, suspend/resume, forced kill and uninstall rollback.

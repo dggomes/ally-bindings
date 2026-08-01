@@ -1,69 +1,104 @@
-# Hardware validation spike
+# Ally X hardware validation
 
 ## Goal
 
-Prove a safe mapping path on Daniel's ROG Xbox Ally X **before** building the application UI around it.
+Prove a safe physical-input → mapped virtual Xbox controller path on Daniel's ROG Xbox Ally X. The application shell is already testable without drivers; this spike is the hard gate for claiming controller remapping works.
 
-The important question is not whether Windows can remap a generic controller. It is whether the Ally X's physical controls — especially rear buttons and the Command Centre button — can be captured, mapped, and restored without duplicate input or broken Armoury functionality.
+The key unknown is not generic XInput reading. It is whether the built-in Ally controls—including rear paddles and ASUS buttons—can be captured, transformed and restored without duplicate input or broken Armoury/Command Centre behaviour.
 
 ## Preconditions
 
-- Test on the actual ROG Xbox Ally X, plugged into power.
-- Record Windows version, Armoury Crate version, ASUS System Control Interface version, and controller firmware.
-- Export/photograph the existing Armoury controller mapping before any change.
-- Create a Windows restore point before installing a filter/virtual-controller driver.
-- Test only in a non-competitive local game or Xbox Remote Play menu; never an anti-cheat title.
+- Use the physical ROG Xbox Ally X, plugged into power.
+- Record Windows build, Armoury Crate version, ASUS System Control Interface version and controller firmware.
+- Export/photograph existing Armoury controller mappings.
+- Create a Windows restore point before installing any filter/virtual-controller driver.
+- Keep a keyboard/touch recovery path available.
+- Test in Windows controller diagnostics, the Remote Play menu or a non-competitive local title; never an anti-cheat game.
+- Start from an unsigned-free/self-contained Ally Bindings CI artifact in preview mode.
 
-## Candidate backends
+## Inventory
 
-### A. Supported ASUS/Armoury service integration — preferred if real
+Capture a redacted inventory before changing anything:
 
-Investigate whether Armoury Crate exposes a local, supported command/API for changing the active control mapping without an executable transition.
+1. `joy.cpl` device list and button map.
+2. Windows Settings controller entries.
+3. Device Manager hardware IDs for gamepad/HID interfaces.
+4. XInput index used by the built-in controller.
+5. Whether M1/M2 are visible as independent buttons, keyboard events or Armoury-only modifiers.
+6. Whether Command Centre/Armoury buttons enter XInput at all.
+7. Behaviour in embedded and desktop control modes.
 
-**Pass condition:** documented or stable local invocation, mapping applies live, no config-file mutation.
+Do not assume rear paddles are independent inputs. If Armoury resolves them before Windows exposes the pad, Ally Bindings cannot safely offer direct rear-button mappings without an ASUS-supported path.
 
-**Likely outcome:** unavailable. Asus currently exposes game-profile behaviour through Armoury Crate, not a public developer API. Do not reverse-engineer private IPC for v1.
+## Candidate backend decision order
 
-### B. Existing maintained remapping backend
+### 1. Supported ASUS/Armoury interface
 
-Evaluate a maintained Windows input-remapping backend that can:
+Use only if a documented/stable local invocation can change the live controller layout without mutating private databases or injecting into Armoury. Record the exact API/tool, provenance and rollback.
 
-- read the physical Ally gamepad;
-- hide it from consumer applications only after virtual output is ready;
-- emit a virtual Xbox/XInput controller;
-- preserve/avoid collision with ASUS-specific buttons; and
-- uninstall cleanly.
+### 2. Maintained physical-hide + virtual Xbox backend
 
-This route is acceptable only after reviewing licence, code-signing/driver provenance, Windows 11 compatibility, maintenance activity, and crash recovery. Do not commit to a legacy/unmaintained virtual-controller stack merely because it has old tutorials.
+A candidate must:
 
-### C. Windows-supported HID / virtual-device path
+- read the physical Ally controller while hidden from consumer apps;
+- create one healthy virtual Xbox/XInput controller before hiding anything;
+- identify physical vs virtual devices deterministically;
+- preserve ASUS-specific buttons or leave them outside the interception path;
+- recover on process kill, suspend and device reconnect;
+- use signed components with acceptable licence/maintenance posture;
+- uninstall and unhide cleanly.
 
-Evaluate whether a Windows-supported virtual HID/controller route can meet the same requirements without an unsupported filter driver. This is architecturally attractive but may require more native/driver work than the narrow product warrants.
+Do not auto-install it from Ally Bindings. Installation and enabling remain explicit on-device operations.
+
+### 3. Windows-supported virtual HID path
+
+Prefer a supported Windows API/driver path if it can meet the same safety properties without a fragile legacy stack. Reject it if the native/driver burden exceeds this narrow app or cannot provide robust rollback.
+
+## Minimal adapter proof
+
+Before wiring the WPF app, build the smallest adapter that:
+
+1. selects the physical XInput/HID device explicitly;
+2. starts virtual output;
+3. verifies virtual output health;
+4. hides the physical device from the test consumer;
+5. passes snapshots through `AllyBindings.Core.MappingEngine`;
+6. applies Default and one obvious A/B swap profile;
+7. restores/unhides on normal exit and a watchdog/failure path.
+
+The adapter must implement `IControllerBackend`; profile parsing and mapping logic stay in Core.
 
 ## Test matrix
 
-| Test | Expected result | Hard fail |
+| Test | Expected | Hard fail |
 |---|---|---|
-| Baseline input enumeration | Physical buttons and rear paddles identified | Ambiguous/duplicate devices not understood |
-| Start backend | One controller reaches Xbox input test | Duplicate inputs |
-| Apply `Default` | Exact baseline Xbox layout | Missing buttons or stuck input |
-| Apply rear-button remap | Only intended virtual output changes | Command Centre ceases working |
-| Switch 20 times | No drift, missed transitions, or ghost presses | Any input lockout |
-| Start Remote Play | Mapping reaches streamed Xbox UI | Xbox sees two controllers |
-| Suspend/resume | Controller recovers safely | Inputs remain hidden/unusable |
-| Remote Play reconnect | Mapping remains usable | Requires reboot/reinstall |
-| Kill app/backend | Physical controller remains usable or auto-restores promptly | Controller stranded hidden |
-| Armoury Crate open/close | No crash/corruption/config reset | Armoury mappings damaged |
-| Uninstall backend | Original behaviour restored | Residual hidden controller/driver |
+| Baseline enumeration | Physical interfaces/buttons understood | Unknown duplicate/input path |
+| Rear paddles | Exposure model documented | Claimed mapping without visible signal |
+| Start output | One healthy virtual Xbox pad | Output unavailable/unstable |
+| Hide physical | Test consumer sees one pad | No input or two pads |
+| Default | Exact baseline Xbox layout | Missing/stuck/wrong input |
+| A/B swap | Only A/B output changes | Other controls drift |
+| Switch 20 times | No ghosts/missed transitions | Stuck/duplicated presses |
+| Shortcut chord | Overlay cycles once per press | Repeat storm or gameplay lockout |
+| Remote Play | Streamed Xbox sees one mapped pad | Duplicate controllers/input |
+| Command Centre | Still opens and functions | Broken ASUS control |
+| Armoury open/close | No corruption/reset | Armoury damage/crash |
+| Sleep/resume | Input path recovers safely | Hidden/unusable controller |
+| Controller reconnect | Same deterministic topology | Virtual/physical index confusion |
+| Kill Ally Bindings | Physical path remains/returns usable | Controller stranded hidden |
+| Kill backend/watchdog | Fail-open recovery | Reboot required for input |
+| Disable startup | App no longer launches | Persistent unwanted startup |
+| Uninstall backend | Original behaviour restored | Residual hidden device/driver |
 
-## Decision rule
+## Pass rule
 
-Proceed to implementation only if a backend passes every hard-fail test and provides a credible recovery path. If none does, the project stops rather than shipping a fragile controller driver experiment.
+Enable a real backend only if every hard-fail condition passes and install/rollback are reproducible. Any duplicate input, controller lockout, Command Centre regression or ambiguous device identity keeps the app in preview mode.
 
-## Deliverables from the spike
+## Evidence to retain
 
 - Redacted device/driver inventory.
-- Chosen backend and licence rationale.
-- Reproducible install and rollback steps.
-- Test results with Windows/Armoury/firmware versions.
-- A minimal command-line proof: `apply default`, `apply lies-of-p`, `restore`.
+- Backend source/version/signing/licence rationale.
+- Install, enable, disable and uninstall commands.
+- Full matrix with timestamps and software/firmware versions.
+- Diagnostics export before/after.
+- Minimal adapter branch/commit and CI result.
