@@ -13,6 +13,27 @@ Ally Bindings lets you save named mappings, rotate them from the controller, and
 
 Ally Bindings is an independent project and is not affiliated with ASUS, ROG, Microsoft or Xbox.
 
+## Controller-first interface
+
+These are real screenshots captured from the packaged `win-x64` application by the Windows CI workflow.
+
+### Visual controller mapping
+
+![Controller mapping workspace showing physical controller bindings](docs/images/ally-bindings-controller.png)
+
+### Armoury capture and app updates
+
+![Capture and update workspace with visible Armoury M1/M2 capture and manual updater](docs/images/ally-bindings-capture-update.png)
+
+<details>
+<summary>Profiles and shortcut workspaces</summary>
+
+![Profile management workspace](docs/images/ally-bindings-profiles.png)
+
+![Controller shortcut workspace](docs/images/ally-bindings-shortcut.png)
+
+</details>
+
 ## Why this exists
 
 Xbox Remote Play presents multiple streamed games through the same Windows process, so process-based controller profiles cannot reliably tell them apart. Ally Bindings makes the profile choice explicit and controller-driven:
