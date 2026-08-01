@@ -66,4 +66,21 @@ public sealed class MappingEngineTests
         var input = new ControllerSnapshot(true, ControllerButton.X, RightThumbY: -42);
         Assert.Equal(input, MappingEngine.Apply(input, MappingProfile.Default));
     }
+
+    [Fact]
+    public void Apply_can_project_a_rear_source_to_an_analog_trigger()
+    {
+        var input = new ControllerSnapshot(true, ControllerButton.M1, RightTrigger: 7);
+        var profile = new MappingProfile
+        {
+            Id = "rear-trigger",
+            Name = "Rear Trigger",
+            Bindings = new() { [ControllerButton.M1] = ControllerButton.RightTrigger },
+        };
+
+        var output = MappingEngine.Apply(input, profile);
+
+        Assert.Equal(ControllerButton.None, output.Buttons);
+        Assert.Equal(byte.MaxValue, output.RightTrigger);
+    }
 }

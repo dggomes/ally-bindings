@@ -62,7 +62,7 @@
                   <DataGridTemplateColumn Header="Output button" Width="*">
                     <DataGridTemplateColumn.CellTemplate>
                       <DataTemplate>
-                        <ComboBox ItemsSource="{Binding DataContext.ButtonOptions, RelativeSource={RelativeSource AncestorType=Window}}"
+                        <ComboBox ItemsSource="{Binding TargetOptions}"
                                   SelectedItem="{Binding Target, UpdateSourceTrigger=PropertyChanged}" Margin="2" />
                       </DataTemplate>
                     </DataGridTemplateColumn.CellTemplate>
@@ -79,7 +79,7 @@
           <Border Background="{StaticResource PanelBrush}" CornerRadius="16" Padding="20" Margin="0,0,0,14">
             <StackPanel>
               <TextBlock Text="Controller shortcut" FontSize="17" FontWeight="SemiBold" />
-              <TextBlock Text="Hold the chord to show the next profile. Release and repeat to rotate; stop to commit." Foreground="{StaticResource MutedBrush}" TextWrapping="Wrap" Margin="0,5,0,12" />
+              <TextBlock Text="Hold the chord to show the next profile. Release and repeat to rotate; stop to commit. To open Ally Bindings, keep holding the chord and press RT." Foreground="{StaticResource MutedBrush}" TextWrapping="Wrap" Margin="0,5,0,12" />
               <Grid>
                 <Grid.ColumnDefinitions><ColumnDefinition /><ColumnDefinition Width="14" /><ColumnDefinition /></Grid.ColumnDefinitions>
                 <StackPanel><TextBlock Text="Button 1" Foreground="{StaticResource MutedBrush}" /><ComboBox ItemsSource="{Binding ButtonOptions}" SelectedItem="{Binding ShortcutButton1}" /></StackPanel>
@@ -98,12 +98,25 @@
             <StackPanel>
               <TextBlock Text="Safety &amp; diagnostics" FontSize="17" FontWeight="SemiBold" />
               <TextBlock x:Name="BackendStatusText" Foreground="{StaticResource MutedBrush}" TextWrapping="Wrap" Margin="0,8,0,12" />
+              <CheckBox IsChecked="{Binding EnableAsusRearButtonMappings}" Margin="0,0,0,5">
+                <TextBlock Text="Enable experimental ASUS M1/M2 hardware mappings" TextWrapping="Wrap" />
+              </CheckBox>
+              <TextBlock Text="Opt-in: profile changes overwrite Armoury Crate's current M1/M2 assignments. Restore Default or Ctrl+Alt+F12 writes the best-known native M1/M2 modifier mapping; validate this on your firmware. Standard buttons remain preview-only."
+                         Foreground="#F3B75B" TextWrapping="Wrap" Margin="24,0,0,12" />
               <CheckBox IsChecked="{Binding RunAtStartup}" Margin="0,0,0,12">
                 <TextBlock Text="Run in the tray when I sign in (required for the controller shortcut before opening the window)" TextWrapping="Wrap" />
               </CheckBox>
+              <CheckBox IsChecked="{Binding CheckForUpdatesAutomatically}" Margin="0,0,0,5">
+                <TextBlock Text="Automatically check GitHub Releases for updates" TextWrapping="Wrap" />
+              </CheckBox>
+              <CheckBox IsChecked="{Binding IncludePrereleaseUpdates}" Margin="24,0,0,8">
+                <TextBlock Text="Include preview releases" TextWrapping="Wrap" />
+              </CheckBox>
+              <TextBlock x:Name="UpdateStatusText" Foreground="{StaticResource MutedBrush}" TextWrapping="Wrap" Margin="24,0,0,8" />
               <StackPanel Orientation="Horizontal">
                 <Button Content="Restore Default (Ctrl+Alt+F12)" Click="Panic_Click" />
                 <Button Content="Copy diagnostics" Click="CopyDiagnostics_Click" />
+                <Button Content="Check for updates" Click="CheckForUpdates_Click" />
               </StackPanel>
             </StackPanel>
           </Border>

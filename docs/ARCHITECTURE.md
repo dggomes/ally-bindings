@@ -2,7 +2,7 @@
 
 ## Product boundary
 
-Ally Bindings is a local controller-mapping selector for the case where multiple streamed Xbox titles share one Windows Remote Play process. It does not modify Armoury Crate records or infer the game inside the video stream.
+Ally Bindings is a local controller-mapping selector for the case where multiple streamed Xbox titles share one Windows Remote Play process. It does not modify Armoury Crate records or infer the game inside the video stream. Its explicit M1/M2 opt-in writes the controller's ASUS firmware mapping zone directly and can therefore replace Armoury-managed rear-button assignments.
 
 ## Runtime shape
 
@@ -30,6 +30,7 @@ XInput controller
 ┌─────────────────────────┐
 │ Controller backend      │
 │ Preview (implemented)   │
+│ ASUS M1/M2 (partial)    │
 │ Physical/virtual (gate) │
 └─────────────────────────┘
 ```
@@ -57,7 +58,8 @@ Windows 10 2004+ WPF host:
 - Controller index auto-discovery or persisted preferred index.
 - View + Menu default chord with hold/release/debounce gating.
 - Non-activating, always-on-top profile overlay.
-- `Open application` carousel sentinel.
+- RT confirmation while the configured chord remains held to open the editor.
+- Positively gated ASUS HID feature-report adapter for M1/M2.
 - Tray icon, startup registration and Ctrl+Alt+F12 panic/default hotkey.
 - Profile/shortcut editor and truthful backend state.
 
@@ -69,10 +71,12 @@ The canonical path is `%LOCALAPPDATA%\AllyBindings\config.json`. The entire user
 
 ```json
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "activeProfileId": "elden-ring",
   "controllerIndex": null,
   "runAtStartup": true,
+  "enableAsusRearButtonMappings": false,
+  "asusRearButtonMappingActive": false,
   "shortcut": {
     "buttons": ["View", "Menu"],
     "holdMilliseconds": 250,
@@ -80,7 +84,7 @@ The canonical path is `%LOCALAPPDATA%\AllyBindings\config.json`. The entire user
   },
   "profiles": [
     { "id": "default", "name": "Default", "enabled": true, "bindings": {} },
-    { "id": "elden-ring", "name": "Elden Ring", "enabled": true, "bindings": { "A": "B" } }
+    { "id": "elden-ring", "name": "Elden Ring", "enabled": true, "bindings": { "A": "B", "M1": "RightTrigger" } }
   ]
 }
 ```
@@ -94,12 +98,13 @@ The controller shortcut is deliberately pure/testable:
 1. Detect all configured buttons down.
 2. Require the hold threshold.
 3. Emit one selection per press, never key-repeat while held.
-4. Require release before another selection.
-5. Reset the inactivity timer after release.
-6. Commit after the inactivity timeout.
-7. Cancel pending selection if the controller disconnects.
+4. If RT rises after the hold threshold while the chord remains exact, cancel the pending selection and request the editor.
+5. Require release before another selection.
+6. Reset the inactivity timer after release.
+7. Commit after the inactivity timeout.
+8. Cancel pending selection if the controller disconnects.
 
-Cycle items are enabled profiles followed by `Open application`. The first activation advances from the active profile to the next item.
+Cycle items are enabled profiles only. Opening the editor is a separate deliberate chord+RT gesture, so rotating can never land on it accidentally. The first activation advances from the active profile to the next item.
 
 ## Backend contract
 
@@ -113,7 +118,17 @@ public interface IControllerBackend : IAsyncDisposable
 }
 ```
 
-Backend results distinguish a selected app profile from a mapping physically applied to controller output. The included preview backend always keeps physical passthrough intact and returns `AppliedToController = false`.
+Backend results distinguish a selected app profile from a mapping physically applied to controller output. The preview backend always keeps physical passthrough intact and returns `CommandAccepted = false`. The partial ASUS backend returns true only when the OS accepts an M1/M2 feature-report write; this does not verify live firmware state, and standard mappings remain preview-only.
+
+### ASUS rear-button protocol boundary
+
+- Positive DMI gate: exact manufacturer `ASUSTeK COMPUTER INC.` plus product `RC71L`, `RC72LA`, `RC73XA`, or `RC73YA`.
+- Positive HID gate: ASUS VID `0x0B05`, corroborated Ally embedded-controller PID `0x1ABE`/`0x1B4C`/`0x1B6E`, openable interface, feature report `0x5A` whose own descriptor length is at least 50 bytes.
+- Mapping command: report `0x5A`, command `0xD1`, zone `0x08`.
+- Both primary and secondary paddle slots receive the selected action to avoid retaining a stale Armoury secondary action.
+- Default/panic writes the best-known native M2 (`0x8E`) and M1 (`0x8F`) modifier actions; this is not a read-back of the user's Armoury configuration.
+- `asusRearButtonMappingActive` is a persisted crash-recovery marker. It is written before any non-default rear-mapping command can reach HID, and cleared only after the native reset command is accepted by the OS; live firmware state remains unverified because the protocol has no read-back path.
+- No physical controller is hidden and no virtual output is created by this backend.
 
 A real backend must additionally stream normalized input through `MappingEngine`, produce exactly one virtual Xbox device and prove fail-open recovery. No physical-device hide action belongs in the generic UI/core layer.
 
@@ -127,7 +142,8 @@ A real backend must additionally stream normalized input through `MappingEngine`
 6. Startup registration is per-user, opt-in and removable.
 7. Launching the app installs no driver and requires no elevation.
 8. Diagnostics contain status/config metadata, not controller input history.
-9. No code injection, Armoury mutation, macros or network service.
+9. No code injection, Armoury database mutation, macros or network service; only the explicit M1/M2 firmware mapping zone can be written.
+10. A rear-button write requires both model and report-descriptor gates; unsupported systems remain read-only.
 
 ## Release gate
 

@@ -10,9 +10,15 @@
     <AssemblyName>AllyBindings</AssemblyName>
     <RootNamespace>AllyBindings.Windows</RootNamespace>
     <ApplicationManifest>app.manifest</ApplicationManifest>
+    <Version>0.2.0</Version>
+    <AssemblyVersion>0.2.0.0</AssemblyVersion>
+    <FileVersion>0.2.0.0</FileVersion>
+    <RepositoryUrl>https://github.com/dggomes/ally-bindings</RepositoryUrl>
+    <PublishSingleFile>true</PublishSingleFile>
     <Platforms>AnyCPU;x64;ARM64</Platforms>
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="..\AllyBindings.Core\AllyBindings.Core.csproj" />
+    <PackageReference Include="HidSharp" Version="2.6.4" />
   </ItemGroup>
 </Project>

@@ -10,16 +10,30 @@ public static class MappingEngine
         }
 
         var mappedButtons = input.Buttons & ~ControllerButtons.MappableMask;
-        foreach (var button in ControllerButtons.Mappable)
+        var leftTrigger = input.LeftTrigger;
+        var rightTrigger = input.RightTrigger;
+        foreach (var button in ControllerButtons.MappableSources)
         {
             if ((input.Buttons & button) == 0)
             {
                 continue;
             }
 
-            mappedButtons |= profile.Bindings.GetValueOrDefault(button, button);
+            var target = profile.Bindings.GetValueOrDefault(button, button);
+            if (target == ControllerButton.LeftTrigger)
+            {
+                leftTrigger = byte.MaxValue;
+            }
+            else if (target == ControllerButton.RightTrigger)
+            {
+                rightTrigger = byte.MaxValue;
+            }
+            else
+            {
+                mappedButtons |= target;
+            }
         }
 
-        return input with { Buttons = mappedButtons };
+        return input with { Buttons = mappedButtons, LeftTrigger = leftTrigger, RightTrigger = rightTrigger };
     }
 }

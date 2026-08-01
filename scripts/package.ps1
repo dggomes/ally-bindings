@@ -34,5 +34,8 @@ Assert-NativeSuccess "dotnet publish"
 
 Copy-Item (Join-Path $repo "README.md") $publishDir
 Copy-Item (Join-Path $repo "docs/HARDWARE-SPIKE.md") $publishDir
+Copy-Item (Join-Path $repo "THIRD-PARTY-NOTICES.md") $publishDir
+New-Item -ItemType Directory -Path (Join-Path $publishDir "LICENSES") -Force | Out-Null
+Copy-Item (Join-Path $repo "LICENSES/HidSharp-Apache-2.0.txt") (Join-Path $publishDir "LICENSES")
 Compress-Archive -Path "$publishDir/*" -DestinationPath $zipPath -CompressionLevel Optimal
-Write-Host "Created $zipPath"
+Write-Output "Created $zipPath"

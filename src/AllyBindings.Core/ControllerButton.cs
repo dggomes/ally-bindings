@@ -1,7 +1,7 @@
 namespace AllyBindings.Core;
 
 [Flags]
-public enum ControllerButton : ushort
+public enum ControllerButton : uint
 {
     None = 0,
     DPadUp = 1 << 0,
@@ -18,11 +18,15 @@ public enum ControllerButton : ushort
     B = 0x2000,
     X = 0x4000,
     Y = 0x8000,
+    LeftTrigger = 1u << 16,
+    RightTrigger = 1u << 17,
+    M1 = 1u << 18,
+    M2 = 1u << 19,
 }
 
 public static class ControllerButtons
 {
-    public static readonly ControllerButton[] Mappable =
+    public static readonly ControllerButton[] StandardButtons =
     [
         ControllerButton.DPadUp,
         ControllerButton.DPadDown,
@@ -40,7 +44,35 @@ public static class ControllerButtons
         ControllerButton.Y,
     ];
 
-    public static ControllerButton MappableMask { get; } = Mappable.Aggregate(
+    public static readonly ControllerButton[] RearButtons =
+    [
+        ControllerButton.M1,
+        ControllerButton.M2,
+    ];
+
+    public static readonly ControllerButton[] MappableSources = [.. StandardButtons, .. RearButtons];
+
+    public static readonly ControllerButton[] OutputTargets =
+    [
+        .. StandardButtons,
+        ControllerButton.LeftTrigger,
+        ControllerButton.RightTrigger,
+    ];
+
+    // Shortcut chords are observed through XInput. M1/M2 and the analog
+    // triggers are intentionally absent because XInput does not expose the rear
+    // paddles and treating trigger thresholds as chord buttons would be unsafe.
+    public static readonly ControllerButton[] ShortcutButtons = StandardButtons;
+
+    public static bool IsValidBinding(ControllerButton source, ControllerButton target) =>
+        MappableSources.Contains(source) &&
+        (OutputTargets.Contains(target) || (RearButtons.Contains(source) && target == source));
+
+    public static ControllerButton MappableMask { get; } = MappableSources.Aggregate(
+        ControllerButton.None,
+        static (mask, button) => mask | button);
+
+    public static ControllerButton ShortcutMask { get; } = ShortcutButtons.Aggregate(
         ControllerButton.None,
         static (mask, button) => mask | button);
 
@@ -49,7 +81,7 @@ public static class ControllerButtons
         var requiredMask = required.Aggregate(
             ControllerButton.None,
             static (mask, button) => mask | button);
-        return requiredMask != ControllerButton.None && (pressed & MappableMask) == requiredMask;
+        return requiredMask != ControllerButton.None && (pressed & ShortcutMask) == requiredMask;
     }
 
     public static bool ContainsAll(this ControllerButton pressed, IEnumerable<ControllerButton> required)
