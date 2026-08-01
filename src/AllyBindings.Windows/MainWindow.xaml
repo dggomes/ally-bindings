@@ -48,6 +48,7 @@
           <Grid.RowDefinitions><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
           <ListBox x:Name="NavigationList" Background="Transparent" BorderThickness="0"
                    SelectedIndex="{Binding SelectedIndex, ElementName=WorkspaceTabs, Mode=TwoWay}"
+                   SelectionChanged="NavigationList_SelectionChanged"
                    AutomationProperties.Name="App sections">
             <ListBoxItem AutomationProperties.Name="Profiles" AutomationProperties.AutomationId="NavigationProfiles">
               <StackPanel><TextBlock Text="Profiles" FontSize="18" FontWeight="SemiBold" /><TextBlock Text="Choose and manage" Foreground="{StaticResource MutedBrush}" /></StackPanel>

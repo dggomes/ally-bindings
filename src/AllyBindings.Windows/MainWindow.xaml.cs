@@ -403,6 +403,14 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         FocusControllerDefault();
     }
 
+    private void NavigationList_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (WorkspaceTabs is not null && NavigationList.SelectedIndex >= 0)
+        {
+            WorkspaceTabs.SelectedIndex = NavigationList.SelectedIndex;
+        }
+    }
+
     private static T? FindAncestor<T>(DependencyObject? current) where T : DependencyObject
     {
         while (current is not null)

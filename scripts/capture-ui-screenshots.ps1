@@ -26,6 +26,8 @@ public static class AllyBindingsScreenshotNative {
     public static extern bool GetWindowRect(IntPtr hWnd, out RECT rect);
     [DllImport("user32.dll")]
     public static extern bool SetForegroundWindow(IntPtr hWnd);
+    [DllImport("user32.dll")]
+    public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
 }
 '@
 
@@ -106,6 +108,7 @@ try {
 
     $process = Start-Process -FilePath $ExecutablePath -PassThru
     $handle = Wait-MainWindow -Process $process
+    [AllyBindingsScreenshotNative]::ShowWindow($handle, 3) | Out-Null
     [AllyBindingsScreenshotNative]::SetForegroundWindow($handle) | Out-Null
     Start-Sleep -Milliseconds 750
     $root = [System.Windows.Automation.AutomationElement]::FromHandle($handle)
