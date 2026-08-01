@@ -52,6 +52,15 @@ jobs:
       - name: Exercise ETW helper peer authentication and executable lock
         shell: pwsh
         run: ./scripts/test-etw-helper-auth.ps1
+      - name: Exercise startup tray and second-instance activation
+        shell: pwsh
+        run: ./scripts/test-single-instance-activation.ps1
+      - name: Assert controller-first UI and capture discoverability
+        shell: pwsh
+        run: ./scripts/test-controller-ui.ps1
+      - name: Exercise WPF touch surfaces and visual mapping workflow
+        shell: pwsh
+        run: ./scripts/test-ui-automation.ps1
       - name: Exercise updater replacement and startup handshake
         shell: powershell
         run: ./scripts/test-updater-installer.ps1 -PackageRoot artifacts/AllyBindings-win-x64 -RepositoryRoot $PWD

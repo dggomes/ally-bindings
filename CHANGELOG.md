@@ -6,6 +6,32 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Thi
 
 ## [Unreleased]
 
+## [v0.3.0-preview.1] - 2026-08-01
+
+### Added
+
+- A controller-first, touch-friendly WPF shell with large persistent sections and 48-DIP minimum primary controls.
+- Complete gamepad UI navigation: D-pad focus movement, A select, B back, LB/RB section switching, X save and Y profile selection.
+- Controller-aware in-app confirmations for capture, updates and recovery gates; only the Windows UAC secure-desktop prompt remains outside app control.
+- A controller on-screen keyboard for profile names and button-based timing steppers, removing keyboard-only profile-management paths.
+- A visual controller binding editor with physical-button callouts around an Ally-style controller silhouette.
+- Original Ally Bindings artwork embedded as the executable, window and notification-area icon.
+- An always-visible manual **Update app** action plus a second maintenance-page update action.
+- Same-user named-pipe activation so launching the EXE reveals an existing sign-in-started tray instance.
+- Windows integration coverage for background startup and second-instance activation, plus structural UI discoverability/touch/controller assertions.
+
+### Changed
+
+- Replaced the long spreadsheet-style editor with focused **Profiles**, **Controller**, **Shortcut**, and **Capture & update** workspaces.
+- Moved Armoury M1/M2 capture from a below-the-fold diagnostics card to the first, accented card in a dedicated persistent section.
+- Normal launches show and focus the main window; only explicit sign-in/background launches remain tray-only.
+- Version/status surfaces preserve the full prerelease SemVer instead of displaying only the numeric assembly version.
+
+### Fixed
+
+- Fixed the published capture feature appearing absent at Ally-scale display heights because it was buried below the initial viewport.
+- Fixed a normal second launch reporting “already running” without opening the existing tray instance.
+
 ## [v0.2.0-preview.2] - 2026-08-01
 
 ### Added
@@ -68,3 +94,4 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Thi
 
 [v0.01]: https://github.com/dggomes/ally-bindings/releases/tag/v0.01
 [v0.2.0-preview.2]: https://github.com/dggomes/ally-bindings/releases/tag/v0.2.0-preview.2
+[v0.3.0-preview.1]: https://github.com/dggomes/ally-bindings/releases/tag/v0.3.0-preview.1

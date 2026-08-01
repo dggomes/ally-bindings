@@ -10,14 +10,17 @@
     <AssemblyName>AllyBindings</AssemblyName>
     <RootNamespace>AllyBindings.Windows</RootNamespace>
     <ApplicationManifest>app.manifest</ApplicationManifest>
-    <Version>0.2.0-preview.2</Version>
-    <AssemblyVersion>0.2.0.0</AssemblyVersion>
-    <FileVersion>0.2.0.0</FileVersion>
+    <ApplicationIcon>Assets\AllyBindings.ico</ApplicationIcon>
+    <Version>0.3.0-preview.1</Version>
+    <AssemblyVersion>0.3.0.0</AssemblyVersion>
+    <FileVersion>0.3.0.0</FileVersion>
     <RepositoryUrl>https://github.com/dggomes/ally-bindings</RepositoryUrl>
     <PublishSingleFile>true</PublishSingleFile>
     <Platforms>AnyCPU;x64;ARM64</Platforms>
   </PropertyGroup>
   <ItemGroup>
+    <Resource Include="Assets\AllyBindings.ico" />
+    <Resource Include="Assets\AllyBindings.png" />
     <PackageReference Include="Microsoft.Diagnostics.Tracing.TraceEvent" Version="3.2.5" />
     <ProjectReference Include="..\AllyBindings.Core\AllyBindings.Core.csproj" />
     <PackageReference Include="HidSharp" Version="2.6.4" />

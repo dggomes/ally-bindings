@@ -1,135 +1,440 @@
 <Window x:Class="AllyBindings.Windows.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Ally Bindings" Width="1040" Height="720" MinWidth="900" MinHeight="620"
+        Title="Ally Bindings" Width="1180" Height="700" MinWidth="900" MinHeight="600"
         Background="{StaticResource SurfaceBrush}" Foreground="White"
-        WindowStartupLocation="CenterScreen">
-  <Grid Margin="24">
+        Icon="Assets/AllyBindings.ico" WindowStartupLocation="CenterScreen"
+        UseLayoutRounding="True">
+  <Grid>
     <Grid.RowDefinitions>
-      <RowDefinition Height="Auto" />
+      <RowDefinition Height="82" />
       <RowDefinition Height="*" />
-      <RowDefinition Height="Auto" />
+      <RowDefinition Height="52" />
     </Grid.RowDefinitions>
 
-    <Grid Grid.Row="0" Margin="0,0,0,20">
-      <Grid.ColumnDefinitions><ColumnDefinition /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-      <StackPanel>
-        <TextBlock Text="Ally Bindings" FontSize="30" FontWeight="SemiBold" />
-        <TextBlock Text="Per-game controller layouts for Xbox Remote Play" Foreground="{StaticResource MutedBrush}" Margin="0,4,0,0" />
-      </StackPanel>
-      <Border Grid.Column="1" Background="{StaticResource PanelBrush}" CornerRadius="12" Padding="14,9">
+    <!-- Always-visible product header and updater. -->
+    <Border Grid.Row="0" Background="#121725" BorderBrush="#272E40" BorderThickness="0,0,0,1" Padding="22,12">
+      <Grid>
+        <Grid.ColumnDefinitions><ColumnDefinition /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
         <StackPanel Orientation="Horizontal">
-          <Ellipse x:Name="ControllerDot" Width="9" Height="9" Fill="#ECA94D" Margin="0,0,8,0" />
-          <TextBlock x:Name="ControllerStatusText" Text="Looking for controller…" VerticalAlignment="Center" />
+          <Image Source="Assets/AllyBindings.png" Width="52" Height="52" Margin="0,0,14,0" />
+          <StackPanel VerticalAlignment="Center">
+            <TextBlock Text="Ally Bindings" FontSize="25" FontWeight="SemiBold" />
+            <TextBlock Text="Controller-first profiles for your ROG Ally" Foreground="{StaticResource MutedBrush}" />
+          </StackPanel>
         </StackPanel>
-      </Border>
-    </Grid>
+        <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+          <Border Background="{StaticResource PanelBrush}" CornerRadius="12" Padding="13,8" Margin="0,0,12,0">
+            <StackPanel Orientation="Horizontal">
+              <Ellipse x:Name="ControllerDot" Width="10" Height="10" Fill="#ECA94D" Margin="0,0,8,0" />
+              <TextBlock x:Name="ControllerStatusText" Text="Looking for controller…" VerticalAlignment="Center" />
+            </StackPanel>
+          </Border>
+          <Button x:Name="HeaderUpdateButton" Style="{StaticResource PrimaryButton}" Content="Update app" Click="CheckForUpdates_Click"
+                  AutomationProperties.Name="Check for and install Ally Bindings updates" />
+        </StackPanel>
+      </Grid>
+    </Border>
 
     <Grid Grid.Row="1">
       <Grid.ColumnDefinitions>
-        <ColumnDefinition Width="260" />
-        <ColumnDefinition Width="18" />
+        <ColumnDefinition Width="250" />
         <ColumnDefinition Width="*" />
       </Grid.ColumnDefinitions>
 
-      <Border Grid.Column="0" Background="{StaticResource PanelBrush}" CornerRadius="16" Padding="14">
+      <!-- Large persistent destinations are reachable by touch or LB/RB. -->
+      <Border Grid.Column="0" Background="#121725" BorderBrush="#272E40" BorderThickness="0,0,1,0" Padding="14">
         <Grid>
-          <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
-          <TextBlock Text="Profiles" FontSize="17" FontWeight="SemiBold" Margin="6,3,0,12" />
-          <ListBox x:Name="ProfilesList" Grid.Row="1" ItemsSource="{Binding Profiles}"
-                   SelectedItem="{Binding SelectedProfile}" DisplayMemberPath="Name"
-                   Background="Transparent" Foreground="White" BorderThickness="0" />
-          <StackPanel Grid.Row="2" Orientation="Horizontal" Margin="0,12,0,0">
-            <Button Content="Add" Click="AddProfile_Click" />
-            <Button Content="Delete" Click="DeleteProfile_Click" />
+          <Grid.RowDefinitions><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
+          <ListBox x:Name="NavigationList" Background="Transparent" BorderThickness="0"
+                   SelectedIndex="{Binding SelectedIndex, ElementName=WorkspaceTabs, Mode=TwoWay}"
+                   AutomationProperties.Name="App sections">
+            <ListBoxItem>
+              <StackPanel><TextBlock Text="Profiles" FontSize="18" FontWeight="SemiBold" /><TextBlock Text="Choose and manage" Foreground="{StaticResource MutedBrush}" /></StackPanel>
+            </ListBoxItem>
+            <ListBoxItem>
+              <StackPanel><TextBlock Text="Controller" FontSize="18" FontWeight="SemiBold" /><TextBlock Text="Visual button mapping" Foreground="{StaticResource MutedBrush}" /></StackPanel>
+            </ListBoxItem>
+            <ListBoxItem>
+              <StackPanel><TextBlock Text="Shortcut" FontSize="18" FontWeight="SemiBold" /><TextBlock Text="Profile rotation chord" Foreground="{StaticResource MutedBrush}" /></StackPanel>
+            </ListBoxItem>
+            <ListBoxItem>
+              <StackPanel><TextBlock Text="Capture &amp; update" FontSize="18" FontWeight="SemiBold" /><TextBlock Text="Armoury ETW and app care" Foreground="{StaticResource MutedBrush}" /></StackPanel>
+            </ListBoxItem>
+          </ListBox>
+          <StackPanel Grid.Row="1" Margin="4,12,4,2">
+            <TextBlock Text="LB / RB  Sections" Foreground="{StaticResource MutedBrush}" />
+            <TextBlock Text="D-pad  Navigate   ·   A  Select" Foreground="{StaticResource MutedBrush}" Margin="0,5,0,0" />
           </StackPanel>
         </Grid>
       </Border>
 
-      <ScrollViewer Grid.Column="2" VerticalScrollBarVisibility="Auto">
-        <StackPanel>
-          <Border Background="{StaticResource PanelBrush}" CornerRadius="16" Padding="20" Margin="0,0,0,14">
-            <StackPanel>
-              <TextBlock Text="Selected profile" FontSize="17" FontWeight="SemiBold" />
-              <TextBlock Text="Name" Foreground="{StaticResource MutedBrush}" Margin="0,14,0,0" />
-              <TextBox Text="{Binding SelectedProfile.Name, UpdateSourceTrigger=PropertyChanged}" IsEnabled="{Binding CanEditSelected}" />
-              <CheckBox Content="Include in controller rotation" IsChecked="{Binding SelectedProfile.Enabled}" IsEnabled="{Binding CanEditSelected}" Margin="0,0,0,12" />
-              <DataGrid ItemsSource="{Binding SelectedProfile.Bindings}" IsEnabled="{Binding CanEditSelected}" AutoGenerateColumns="False" CanUserAddRows="False"
-                        HeadersVisibility="Column" Height="235" Background="#15161E" Foreground="White"
-                        RowBackground="#15161E" AlternatingRowBackground="#1C1E28" BorderThickness="0">
-                <DataGrid.Columns>
-                  <DataGridTextColumn Header="Physical button" Binding="{Binding Source}" IsReadOnly="True" Width="*" />
-                  <DataGridTemplateColumn Header="Output button" Width="*">
-                    <DataGridTemplateColumn.CellTemplate>
+      <TabControl x:Name="WorkspaceTabs" Grid.Column="1" SelectedIndex="0" Background="Transparent" BorderThickness="0" Padding="0">
+        <TabControl.Template>
+          <ControlTemplate TargetType="TabControl">
+            <ContentPresenter Content="{TemplateBinding SelectedContent}" ContentTemplate="{TemplateBinding SelectedContentTemplate}" />
+          </ControlTemplate>
+        </TabControl.Template>
+
+        <!-- Profiles -->
+        <TabItem>
+          <Grid Margin="22">
+            <Grid.ColumnDefinitions><ColumnDefinition Width="330" /><ColumnDefinition Width="18" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+            <Border Background="{StaticResource PanelBrush}" CornerRadius="18" Padding="16">
+              <Grid>
+                <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
+                <StackPanel Margin="4,0,0,12">
+                  <TextBlock Text="Profiles" FontSize="24" FontWeight="SemiBold" />
+                  <TextBlock Text="Pick what the controller rotates through." Foreground="{StaticResource MutedBrush}" TextWrapping="Wrap" />
+                </StackPanel>
+                <ListBox x:Name="ProfilesList" Grid.Row="1" ItemsSource="{Binding Profiles}" SelectedItem="{Binding SelectedProfile}"
+                         Background="Transparent" BorderThickness="0" ScrollViewer.PanningMode="VerticalOnly"
+                         AutomationProperties.Name="Controller profiles">
+                  <ListBox.ItemTemplate>
+                    <DataTemplate>
+                      <Grid>
+                        <Grid.ColumnDefinitions><ColumnDefinition /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                        <StackPanel>
+                          <TextBlock Text="{Binding Name}" FontSize="18" FontWeight="SemiBold" />
+                          <TextBlock Text="Controller layout" Foreground="{StaticResource MutedBrush}" />
+                        </StackPanel>
+                        <Border Grid.Column="1" Background="#302A59" CornerRadius="10" Padding="9,4" VerticalAlignment="Center">
+                          <TextBlock Text="READY" FontSize="11" Foreground="#C9BEFF" FontWeight="Bold" />
+                        </Border>
+                      </Grid>
+                    </DataTemplate>
+                  </ListBox.ItemTemplate>
+                </ListBox>
+                <StackPanel Grid.Row="2" Orientation="Horizontal" Margin="0,12,0,0">
+                  <Button Content="＋ Add" Click="AddProfile_Click" />
+                  <Button Content="Delete" Click="DeleteProfile_Click" IsEnabled="{Binding CanEditSelected}" />
+                </StackPanel>
+              </Grid>
+            </Border>
+
+            <Border Grid.Column="2" Background="{StaticResource PanelBrush}" CornerRadius="18" Padding="24">
+              <Grid>
+                <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
+                <StackPanel>
+                  <TextBlock Text="Selected profile" Foreground="{StaticResource MutedBrush}" />
+                  <TextBlock Text="{Binding SelectedProfile.Name}" FontSize="34" FontWeight="SemiBold" Margin="0,4,0,0" />
+                </StackPanel>
+                <StackPanel Grid.Row="1" Margin="0,22,0,0">
+                  <TextBlock Text="Profile name" Foreground="{StaticResource MutedBrush}" />
+                  <Grid Margin="0,5,0,12">
+                    <Grid.ColumnDefinitions><ColumnDefinition /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                    <Border Background="#111624" BorderBrush="#394157" BorderThickness="1" CornerRadius="9" Padding="14,11">
+                      <TextBlock Text="{Binding SelectedProfile.Name}" FontSize="17" TextTrimming="CharacterEllipsis" />
+                    </Border>
+                    <Button Grid.Column="1" Content="Rename" Click="RenameProfile_Click" IsEnabled="{Binding CanEditSelected}"
+                            Margin="10,0,0,0" AutomationProperties.Name="Rename profile with controller keyboard" />
+                  </Grid>
+                  <CheckBox Content="Include in controller rotation" IsChecked="{Binding SelectedProfile.Enabled}" IsEnabled="{Binding CanEditSelected}" />
+                </StackPanel>
+                <Border Grid.Row="2" Background="#111624" CornerRadius="16" Padding="22" Margin="0,18,0,18">
+                  <StackPanel VerticalAlignment="Center">
+                    <TextBlock Text="Ready for the controller" FontSize="23" FontWeight="SemiBold" />
+                    <TextBlock Text="Open Controller to edit the layout visually. Hold View + Menu outside this window to rotate enabled profiles."
+                               Foreground="{StaticResource MutedBrush}" TextWrapping="Wrap" Margin="0,8,0,0" />
+                    <Button Content="Open controller mapping" Style="{StaticResource PrimaryButton}" Click="OpenControllerPage_Click"
+                            HorizontalAlignment="Left" Margin="0,20,0,0" />
+                  </StackPanel>
+                </Border>
+                <StackPanel Grid.Row="3" Orientation="Horizontal">
+                  <Button Content="X  Save" Click="Save_Click" />
+                  <Button Content="Y  Select profile" Style="{StaticResource PrimaryButton}" Click="Apply_Click" />
+                </StackPanel>
+              </Grid>
+            </Border>
+          </Grid>
+        </TabItem>
+
+        <!-- Visual controller mapping -->
+        <TabItem>
+          <Grid Margin="22">
+            <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
+            <Grid>
+              <Grid.ColumnDefinitions><ColumnDefinition /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+              <StackPanel>
+                <TextBlock Text="Controller mapping" FontSize="27" FontWeight="SemiBold" />
+                <TextBlock Text="Choose what each physical control outputs. Changes stay local until you save."
+                           Foreground="{StaticResource MutedBrush}" />
+              </StackPanel>
+              <ComboBox Grid.Column="1" Width="250" ItemsSource="{Binding Profiles}" SelectedItem="{Binding SelectedProfile}"
+                        DisplayMemberPath="Name" AutomationProperties.Name="Profile being mapped" />
+            </Grid>
+
+            <Border Grid.Row="1" Background="{StaticResource PanelBrush}" CornerRadius="18" Padding="18" Margin="0,14">
+              <Grid>
+                <Grid.ColumnDefinitions><ColumnDefinition Width="280" /><ColumnDefinition Width="*" /><ColumnDefinition Width="280" /></Grid.ColumnDefinitions>
+                <ScrollViewer VerticalScrollBarVisibility="Auto" PanningMode="VerticalOnly">
+                  <ItemsControl ItemsSource="{Binding LeftBindings}">
+                    <ItemsControl.ItemTemplate>
                       <DataTemplate>
-                        <ComboBox ItemsSource="{Binding TargetOptions}"
-                                  SelectedItem="{Binding Target, UpdateSourceTrigger=PropertyChanged}" Margin="2" />
+                        <Button Tag="{Binding Row}" Click="BindingTile_Click" Height="48" Margin="0,0,10,4" Padding="8,5"
+                                HorizontalContentAlignment="Stretch"
+                                IsEnabled="{Binding DataContext.CanEditSelected, RelativeSource={RelativeSource AncestorType=Window}}"
+                                AutomationProperties.Name="{Binding Label}">
+                          <Grid>
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="42" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                            <Border Background="#302A59" CornerRadius="8" Width="36" Height="36">
+                              <TextBlock Text="{Binding Glyph}" FontSize="14" FontWeight="Bold" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                            </Border>
+                            <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                              <TextBlock Text="{Binding Label}" FontWeight="SemiBold" FontSize="13" />
+                              <TextBlock Foreground="{StaticResource AccentStrongBrush}" FontSize="12">
+                                <Run Text="→ " /><Run Text="{Binding Row.Target}" />
+                              </TextBlock>
+                            </StackPanel>
+                          </Grid>
+                        </Button>
                       </DataTemplate>
-                    </DataGridTemplateColumn.CellTemplate>
-                  </DataGridTemplateColumn>
-                </DataGrid.Columns>
-              </DataGrid>
-              <StackPanel Orientation="Horizontal" Margin="0,14,0,0">
-                <Button Content="Save changes" Click="Save_Click" />
-                <Button Content="Select profile" Click="Apply_Click" />
-              </StackPanel>
-            </StackPanel>
-          </Border>
+                    </ItemsControl.ItemTemplate>
+                  </ItemsControl>
+                </ScrollViewer>
 
-          <Border Background="{StaticResource PanelBrush}" CornerRadius="16" Padding="20" Margin="0,0,0,14">
-            <StackPanel>
-              <TextBlock Text="Controller shortcut" FontSize="17" FontWeight="SemiBold" />
-              <TextBlock Text="Hold the chord to show the next profile. Release and repeat to rotate; stop to commit. To open Ally Bindings, keep holding the chord and press RT." Foreground="{StaticResource MutedBrush}" TextWrapping="Wrap" Margin="0,5,0,12" />
-              <Grid>
-                <Grid.ColumnDefinitions><ColumnDefinition /><ColumnDefinition Width="14" /><ColumnDefinition /></Grid.ColumnDefinitions>
-                <StackPanel><TextBlock Text="Button 1" Foreground="{StaticResource MutedBrush}" /><ComboBox ItemsSource="{Binding ButtonOptions}" SelectedItem="{Binding ShortcutButton1}" /></StackPanel>
-                <StackPanel Grid.Column="2"><TextBlock Text="Button 2" Foreground="{StaticResource MutedBrush}" /><ComboBox ItemsSource="{Binding ButtonOptions}" SelectedItem="{Binding ShortcutButton2}" /></StackPanel>
-              </Grid>
-              <Grid>
-                <Grid.ColumnDefinitions><ColumnDefinition /><ColumnDefinition Width="14" /><ColumnDefinition /></Grid.ColumnDefinitions>
-                <StackPanel><TextBlock Text="Hold time (ms)" Foreground="{StaticResource MutedBrush}" /><TextBox Text="{Binding HoldMilliseconds}" /></StackPanel>
-                <StackPanel Grid.Column="2"><TextBlock Text="Commit delay (ms)" Foreground="{StaticResource MutedBrush}" /><TextBox Text="{Binding CommitDelayMilliseconds}" /></StackPanel>
-              </Grid>
-              <TextBlock x:Name="ShortcutWarningText" Foreground="#F3B75B" TextWrapping="Wrap" />
-            </StackPanel>
-          </Border>
+                <Grid Grid.Column="1" Margin="18">
+                  <Viewbox Stretch="Uniform" MaxWidth="480" MaxHeight="390">
+                    <Canvas Width="560" Height="400">
+                      <Path Data="M 72,118 C 92,74 141,55 190,69 L 370,69 C 419,55 468,74 488,118 L 526,266 C 535,302 514,337 480,345 L 404,295 L 156,295 L 80,345 C 46,337 25,302 34,266 Z"
+                            Fill="#111624" Stroke="#EEF1FF" StrokeThickness="10" StrokeLineJoin="Round" />
+                      <Rectangle Canvas.Left="188" Canvas.Top="102" Width="184" Height="142" RadiusX="14" RadiusY="14"
+                                 Fill="#0B0F19" Stroke="#8B73FF" StrokeThickness="6" />
+                      <Ellipse Canvas.Left="105" Canvas.Top="120" Width="58" Height="58" Fill="#302A59" Stroke="#A99AFF" StrokeThickness="6" />
+                      <Ellipse Canvas.Left="399" Canvas.Top="185" Width="58" Height="58" Fill="#302A59" Stroke="#A99AFF" StrokeThickness="6" />
+                      <Path Data="M 102,231 L 150,231 M 126,207 L 126,255" Stroke="#EEF1FF" StrokeThickness="15" StrokeStartLineCap="Round" StrokeEndLineCap="Round" />
+                      <Ellipse Canvas.Left="433" Canvas.Top="105" Width="25" Height="25" Fill="#62D6A7" />
+                      <Ellipse Canvas.Left="462" Canvas.Top="134" Width="25" Height="25" Fill="#F08BA5" />
+                      <Ellipse Canvas.Left="404" Canvas.Top="134" Width="25" Height="25" Fill="#6EC8FF" />
+                      <Ellipse Canvas.Left="433" Canvas.Top="163" Width="25" Height="25" Fill="#F5C56B" />
+                      <TextBlock Canvas.Left="228" Canvas.Top="142" Text="ALLY" FontSize="35" FontWeight="Bold" Foreground="#A99AFF" />
+                      <TextBlock Canvas.Left="218" Canvas.Top="185" Text="BINDINGS" FontSize="28" FontWeight="SemiBold" Foreground="#EEF1FF" />
+                      <TextBlock Canvas.Left="190" Canvas.Top="324" Text="Select a mapping with A or touch" FontSize="18" Foreground="#AEB5C7" />
+                    </Canvas>
+                  </Viewbox>
+                </Grid>
 
-          <Border Background="{StaticResource PanelBrush}" CornerRadius="16" Padding="20">
-            <StackPanel>
-              <TextBlock Text="Safety &amp; diagnostics" FontSize="17" FontWeight="SemiBold" />
-              <TextBlock x:Name="BackendStatusText" Foreground="{StaticResource MutedBrush}" TextWrapping="Wrap" Margin="0,8,0,12" />
-              <CheckBox IsChecked="{Binding EnableAsusRearButtonMappings}" IsEnabled="{Binding CanEnableAsusRearButtonMappings}" Margin="0,0,0,5">
-                <TextBlock Text="Enable ASUS M1/M2 hardware mappings (locked pending capture analysis)" TextWrapping="Wrap" />
-              </CheckBox>
-              <TextBlock Text="Ally Bindings cannot write M1/M2 in this build. The integrated logger below uses Windows USB ETW and retains only matching ASUS rear-mapping events; it installs no driver and writes no raw system-wide trace. Only a later validated build can unlock writes. Standard buttons remain preview-only."
-                         Foreground="#F3B75B" TextWrapping="Wrap" Margin="24,0,0,12" />
-              <TextBlock x:Name="ArmouryCaptureStatusText" Text="No Armoury protocol capture has been run. Windows will request one-time administrator approval when capture starts; no separate capture software is required."
-                         Foreground="{StaticResource MutedBrush}" TextWrapping="Wrap" Margin="24,0,0,8" />
-              <Button x:Name="ArmouryCaptureButton" Content="Capture Armoury M1/M2 protocol with Windows ETW (UAC)" Click="CaptureArmouryProtocol_Click" HorizontalAlignment="Left" Margin="24,0,0,14" />
-              <CheckBox IsChecked="{Binding RunAtStartup}" Margin="0,0,0,12">
-                <TextBlock Text="Run in the tray when I sign in (required for the controller shortcut before opening the window)" TextWrapping="Wrap" />
-              </CheckBox>
-              <CheckBox IsChecked="{Binding CheckForUpdatesAutomatically}" Margin="0,0,0,5">
-                <TextBlock Text="Automatically check GitHub Releases for updates" TextWrapping="Wrap" />
-              </CheckBox>
-              <CheckBox IsChecked="{Binding IncludePrereleaseUpdates}" Margin="24,0,0,8">
-                <TextBlock Text="Include preview releases" TextWrapping="Wrap" />
-              </CheckBox>
-              <TextBlock x:Name="UpdateStatusText" Foreground="{StaticResource MutedBrush}" TextWrapping="Wrap" Margin="24,0,0,8" />
-              <StackPanel Orientation="Horizontal">
-                <Button Content="Restore Default (Ctrl+Alt+F12)" Click="Panic_Click" />
-                <Button Content="Copy diagnostics" Click="CopyDiagnostics_Click" />
-                <Button Content="Check for updates" Click="CheckForUpdates_Click" />
-              </StackPanel>
+                <ScrollViewer Grid.Column="2" VerticalScrollBarVisibility="Auto" PanningMode="VerticalOnly">
+                  <ItemsControl ItemsSource="{Binding RightBindings}">
+                    <ItemsControl.ItemTemplate>
+                      <DataTemplate>
+                        <Button Tag="{Binding Row}" Click="BindingTile_Click" Height="48" Margin="10,0,0,4" Padding="8,5"
+                                HorizontalContentAlignment="Stretch"
+                                IsEnabled="{Binding DataContext.CanEditSelected, RelativeSource={RelativeSource AncestorType=Window}}"
+                                AutomationProperties.Name="{Binding Label}">
+                          <Grid>
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="42" /></Grid.ColumnDefinitions>
+                            <StackPanel VerticalAlignment="Center">
+                              <TextBlock Text="{Binding Label}" FontWeight="SemiBold" FontSize="13" />
+                              <TextBlock Foreground="{StaticResource AccentStrongBrush}" FontSize="12">
+                                <Run Text="{Binding Row.Target}" /><Run Text="  ←" />
+                              </TextBlock>
+                            </StackPanel>
+                            <Border Grid.Column="1" Background="#302A59" CornerRadius="8" Width="36" Height="36">
+                              <TextBlock Text="{Binding Glyph}" FontSize="14" FontWeight="Bold" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                            </Border>
+                          </Grid>
+                        </Button>
+                      </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                  </ItemsControl>
+                </ScrollViewer>
+              </Grid>
+            </Border>
+            <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Right">
+              <Button Content="Reset this layout" Click="ResetBindings_Click" />
+              <Button Content="X  Save" Click="Save_Click" />
+              <Button Content="Y  Select profile" Style="{StaticResource PrimaryButton}" Click="Apply_Click" />
             </StackPanel>
-          </Border>
-        </StackPanel>
-      </ScrollViewer>
+
+            <Border x:Name="BindingPickerOverlay" Grid.RowSpan="3" Panel.ZIndex="20" Visibility="Collapsed"
+                    Background="#E60A0D15" CornerRadius="18" Padding="36">
+              <Border Background="{StaticResource PanelRaisedBrush}" BorderBrush="{StaticResource AccentBrush}"
+                      BorderThickness="2" CornerRadius="20" Padding="24" MaxWidth="560" MaxHeight="540"
+                      HorizontalAlignment="Center" VerticalAlignment="Center">
+                <Grid>
+                  <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
+                  <StackPanel Margin="0,0,0,14">
+                    <TextBlock x:Name="BindingPickerTitle" Text="Choose output" FontSize="26" FontWeight="SemiBold" />
+                    <TextBlock Text="D-pad chooses · A confirms · B cancels" Foreground="{StaticResource MutedBrush}" />
+                  </StackPanel>
+                  <ListBox x:Name="BindingPickerList" Grid.Row="1" MinWidth="430" Background="#111624" BorderThickness="0"
+                           ScrollViewer.PanningMode="VerticalOnly" AutomationProperties.Name="Binding output choices" />
+                  <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,14,0,0">
+                    <Button Content="B  Cancel" Click="CancelBindingPicker_Click" />
+                    <Button Content="A  Use this binding" Style="{StaticResource PrimaryButton}" Click="ConfirmBindingPicker_Click" />
+                  </StackPanel>
+                </Grid>
+              </Border>
+            </Border>
+          </Grid>
+        </TabItem>
+
+        <!-- Shortcut -->
+        <TabItem>
+          <ScrollViewer PanningMode="VerticalOnly" VerticalScrollBarVisibility="Auto">
+            <StackPanel Margin="22" MaxWidth="820" HorizontalAlignment="Left">
+              <TextBlock Text="Controller shortcut" FontSize="27" FontWeight="SemiBold" />
+              <TextBlock Text="Hold the chord, release and repeat to rotate, then stop to commit. Keep holding and press RT to open Ally Bindings."
+                         Foreground="{StaticResource MutedBrush}" TextWrapping="Wrap" Margin="0,5,0,18" />
+              <Border Background="{StaticResource PanelBrush}" CornerRadius="18" Padding="24">
+                <StackPanel>
+                  <Grid>
+                    <Grid.ColumnDefinitions><ColumnDefinition /><ColumnDefinition Width="18" /><ColumnDefinition /></Grid.ColumnDefinitions>
+                    <StackPanel><TextBlock Text="Chord button 1" Foreground="{StaticResource MutedBrush}" /><ComboBox ItemsSource="{Binding ButtonOptions}" SelectedItem="{Binding ShortcutButton1}" /></StackPanel>
+                    <StackPanel Grid.Column="2"><TextBlock Text="Chord button 2" Foreground="{StaticResource MutedBrush}" /><ComboBox ItemsSource="{Binding ButtonOptions}" SelectedItem="{Binding ShortcutButton2}" /></StackPanel>
+                  </Grid>
+                  <Grid>
+                    <Grid.ColumnDefinitions><ColumnDefinition /><ColumnDefinition Width="18" /><ColumnDefinition /></Grid.ColumnDefinitions>
+                    <StackPanel>
+                      <TextBlock Text="Hold time" Foreground="{StaticResource MutedBrush}" />
+                      <StackPanel Orientation="Horizontal" Margin="0,6,0,12">
+                        <Button Content="−" Width="56" MinWidth="56" Click="DecreaseHold_Click" AutomationProperties.Name="Decrease hold time" />
+                        <Border Background="#111624" BorderBrush="#394157" BorderThickness="1" CornerRadius="9" Width="130" Height="48" Margin="0,0,10,0">
+                          <TextBlock Text="{Binding HoldMilliseconds, StringFormat={}{0} ms}" FontSize="18" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                        </Border>
+                        <Button Content="＋" Width="56" MinWidth="56" Click="IncreaseHold_Click" AutomationProperties.Name="Increase hold time" />
+                      </StackPanel>
+                    </StackPanel>
+                    <StackPanel Grid.Column="2">
+                      <TextBlock Text="Commit delay" Foreground="{StaticResource MutedBrush}" />
+                      <StackPanel Orientation="Horizontal" Margin="0,6,0,12">
+                        <Button Content="−" Width="56" MinWidth="56" Click="DecreaseCommitDelay_Click" AutomationProperties.Name="Decrease commit delay" />
+                        <Border Background="#111624" BorderBrush="#394157" BorderThickness="1" CornerRadius="9" Width="130" Height="48" Margin="0,0,10,0">
+                          <TextBlock Text="{Binding CommitDelayMilliseconds, StringFormat={}{0} ms}" FontSize="18" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                        </Border>
+                        <Button Content="＋" Width="56" MinWidth="56" Click="IncreaseCommitDelay_Click" AutomationProperties.Name="Increase commit delay" />
+                      </StackPanel>
+                    </StackPanel>
+                  </Grid>
+                  <TextBlock x:Name="ShortcutWarningText" Foreground="{StaticResource WarningBrush}" TextWrapping="Wrap" Margin="0,10" />
+                  <Button Content="X  Save shortcut" Style="{StaticResource PrimaryButton}" Click="Save_Click" HorizontalAlignment="Left" />
+                </StackPanel>
+              </Border>
+              <Border Background="#151D2B" BorderBrush="#35445B" BorderThickness="1" CornerRadius="16" Padding="20" Margin="0,16,0,0">
+                <StackPanel>
+                  <TextBlock Text="Controller navigation in this app" FontSize="20" FontWeight="SemiBold" />
+                  <TextBlock Text="D-pad moves focus · A selects · B returns · LB/RB changes section · X saves · Y selects the current profile."
+                             Foreground="{StaticResource MutedBrush}" TextWrapping="Wrap" Margin="0,7,0,0" />
+                </StackPanel>
+              </Border>
+            </StackPanel>
+          </ScrollViewer>
+        </TabItem>
+
+        <!-- Capture and update -->
+        <TabItem>
+          <ScrollViewer PanningMode="VerticalOnly" VerticalScrollBarVisibility="Auto">
+            <StackPanel Margin="22" MaxWidth="900" HorizontalAlignment="Left">
+              <TextBlock Text="Capture &amp; update" FontSize="27" FontWeight="SemiBold" />
+              <TextBlock Text="Hardware validation and app maintenance live here—nothing buried below the editor."
+                         Foreground="{StaticResource MutedBrush}" Margin="0,5,0,18" />
+
+              <Border Background="#241F42" BorderBrush="{StaticResource AccentBrush}" BorderThickness="2" CornerRadius="18" Padding="24" Margin="0,0,0,16">
+                <Grid>
+                  <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                  <StackPanel>
+                    <TextBlock Text="Capture Armoury M1/M2" FontSize="23" FontWeight="SemiBold" />
+                    <TextBlock Text="Record filtered candidate mapping reports with Windows USB ETW. No USBPcap, driver, or raw system trace. Windows asks for temporary elevation."
+                               Foreground="#CEC7F7" TextWrapping="Wrap" Margin="0,7,24,8" />
+                    <TextBlock x:Name="ArmouryCaptureStatusText" Text="Ready to capture the three-step Armoury mapping sequence."
+                               Foreground="{StaticResource MutedBrush}" TextWrapping="Wrap" Margin="0,4,24,0" />
+                  </StackPanel>
+                  <Button x:Name="ArmouryCaptureButton" Grid.Column="1" Style="{StaticResource PrimaryButton}"
+                          Content="Start capture" Click="CaptureArmouryProtocol_Click" VerticalAlignment="Center"
+                          AutomationProperties.Name="Capture Armoury M1 and M2 protocol with Windows ETW" />
+                </Grid>
+              </Border>
+
+              <Border Background="{StaticResource PanelBrush}" CornerRadius="18" Padding="24" Margin="0,0,0,16">
+                <Grid>
+                  <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                  <StackPanel>
+                    <TextBlock Text="App updates" FontSize="22" FontWeight="SemiBold" />
+                    <TextBlock x:Name="UpdateStatusText" Foreground="{StaticResource MutedBrush}" TextWrapping="Wrap" Margin="0,7,24,8" />
+                    <CheckBox IsChecked="{Binding CheckForUpdatesAutomatically}" Content="Check automatically" />
+                    <CheckBox IsChecked="{Binding IncludePrereleaseUpdates}" Content="Include preview releases" />
+                  </StackPanel>
+                  <Button Grid.Column="1" Style="{StaticResource PrimaryButton}" Content="Update app now" Click="CheckForUpdates_Click"
+                          VerticalAlignment="Center" AutomationProperties.Name="Check for and install updates now" />
+                </Grid>
+              </Border>
+
+              <Border Background="{StaticResource PanelBrush}" CornerRadius="18" Padding="24">
+                <StackPanel>
+                  <TextBlock Text="Safety and startup" FontSize="22" FontWeight="SemiBold" />
+                  <TextBlock x:Name="BackendStatusText" Foreground="{StaticResource MutedBrush}" TextWrapping="Wrap" Margin="0,8,0,12" />
+                  <CheckBox IsChecked="{Binding EnableAsusRearButtonMappings}" IsEnabled="{Binding CanEnableAsusRearButtonMappings}"
+                            Content="Enable ASUS M1/M2 hardware mappings (locked pending physical validation)" />
+                  <CheckBox IsChecked="{Binding RunAtStartup}" Content="Run in the tray when I sign in" />
+                  <WrapPanel Margin="0,14,0,0">
+                    <Button Content="Restore default" Click="Panic_Click" />
+                    <Button Content="Copy diagnostics" Click="CopyDiagnostics_Click" />
+                    <Button Content="Hide to tray" Click="Hide_Click" />
+                  </WrapPanel>
+                </StackPanel>
+              </Border>
+            </StackPanel>
+          </ScrollViewer>
+        </TabItem>
+      </TabControl>
+
+      <Border x:Name="NameKeyboardOverlay" Grid.Column="1" Panel.ZIndex="40" Visibility="Collapsed"
+              Background="#F20A0D15" Padding="34">
+        <Border Background="{StaticResource PanelRaisedBrush}" BorderBrush="{StaticResource AccentBrush}" BorderThickness="2"
+                CornerRadius="20" Padding="24" MaxWidth="760" MaxHeight="560" HorizontalAlignment="Center" VerticalAlignment="Center">
+          <Grid>
+            <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
+            <StackPanel>
+              <TextBlock Text="Rename profile" FontSize="27" FontWeight="SemiBold" />
+              <TextBlock Text="D-pad chooses · A types · X deletes · B cancels" Foreground="{StaticResource MutedBrush}" />
+            </StackPanel>
+            <Border Grid.Row="1" Background="#111624" BorderBrush="#394157" BorderThickness="1" CornerRadius="12" Padding="16,11" Margin="0,14">
+              <TextBlock x:Name="NameKeyboardPreview" FontSize="24" MinHeight="32" />
+            </Border>
+            <ItemsControl x:Name="NameKeyboardKeys" Grid.Row="2" ItemsSource="{Binding OnScreenKeys}">
+              <ItemsControl.ItemsPanel><ItemsPanelTemplate><UniformGrid Columns="9" /></ItemsPanelTemplate></ItemsControl.ItemsPanel>
+              <ItemsControl.ItemTemplate>
+                <DataTemplate>
+                  <Button Content="{Binding}" Tag="{Binding}" Click="NameKeyboardKey_Click" Width="58" MinWidth="58" Height="50" Margin="3" />
+                </DataTemplate>
+              </ItemsControl.ItemTemplate>
+            </ItemsControl>
+            <StackPanel Grid.Row="3" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,15,0,0">
+              <Button Content="Clear" Click="NameKeyboardClear_Click" />
+              <Button Content="Space" Click="NameKeyboardSpace_Click" />
+              <Button Content="X  Delete" Click="NameKeyboardDelete_Click" />
+              <Button Content="B  Cancel" Click="NameKeyboardCancel_Click" />
+              <Button Content="A  Done" Style="{StaticResource PrimaryButton}" Click="NameKeyboardDone_Click" />
+            </StackPanel>
+          </Grid>
+        </Border>
+      </Border>
+
+      <Border x:Name="ControllerDialogOverlay" Grid.ColumnSpan="2" Panel.ZIndex="60" Visibility="Collapsed"
+              Background="#F20A0D15" Padding="34">
+        <Border Background="{StaticResource PanelRaisedBrush}" BorderBrush="{StaticResource AccentBrush}" BorderThickness="2"
+                CornerRadius="20" Padding="26" MaxWidth="680" MaxHeight="560" HorizontalAlignment="Center" VerticalAlignment="Center">
+          <Grid>
+            <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
+            <TextBlock x:Name="ControllerDialogTitle" FontSize="27" FontWeight="SemiBold" TextWrapping="Wrap" />
+            <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" PanningMode="VerticalOnly" Margin="0,15">
+              <TextBlock x:Name="ControllerDialogMessage" FontSize="17" Foreground="#E5E8F2" TextWrapping="Wrap" LineHeight="25" />
+            </ScrollViewer>
+            <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Right">
+              <Button x:Name="ControllerDialogSecondaryButton" Content="B  Cancel" Click="ControllerDialogSecondary_Click" />
+              <Button x:Name="ControllerDialogPrimaryButton" Content="A  Continue" Style="{StaticResource PrimaryButton}" Click="ControllerDialogPrimary_Click" />
+            </StackPanel>
+          </Grid>
+        </Border>
+      </Border>
     </Grid>
 
-    <Grid Grid.Row="2" Margin="0,16,0,0">
-      <TextBlock x:Name="StatusText" Foreground="{StaticResource MutedBrush}" VerticalAlignment="Center" />
-      <Button Content="Hide to tray" HorizontalAlignment="Right" Click="Hide_Click" />
-    </Grid>
+    <Border Grid.Row="2" Background="#121725" BorderBrush="#272E40" BorderThickness="0,1,0,0" Padding="20,8">
+      <Grid>
+        <TextBlock x:Name="StatusText" Foreground="{StaticResource MutedBrush}" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
+        <TextBlock HorizontalAlignment="Right" VerticalAlignment="Center" Foreground="{StaticResource MutedBrush}" Text="A Select   B Back   LB/RB Sections   X Save   Y Apply" />
+      </Grid>
+    </Border>
   </Grid>
 </Window>

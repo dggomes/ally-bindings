@@ -14,6 +14,7 @@ XInput controller
 │ Windows host            │
 │ XInput monitor          │
 │ chord recognizer        │
+│ controller UI router    │
 │ tray / WPF main window  │
 │ non-activating overlay  │
 └──────────┬──────────────┘
@@ -59,9 +60,13 @@ Windows 10 2004+ WPF host:
 - View + Menu default chord with hold/release/debounce gating.
 - Non-activating, always-on-top profile overlay.
 - RT confirmation while the configured chord remains held to open the editor.
+- Edge-triggered controller UI routing for D-pad focus, A/B navigation, LB/RB sections and X/Y primary actions while the main window is active.
+- Four controller/touch workspaces with a visual controller binding surface and prominent capture/update maintenance surface.
+- Controller-aware binding-picker, profile-keyboard and decision-dialog layers; only Windows UAC and fatal pre-UI startup failures remain system-owned.
 - Integrated, temporarily elevated Windows USB ETW logger with an in-memory exact-prefix filter for Armoury M1/M2 feature reports.
 - Positively gated ASUS HID adapter whose custom and reset writes are source-disabled pending capture analysis.
-- Tray icon, startup registration and Ctrl+Alt+F12 panic/default hotkey.
+- Branded tray/executable icon, startup registration and Ctrl+Alt+F12 panic/default hotkey.
+- A `CurrentUserOnly` local named-pipe activation channel: a normal second launch asks the existing sign-in-started tray process to reveal its window instead of opening a duplicate process.
 - Profile/shortcut editor and truthful backend state.
 
 WPF was chosen over WinUI 3 for this narrow tray utility: fewer deployment/runtime moving parts, native Windows rendering and straightforward cross-target compilation. There is no Electron/browser runtime.
