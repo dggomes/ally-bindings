@@ -1,0 +1,22 @@
+# .NET / Visual Studio
+[Bb]in/
+[Oo]bj/
+.vs/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+# Local runtime state and machine-specific configuration
+appsettings.Local.json
+profiles.local.json
+*.log
+
+# Packaging and test artifacts
+artifacts/
+TestResults/
+coverage/
+
+# OS
+.DS_Store
+Thumbs.db
