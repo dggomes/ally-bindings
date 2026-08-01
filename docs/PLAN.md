@@ -25,7 +25,7 @@ A lightweight Windows tray application that lets Daniel rotate named controller 
 - [x] Redacted diagnostics export.
 - [x] Digest-verified GitHub updater with hardened extraction, atomic replacement, explicit startup-health handshake and rollback.
 - [x] Linux/macOS core tests plus Windows build/test/package CI.
-- [ ] Provision and authorize the public binary-only release feed; automatic checks remain disabled by default until then.
+- [x] Use the public source repository's Releases feed with automatic checks enabled by default and repository-scoped `GITHUB_TOKEN` publishing.
 
 ### Physical remapping — release gate
 

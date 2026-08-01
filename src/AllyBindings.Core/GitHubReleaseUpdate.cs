@@ -54,7 +54,7 @@ public static partial class GitHubReleaseUpdateSelector
         IEnumerable<GitHubRelease> releases,
         Version currentVersion,
         bool includePrerelease,
-        string expectedRepository = "dggomes/ally-bindings-releases")
+        string expectedRepository = "dggomes/ally-bindings")
     {
         var expectedReleasePrefix = $"/{expectedRepository.Trim('/')}/releases/";
         foreach (var release in releases

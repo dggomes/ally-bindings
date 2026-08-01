@@ -11,7 +11,7 @@ namespace AllyBindings.Windows;
 public sealed class GitHubUpdateService : IDisposable
 {
     private const long MaximumDownloadBytes = 256L * 1024 * 1024;
-    public const string ReleaseRepository = "dggomes/ally-bindings-releases";
+    public const string ReleaseRepository = "dggomes/ally-bindings";
     private const string ReleasesApi = "https://api.github.com/repos/" + ReleaseRepository + "/releases?per_page=10";
     private readonly HttpClient _httpClient;
     private bool _disposed;

@@ -16,13 +16,13 @@ public sealed class GitHubReleaseUpdateTests : IDisposable
             TagName = "v0.02",
             Name = "Preview 0.02",
             Prerelease = true,
-            HtmlUrl = "https://github.com/dggomes/ally-bindings-releases/releases/tag/v0.02",
+            HtmlUrl = "https://github.com/dggomes/ally-bindings/releases/tag/v0.02",
             Assets =
             [
                 new GitHubReleaseAsset
                 {
                     Name = "AllyBindings-v0.02-win-x64.zip",
-                    BrowserDownloadUrl = "https://github.com/dggomes/ally-bindings-releases/releases/download/v0.02/AllyBindings-v0.02-win-x64.zip",
+                    BrowserDownloadUrl = "https://github.com/dggomes/ally-bindings/releases/download/v0.02/AllyBindings-v0.02-win-x64.zip",
                     Digest = $"sha256:{new string('a', 64)}",
                 },
             ],
@@ -42,13 +42,13 @@ public sealed class GitHubReleaseUpdateTests : IDisposable
         {
             TagName = "v0.02",
             Prerelease = true,
-            HtmlUrl = "https://github.com/dggomes/ally-bindings-releases/releases/tag/v0.02",
+            HtmlUrl = "https://github.com/dggomes/ally-bindings/releases/tag/v0.02",
             Assets =
             [
                 new GitHubReleaseAsset
                 {
                     Name = "AllyBindings-v0.02-win-x64.zip",
-                    BrowserDownloadUrl = "https://github.com/dggomes/ally-bindings-releases/releases/download/v0.02/file.zip",
+                    BrowserDownloadUrl = "https://github.com/dggomes/ally-bindings/releases/download/v0.02/file.zip",
                 },
             ],
         };

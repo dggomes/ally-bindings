@@ -52,7 +52,7 @@ No driver or privileged installer is invoked. The optional M1/M2 backend uses th
 
 ## Updates
 
-- When enabled, the app checks the public `dggomes/ally-bindings-releases` GitHub Releases feed at most once every 24 hours. Automatic checks currently default off until that binary-only feed is provisioned; preview releases can be toggled independently.
+- The app checks the public `dggomes/ally-bindings` GitHub Releases feed at most once every 24 hours by default; automatic checks and preview releases can be toggled independently.
 - **Check for updates** runs the same check immediately.
 - Installation is never silent: the app shows the release and waits for confirmation.
 - The updater requires GitHub's SHA-256 asset digest, rejects unsafe ZIP paths/symlinks/duplicates, stages the package before exit, atomically replaces each file with the executable last, and retains both application-file and configuration backups until the new app explicitly confirms full initialization. Failure or timeout attempts every rollback step, restores the prior configuration schema, and relaunches the previous app; incomplete rollback is reported explicitly.

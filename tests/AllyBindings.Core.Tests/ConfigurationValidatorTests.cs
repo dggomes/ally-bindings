@@ -66,6 +66,7 @@ public sealed class ConfigurationValidatorTests
         var result = ConfigurationValidator.Normalize(AppConfiguration.CreateDefault() with { SchemaVersion = 1 });
 
         Assert.Equal(ConfigurationValidator.CurrentSchemaVersion, result.Configuration.SchemaVersion);
+        Assert.True(result.Configuration.CheckForUpdatesAutomatically);
         Assert.False(result.Configuration.EnableAsusRearButtonMappings);
     }
 

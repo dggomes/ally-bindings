@@ -31,7 +31,7 @@ public sealed record AppConfiguration
     public string ActiveProfileId { get; init; } = MappingProfile.Default.Id;
     public int? ControllerIndex { get; init; }
     public bool RunAtStartup { get; init; }
-    public bool CheckForUpdatesAutomatically { get; init; }
+    public bool CheckForUpdatesAutomatically { get; init; } = true;
     public bool IncludePrereleaseUpdates { get; init; } = true;
     public DateTimeOffset? LastUpdateCheckUtc { get; init; }
     public bool EnableAsusRearButtonMappings { get; init; }

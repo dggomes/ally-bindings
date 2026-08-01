@@ -3,7 +3,7 @@
   "activeProfileId": "default",
   "controllerIndex": null,
   "runAtStartup": false,
-  "checkForUpdatesAutomatically": false,
+  "checkForUpdatesAutomatically": true,
   "includePrereleaseUpdates": true,
   "lastUpdateCheckUtc": null,
   "enableAsusRearButtonMappings": false,
