@@ -18,6 +18,10 @@ $required = @(
     'docs/ARCHITECTURE.md',
     'docs/HARDWARE-SPIKE.md',
     'docs/PLAN.md',
+    'docs/images/ally-bindings-capture-update.png',
+    'docs/images/ally-bindings-controller.png',
+    'docs/images/ally-bindings-profiles.png',
+    'docs/images/ally-bindings-shortcut.png',
     'LICENSES/HidSharp-Apache-2.0.txt',
     'LICENSES/TraceEvent-MIT.txt'
 )

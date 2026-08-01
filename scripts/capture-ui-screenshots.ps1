@@ -28,6 +28,8 @@ public static class AllyBindingsScreenshotNative {
     public static extern bool SetForegroundWindow(IntPtr hWnd);
     [DllImport("user32.dll")]
     public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern bool PrintWindow(IntPtr hWnd, IntPtr hdcBlt, uint nFlags);
 }
 '@
 
@@ -67,6 +69,7 @@ function Select-Section {
     $selection = [System.Windows.Automation.SelectionItemPattern]$item.GetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern)
     $selection.Select()
     Start-Sleep -Milliseconds 450
+    if (-not $selection.Current.IsSelected) { throw "App section $AutomationId did not become selected." }
 }
 
 function Save-WindowScreenshot {
@@ -82,9 +85,20 @@ function Save-WindowScreenshot {
     try {
         $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
         try {
-            $graphics.CopyFromScreen($rect.Left, $rect.Top, 0, 0, $bitmap.Size, [System.Drawing.CopyPixelOperation]::SourceCopy)
+            $hdc = $graphics.GetHdc()
+            try {
+                if (-not [AllyBindingsScreenshotNative]::PrintWindow($Handle, $hdc, 2)) {
+                    throw "PrintWindow failed with Win32 error $([Runtime.InteropServices.Marshal]::GetLastWin32Error())."
+                }
+            }
+            finally { $graphics.ReleaseHdc($hdc) }
         }
         finally { $graphics.Dispose() }
+        $colours = [System.Collections.Generic.HashSet[int]]::new()
+        for ($x = 0; $x -lt $width; $x += 20) {
+            for ($y = 0; $y -lt $height; $y += 20) { [void]$colours.Add($bitmap.GetPixel($x, $y).ToArgb()) }
+        }
+        if ($colours.Count -lt 24) { throw "Captured window has insufficient visual entropy ($($colours.Count) sampled colours)." }
         $bitmap.Save($Path, [System.Drawing.Imaging.ImageFormat]::Png)
     }
     finally { $bitmap.Dispose() }

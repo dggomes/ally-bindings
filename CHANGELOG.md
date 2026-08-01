@@ -19,6 +19,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Thi
 - An always-visible manual **Update app** action plus a second maintenance-page update action.
 - Same-user named-pipe activation so launching the EXE reveals an existing sign-in-started tray instance.
 - Windows integration coverage for background startup and second-instance activation, plus structural UI discoverability/touch/controller assertions.
+- CI-captured screenshots of all four workspaces, published in the README and release package.
 
 ### Changed
 
@@ -26,11 +27,17 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Thi
 - Moved Armoury M1/M2 capture from a below-the-fold diagnostics card to the first, accented card in a dedicated persistent section.
 - Normal launches show and focus the main window; only explicit sign-in/background launches remain tray-only.
 - Version/status surfaces preserve the full prerelease SemVer instead of displaying only the numeric assembly version.
+- Release publishing now stages assets as a draft, downloads and independently verifies their hashes/package allowlist/metadata, then publishes the prerelease.
 
 ### Fixed
 
 - Fixed the published capture feature appearing absent at Ally-scale display heights because it was buried below the initial viewport.
 - Fixed a normal second launch reporting “already running” without opening the existing tray instance.
+- Prevented active-window controller actions and configured shortcut chords from firing simultaneously.
+- Serialized controller dialogs and made failed recovery confirmation fail closed instead of allowing shutdown.
+- Kept panic/default restoration available during passive Armoury capture; restore cancels capture while save/apply stay blocked.
+- Confined modal focus, made long controller dialogs scrollable, and made the profile keyboard fit the supported minimum window.
+- Fixed initial no-controller status, dark-workspace contrast, mapping accessibility names and live status announcements.
 
 ## [v0.2.0-preview.2] - 2026-08-01
 

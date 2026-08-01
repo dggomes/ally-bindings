@@ -88,6 +88,11 @@ try {
     if ($process.MainWindowHandle -eq [IntPtr]::Zero) { throw 'Normal launch did not show the main window.' }
 
     $root = [System.Windows.Automation.AutomationElement]::FromHandle($process.MainWindowHandle)
+    $transform = [System.Windows.Automation.TransformPattern]$root.GetCurrentPattern([System.Windows.Automation.TransformPattern]::Pattern)
+    if ($transform.Current.CanResize) {
+        $transform.Resize(900, 600)
+        Start-Sleep -Milliseconds 250
+    }
     Wait-ElementContaining -Root $root -Name 'Check for and install Ally Bindings updates' -ControlType ([System.Windows.Automation.ControlType]::Button) | Out-Null
 
     $maintenance = Wait-ElementById -Root $root -AutomationId 'NavigationCaptureUpdate'
@@ -99,6 +104,7 @@ try {
     $invoke = [System.Windows.Automation.InvokePattern]$capture.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern)
     $invoke.Invoke()
     $cancelDialog = Wait-ElementContaining -Root $root -Name 'B  Cancel' -ControlType ([System.Windows.Automation.ControlType]::Button)
+    if ($maintenance.Current.IsEnabled) { throw 'Workspace navigation remained enabled behind a controller dialog.' }
     $invoke = [System.Windows.Automation.InvokePattern]$cancelDialog.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern)
     $invoke.Invoke()
     Start-Sleep -Milliseconds 250
@@ -113,6 +119,7 @@ try {
     $invoke = [System.Windows.Automation.InvokePattern]$leftBumper.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern)
     $invoke.Invoke()
     Wait-ElementContaining -Root $root -Name 'Binding output choices' -ControlType ([System.Windows.Automation.ControlType]::List) | Out-Null
+    if ($controller.Current.IsEnabled) { throw 'Workspace navigation remained enabled behind the binding picker.' }
     $cancelPicker = Wait-ElementContaining -Root $root -Name 'B  Cancel' -ControlType ([System.Windows.Automation.ControlType]::Button)
     $invoke = [System.Windows.Automation.InvokePattern]$cancelPicker.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern)
     $invoke.Invoke()
@@ -125,6 +132,22 @@ try {
     $invoke = [System.Windows.Automation.InvokePattern]$rename.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern)
     $invoke.Invoke()
     Wait-ElementContaining -Root $root -Name 'A  Done' -ControlType ([System.Windows.Automation.ControlType]::Button) | Out-Null
+    $windowBounds = $root.Current.BoundingRectangle
+    $visibleEnabledButtons = @($root.FindAll(
+        [System.Windows.Automation.TreeScope]::Descendants,
+        (New-Object System.Windows.Automation.PropertyCondition(
+            [System.Windows.Automation.AutomationElement]::ControlTypeProperty,
+            [System.Windows.Automation.ControlType]::Button))) | Where-Object {
+            $_.Current.IsEnabled -and -not $_.Current.IsOffscreen
+        })
+    if ($visibleEnabledButtons.Count -lt 30) { throw "Controller keyboard exposed only $($visibleEnabledButtons.Count) usable buttons at 900x600." }
+    foreach ($button in $visibleEnabledButtons) {
+        $bounds = $button.Current.BoundingRectangle
+        if ($bounds.Left -lt $windowBounds.Left - 1 -or $bounds.Top -lt $windowBounds.Top - 1 -or
+            $bounds.Right -gt $windowBounds.Right + 1 -or $bounds.Bottom -gt $windowBounds.Bottom + 1) {
+            throw "Controller keyboard button '$($button.Current.Name)' overflows the 900x600 window."
+        }
+    }
 }
 finally {
     if ($process) {

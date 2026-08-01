@@ -32,10 +32,12 @@ public partial class App : System.Windows.Application
     private bool _exiting;
     private bool _updateCheckInProgress;
     private bool _armouryCaptureInProgress;
+    private CancellationTokenSource? _armouryCaptureCancellation;
     private bool _allowExitWithPendingRearMapping;
     private System.IO.FileStream? _executableIntegrityLock;
     private CancellationTokenSource? _activationListenerCancellation;
     private Task? _activationListenerTask;
+    private bool _activationRequested;
 
     public AppConfiguration Configuration { get; private set; } = AppConfiguration.CreateDefault();
 
@@ -75,6 +77,8 @@ public partial class App : System.Windows.Application
             Shutdown();
             return;
         }
+
+        StartActivationListener();
 
         var updateSuccessMarker = Environment.GetEnvironmentVariable("ALLY_BINDINGS_UPDATE_SUCCESS_MARKER");
         Environment.SetEnvironmentVariable("ALLY_BINDINGS_UPDATE_SUCCESS_MARKER", null);
@@ -138,7 +142,17 @@ public partial class App : System.Windows.Application
                 var command = await reader.ReadLineAsync(timeout.Token);
                 if (string.Equals(command, "open", StringComparison.Ordinal))
                 {
-                    await Dispatcher.InvokeAsync(OpenMainWindow);
+                    await Dispatcher.InvokeAsync(() =>
+                    {
+                        if (_mainWindow is null)
+                        {
+                            _activationRequested = true;
+                        }
+                        else
+                        {
+                            OpenMainWindow();
+                        }
+                    });
                 }
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -242,11 +256,11 @@ public partial class App : System.Windows.Application
             _mainWindow.SetUpdateStatus($"Current version: {GitHubUpdateService.CurrentSemanticVersion}");
 
             ConfigureTray();
-            StartActivationListener();
             _controllerMonitor = new XInputMonitor(Configuration.ControllerIndex);
             _controllerMonitor.SnapshotReceived += ControllerSnapshotReceived;
             _controllerMonitor.ActiveControllerChanged += (_, index) => _mainWindow.SetControllerStatus(index);
             _controllerMonitor.Start();
+            _mainWindow.SetControllerStatus(_controllerMonitor.ActiveControllerIndex);
 
             _panicHotKey = new GlobalPanicHotKey();
             _panicHotKey.Pressed += async (_, _) => await RestoreDefaultAsync("Panic shortcut");
@@ -255,7 +269,7 @@ public partial class App : System.Windows.Application
                 _configurationWarnings = _configurationWarnings.Append("Ctrl+Alt+F12 could not be registered; another application may own it.").ToList();
             }
 
-            if (!startInBackground)
+            if (!startInBackground || _activationRequested)
             {
                 OpenMainWindow();
             }
@@ -346,8 +360,9 @@ public partial class App : System.Windows.Application
 
     private void ControllerSnapshotReceived(object? sender, ControllerSnapshot snapshot)
     {
-        _mainWindow.HandleControllerInput(snapshot);
-        var events = _cycle.Process(snapshot, DateTimeOffset.UtcNow, BuildCycleItems(), Configuration.ActiveProfileId);
+        var consumedByEditor = _mainWindow.HandleControllerInput(snapshot);
+        var cycleSnapshot = ControllerInputArbitration.ForProfileCycle(snapshot, consumedByEditor);
+        var events = _cycle.Process(cycleSnapshot, DateTimeOffset.UtcNow, BuildCycleItems(), Configuration.ActiveProfileId);
         foreach (var cycleEvent in events)
         {
             switch (cycleEvent.Kind)
@@ -387,6 +402,10 @@ public partial class App : System.Windows.Application
         await _operationGate.WaitAsync();
         try
         {
+            if (_armouryCaptureInProgress)
+            {
+                throw new InvalidOperationException("Save is blocked while Armoury capture is active. Cancel or finish the capture first.");
+            }
             var selectedProfileId = editor.SelectedProfile is null
                 ? null
                 : editor.SelectedProfile.IsDefault
@@ -446,6 +465,11 @@ public partial class App : System.Windows.Application
         await _operationGate.WaitAsync();
         try
         {
+            if (_armouryCaptureInProgress)
+            {
+                _mainWindow.SetStatus("Profile changes are blocked while Armoury capture is active.");
+                return;
+            }
             var profile = Configuration.Profiles.FirstOrDefault(candidate => candidate.Id.Equals(profileId, StringComparison.OrdinalIgnoreCase));
             if (profile is null)
             {
@@ -538,6 +562,11 @@ public partial class App : System.Windows.Application
 
     public async Task RestoreDefaultAsync(string reason)
     {
+        if (_armouryCaptureInProgress)
+        {
+            _armouryCaptureCancellation?.Cancel();
+            _mainWindow.CancelControllerDialog();
+        }
         await _operationGate.WaitAsync();
         try
         {
@@ -610,17 +639,28 @@ public partial class App : System.Windows.Application
 
     public async Task CaptureArmouryProtocolAsync()
     {
-        if (_armouryCaptureInProgress) return;
-        _armouryCaptureInProgress = true;
         await _operationGate.WaitAsync();
+        try
+        {
+            if (_armouryCaptureInProgress) return;
+            _armouryCaptureInProgress = true;
+            _armouryCaptureCancellation = new CancellationTokenSource();
+        }
+        finally
+        {
+            _operationGate.Release();
+        }
+        var cancellationToken = _armouryCaptureCancellation.Token;
         ArmouryCaptureSession? session = null;
 
         async Task RequireCaptureStepAsync(string message, string title)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             if (!await _mainWindow.ShowControllerDialogAsync(title, message, primaryLabel: "Done"))
             {
                 throw new OperationCanceledException("The capture was cancelled. The integrated ETW session was stopped and no bundle was accepted as evidence.");
             }
+            cancellationToken.ThrowIfCancellationRequested();
         }
         try
         {
@@ -631,15 +671,18 @@ public partial class App : System.Windows.Application
                 "You will deliberately change M1/M2 three times through Armoury Crate so we can collect candidate bus payloads for hardware review. Ally Bindings will send no HID reports, cannot clear recovery state from this capture, and its ASUS write backend remains source locked.\n\nContinue?",
                 primaryLabel: "Continue");
             if (!proceed) return;
+            cancellationToken.ThrowIfCancellationRequested();
 
             _cycle.Cancel();
             _mainWindow.SetArmouryCaptureStatus("Confirming the ASUS feature-report interface…");
             var captureService = new ArmouryCaptureService();
             var target = await captureService.DiscoverTargetAsync();
+            cancellationToken.ThrowIfCancellationRequested();
             await RequireCaptureStepAsync(
                 $"Confirm this is the ROG Ally controller you intend to inspect:\n\nModel: {target.Model}\nCompatible ASUS HID interfaces: {string.Join(" | ", target.DeviceIds)}\n\nNo ETW session has started yet. Click Cancel if this identity is unexpected.",
                 "Confirm integrated Windows capture");
             session = await captureService.StartAsync(target);
+            cancellationToken.ThrowIfCancellationRequested();
             _mainWindow.SetArmouryCaptureStatus(
                 $"Integrated ETW capture running through {string.Join(" + ", session.EnabledProviders)}. Follow the Armoury prompts; this app remains write-locked.");
 
@@ -661,6 +704,7 @@ public partial class App : System.Windows.Application
                 "Capture step 3 of 3 · Armoury defaults");
             session.MarkAction("armoury-reset-m1-m2-to-default");
 
+            cancellationToken.ThrowIfCancellationRequested();
             var result = await captureService.CompleteAsync(session);
             session = null;
             _mainWindow.SetArmouryCaptureStatus(
@@ -704,7 +748,8 @@ public partial class App : System.Windows.Application
         finally
         {
             _mainWindow.SetArmouryCaptureBusy(false);
-            _operationGate.Release();
+            _armouryCaptureCancellation?.Dispose();
+            _armouryCaptureCancellation = null;
             _armouryCaptureInProgress = false;
         }
     }
@@ -883,7 +928,7 @@ public partial class App : System.Windows.Application
         if (_exiting) return;
         _exiting = true;
         await _operationGate.WaitAsync();
-        var shouldShutdown = true;
+        var shouldShutdown = false;
 
         try
         {
@@ -953,6 +998,13 @@ public partial class App : System.Windows.Application
             TryCleanup(() => _mainWindow.AllowClose());
             TryCleanup(() => _mainWindow.Close());
             ReleaseSingleInstanceMutex();
+            shouldShutdown = true;
+        }
+        catch (Exception ex)
+        {
+            _exiting = false;
+            _mainWindow.SetStatus($"Exit blocked because recovery confirmation could not complete: {ex.Message}");
+            OpenMainWindow();
         }
         finally
         {

@@ -186,8 +186,12 @@
                       <DataTemplate>
                         <Button Tag="{Binding Row}" Click="BindingTile_Click" Height="48" Margin="0,0,10,4" Padding="8,5"
                                 HorizontalContentAlignment="Stretch"
-                                IsEnabled="{Binding DataContext.CanEditSelected, RelativeSource={RelativeSource AncestorType=Window}}"
-                                AutomationProperties.Name="{Binding Label}">
+                                IsEnabled="{Binding DataContext.CanEditSelected, RelativeSource={RelativeSource AncestorType=Window}}">
+                          <AutomationProperties.Name>
+                            <MultiBinding StringFormat="{}{0}, mapped to {1}">
+                              <Binding Path="Label" /><Binding Path="Row.Target" />
+                            </MultiBinding>
+                          </AutomationProperties.Name>
                           <Grid>
                             <Grid.ColumnDefinitions><ColumnDefinition Width="42" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
                             <Border Background="#302A59" CornerRadius="8" Width="36" Height="36">
@@ -233,8 +237,12 @@
                       <DataTemplate>
                         <Button Tag="{Binding Row}" Click="BindingTile_Click" Height="48" Margin="10,0,0,4" Padding="8,5"
                                 HorizontalContentAlignment="Stretch"
-                                IsEnabled="{Binding DataContext.CanEditSelected, RelativeSource={RelativeSource AncestorType=Window}}"
-                                AutomationProperties.Name="{Binding Label}">
+                                IsEnabled="{Binding DataContext.CanEditSelected, RelativeSource={RelativeSource AncestorType=Window}}">
+                          <AutomationProperties.Name>
+                            <MultiBinding StringFormat="{}{0}, mapped to {1}">
+                              <Binding Path="Label" /><Binding Path="Row.Target" />
+                            </MultiBinding>
+                          </AutomationProperties.Name>
                           <Grid>
                             <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="42" /></Grid.ColumnDefinitions>
                             <StackPanel VerticalAlignment="Center">
@@ -259,27 +267,6 @@
               <Button Content="X  Save" Click="Save_Click" />
               <Button Content="Y  Select profile" Style="{StaticResource PrimaryButton}" Click="Apply_Click" />
             </StackPanel>
-
-            <Border x:Name="BindingPickerOverlay" Grid.RowSpan="3" Panel.ZIndex="20" Visibility="Collapsed"
-                    Background="#E60A0D15" CornerRadius="18" Padding="36">
-              <Border Background="{StaticResource PanelRaisedBrush}" BorderBrush="{StaticResource AccentBrush}"
-                      BorderThickness="2" CornerRadius="20" Padding="24" MaxWidth="560" MaxHeight="540"
-                      HorizontalAlignment="Center" VerticalAlignment="Center">
-                <Grid>
-                  <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
-                  <StackPanel Margin="0,0,0,14">
-                    <TextBlock x:Name="BindingPickerTitle" Text="Choose output" FontSize="26" FontWeight="SemiBold" />
-                    <TextBlock Text="D-pad chooses · A confirms · B cancels" Foreground="{StaticResource MutedBrush}" />
-                  </StackPanel>
-                  <ListBox x:Name="BindingPickerList" Grid.Row="1" MinWidth="430" Background="#111624" BorderThickness="0"
-                           ScrollViewer.PanningMode="VerticalOnly" AutomationProperties.Name="Binding output choices" />
-                  <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,14,0,0">
-                    <Button Content="B  Cancel" Click="CancelBindingPicker_Click" />
-                    <Button Content="A  Use this binding" Style="{StaticResource PrimaryButton}" Click="ConfirmBindingPicker_Click" />
-                  </StackPanel>
-                </Grid>
-              </Border>
-            </Border>
           </Grid>
         </TabItem>
 
@@ -351,6 +338,7 @@
                     <TextBlock Text="Record filtered candidate mapping reports with Windows USB ETW. No USBPcap, driver, or raw system trace. Windows asks for temporary elevation."
                                Foreground="#CEC7F7" TextWrapping="Wrap" Margin="0,7,24,8" />
                     <TextBlock x:Name="ArmouryCaptureStatusText" Text="Ready to capture the three-step Armoury mapping sequence."
+                               AutomationProperties.LiveSetting="Polite"
                                Foreground="{StaticResource MutedBrush}" TextWrapping="Wrap" Margin="0,4,24,0" />
                   </StackPanel>
                   <Button x:Name="ArmouryCaptureButton" Grid.Column="1" Style="{StaticResource PrimaryButton}"
@@ -393,10 +381,33 @@
         </TabItem>
       </TabControl>
 
-      <Border x:Name="NameKeyboardOverlay" Grid.Column="1" Panel.ZIndex="40" Visibility="Collapsed"
+      <Border x:Name="BindingPickerOverlay" Grid.ColumnSpan="2" Panel.ZIndex="40" Visibility="Collapsed"
+              Background="#F20A0D15" Padding="36">
+        <Border Background="{StaticResource PanelRaisedBrush}" BorderBrush="{StaticResource AccentBrush}"
+                BorderThickness="2" CornerRadius="20" Padding="24" MaxWidth="560" MaxHeight="540"
+                FocusManager.IsFocusScope="True" KeyboardNavigation.TabNavigation="Cycle" KeyboardNavigation.DirectionalNavigation="Cycle"
+                HorizontalAlignment="Center" VerticalAlignment="Center">
+          <Grid>
+            <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
+            <StackPanel Margin="0,0,0,14">
+              <TextBlock x:Name="BindingPickerTitle" Text="Choose output" FontSize="26" FontWeight="SemiBold" />
+              <TextBlock Text="D-pad chooses · A confirms · B cancels" Foreground="{StaticResource MutedBrush}" />
+            </StackPanel>
+            <ListBox x:Name="BindingPickerList" Grid.Row="1" MinWidth="430" Background="#111624" BorderThickness="0"
+                     ScrollViewer.PanningMode="VerticalOnly" AutomationProperties.Name="Binding output choices" />
+            <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,14,0,0">
+              <Button Content="B  Cancel" Click="CancelBindingPicker_Click" />
+              <Button Content="A  Use this binding" Style="{StaticResource PrimaryButton}" Click="ConfirmBindingPicker_Click" />
+            </StackPanel>
+          </Grid>
+        </Border>
+      </Border>
+
+      <Border x:Name="NameKeyboardOverlay" Grid.ColumnSpan="2" Panel.ZIndex="40" Visibility="Collapsed"
               Background="#F20A0D15" Padding="34">
         <Border Background="{StaticResource PanelRaisedBrush}" BorderBrush="{StaticResource AccentBrush}" BorderThickness="2"
-                CornerRadius="20" Padding="24" MaxWidth="760" MaxHeight="560" HorizontalAlignment="Center" VerticalAlignment="Center">
+                CornerRadius="20" Padding="24" MaxWidth="760" MaxHeight="560" HorizontalAlignment="Center" VerticalAlignment="Center"
+                FocusManager.IsFocusScope="True" KeyboardNavigation.TabNavigation="Cycle" KeyboardNavigation.DirectionalNavigation="Cycle">
           <Grid>
             <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
             <StackPanel>
@@ -410,7 +421,7 @@
               <ItemsControl.ItemsPanel><ItemsPanelTemplate><UniformGrid Columns="9" /></ItemsPanelTemplate></ItemsControl.ItemsPanel>
               <ItemsControl.ItemTemplate>
                 <DataTemplate>
-                  <Button Content="{Binding}" Tag="{Binding}" Click="NameKeyboardKey_Click" Width="58" MinWidth="58" Height="50" Margin="3" />
+                  <Button Content="{Binding}" Tag="{Binding}" Click="NameKeyboardKey_Click" MinWidth="44" Height="50" Margin="3" />
                 </DataTemplate>
               </ItemsControl.ItemTemplate>
             </ItemsControl>
@@ -428,11 +439,12 @@
       <Border x:Name="ControllerDialogOverlay" Grid.ColumnSpan="2" Panel.ZIndex="60" Visibility="Collapsed"
               Background="#F20A0D15" Padding="34">
         <Border Background="{StaticResource PanelRaisedBrush}" BorderBrush="{StaticResource AccentBrush}" BorderThickness="2"
-                CornerRadius="20" Padding="26" MaxWidth="680" MaxHeight="560" HorizontalAlignment="Center" VerticalAlignment="Center">
+                CornerRadius="20" Padding="26" MaxWidth="680" MaxHeight="560" HorizontalAlignment="Center" VerticalAlignment="Center"
+                FocusManager.IsFocusScope="True" KeyboardNavigation.TabNavigation="Cycle" KeyboardNavigation.DirectionalNavigation="Cycle">
           <Grid>
             <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
             <TextBlock x:Name="ControllerDialogTitle" FontSize="27" FontWeight="SemiBold" TextWrapping="Wrap" />
-            <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" PanningMode="VerticalOnly" Margin="0,15">
+            <ScrollViewer x:Name="ControllerDialogScrollViewer" Grid.Row="1" VerticalScrollBarVisibility="Auto" PanningMode="VerticalOnly" Margin="0,15">
               <TextBlock x:Name="ControllerDialogMessage" FontSize="17" Foreground="#E5E8F2" TextWrapping="Wrap" LineHeight="25" />
             </ScrollViewer>
             <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Right">
@@ -446,7 +458,8 @@
 
     <Border Grid.Row="2" Background="#121725" BorderBrush="#272E40" BorderThickness="0,1,0,0" Padding="20,8">
       <Grid>
-        <TextBlock x:Name="StatusText" Foreground="{StaticResource MutedBrush}" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
+        <TextBlock x:Name="StatusText" Foreground="{StaticResource MutedBrush}" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"
+                   AutomationProperties.LiveSetting="Polite" />
         <TextBlock HorizontalAlignment="Right" VerticalAlignment="Center" Foreground="{StaticResource MutedBrush}" Text="A Select   B Back   LB/RB Sections   X Save   Y Apply" />
       </Grid>
     </Border>

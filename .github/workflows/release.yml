@@ -22,8 +22,8 @@ jobs:
       - name: Verify tag matches application version
         shell: pwsh
         run: |
-          [xml]$project = Get-Content src/AllyBindings.Windows/AllyBindings.Windows.csproj
-          $appVersion = [string]$project.Project.PropertyGroup.Version
+          [xml]$buildProps = Get-Content Directory.Build.props
+          $appVersion = [string]$buildProps.Project.PropertyGroup.Version
           $previewSemVer = '^v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)-((?:0|[1-9]\d*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9]\d*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*))*)$'
           if ($env:GITHUB_REF_NAME -notmatch $previewSemVer) {
             throw "Tag $env:GITHUB_REF_NAME is not a strict semantic-version preview tag"
@@ -83,14 +83,48 @@ jobs:
             ForEach-Object { "$($_.Hash.ToLower())  AllyBindings-$tag-win-x64.exe" } |
             Set-Content "artifacts/AllyBindings-$tag-win-x64.exe.sha256" -NoNewline
           ./scripts/get-release-notes.ps1 -Tag $tag -OutputPath artifacts/release-notes.md
-      - name: Publish preview release
+      - name: Create draft preview release
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           $tag = $env:GITHUB_REF_NAME
-          gh release create $tag --repo $env:GITHUB_REPOSITORY --prerelease --title "Ally Bindings $tag — Preview" --notes-file artifacts/release-notes.md `
+          $existingJson = gh release view $tag --repo $env:GITHUB_REPOSITORY --json isDraft 2>$null
+          if ($LASTEXITCODE -eq 0) {
+            $existing = $existingJson | ConvertFrom-Json
+            if (-not $existing.isDraft) { throw "Refusing to replace an already-published release for $tag" }
+            gh release delete $tag --repo $env:GITHUB_REPOSITORY --yes
+          }
+          gh release create $tag --repo $env:GITHUB_REPOSITORY --draft --prerelease --title "Ally Bindings $tag — Preview" --notes-file artifacts/release-notes.md `
             "artifacts/AllyBindings-$tag-win-x64.zip#Recommended Windows x64 package" `
             "artifacts/AllyBindings-$tag-win-x64.zip.sha256#Package SHA-256" `
             "artifacts/AllyBindings-$tag-win-x64.exe#Standalone Windows x64 executable" `
             "artifacts/AllyBindings-$tag-win-x64.exe.sha256#Standalone executable SHA-256"
+      - name: Verify uploaded draft assets and publish
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = $env:GITHUB_REF_NAME
+          $verify = Join-Path $PWD 'artifacts/release-verification'
+          New-Item -ItemType Directory -Force -Path $verify | Out-Null
+          gh release download $tag --repo $env:GITHUB_REPOSITORY --dir $verify
+
+          foreach ($kind in @('zip', 'exe')) {
+            $asset = Join-Path $verify "AllyBindings-$tag-win-x64.$kind"
+            $hashFile = "$asset.sha256"
+            $expected = ((Get-Content -LiteralPath $hashFile -Raw).Trim() -split '\s+')[0]
+            $actual = (Get-FileHash -LiteralPath $asset -Algorithm SHA256).Hash.ToLowerInvariant()
+            if ($actual -cne $expected) { throw "Uploaded $kind hash mismatch: expected $expected, got $actual" }
+          }
+
+          $expanded = Join-Path $verify 'expanded'
+          Expand-Archive -LiteralPath (Join-Path $verify "AllyBindings-$tag-win-x64.zip") -DestinationPath $expanded
+          ./scripts/test-release-package.ps1 -PackageRoot $expanded -ZipPath (Join-Path $verify "AllyBindings-$tag-win-x64.zip")
+
+          $release = gh release view $tag --repo $env:GITHUB_REPOSITORY --json tagName,name,isDraft,isPrerelease | ConvertFrom-Json
+          if ($release.tagName -cne $tag -or $release.name -cne "Ally Bindings $tag — Preview" -or
+              -not $release.isDraft -or -not $release.isPrerelease) {
+            throw "Draft release metadata verification failed"
+          }
+          gh release edit $tag --repo $env:GITHUB_REPOSITORY --draft=false --prerelease

@@ -16,7 +16,19 @@ $first = $null
 $second = $null
 try {
     $first = Start-Process -FilePath $ExecutablePath -ArgumentList '--background' -PassThru
-    Start-Sleep -Seconds 3
+    $mutexReady = $false
+    $deadline = [DateTime]::UtcNow.AddSeconds(5)
+    do {
+        try {
+            $probe = [Threading.Mutex]::OpenExisting('Local\AllyBindings.SingleInstance')
+            $probe.Dispose()
+            $mutexReady = $true
+        }
+        catch [Threading.WaitHandleCannotBeOpenedException] {
+            Start-Sleep -Milliseconds 20
+        }
+    } while (-not $mutexReady -and [DateTime]::UtcNow -lt $deadline)
+    if (-not $mutexReady) { throw 'The first instance did not create its single-instance mutex.' }
     $first.Refresh()
     if ($first.HasExited) {
         throw "The background startup instance exited unexpectedly with code $($first.ExitCode)."

@@ -36,6 +36,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private BindingRow? _bindingPickerRow;
     private Button? _bindingPickerOrigin;
     private string _editingProfileName = string.Empty;
+    private readonly SemaphoreSlim _dialogGate = new(1, 1);
     private TaskCompletionSource<bool>? _dialogCompletion;
 
     public MainWindow(AppConfiguration configuration, BackendStatus backendStatus)
@@ -151,30 +152,46 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     public void SetArmouryCaptureStatus(string message) => ArmouryCaptureStatusText.Text = message;
     public void SetArmouryCaptureBusy(bool isBusy) => ArmouryCaptureButton.IsEnabled = !isBusy;
     public void AllowClose() => _allowClose = true;
+    public void CancelControllerDialog() => CompleteControllerDialog(false);
 
-    public Task<bool> ShowControllerDialogAsync(
+    public async Task<bool> ShowControllerDialogAsync(
         string title,
         string message,
         bool allowCancel = true,
         string primaryLabel = "Continue",
         string secondaryLabel = "Cancel")
     {
-        if (_dialogCompletion is not null)
+        await _dialogGate.WaitAsync();
+        var completion = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        try
         {
-            throw new InvalidOperationException("Another Ally Bindings dialog is already open.");
+            if (BindingPickerOverlay.Visibility == Visibility.Visible) CloseBindingPicker();
+            if (NameKeyboardOverlay.Visibility == Visibility.Visible) CloseNameKeyboard();
+            SetWorkspaceInteractive(false);
+            _dialogCompletion = completion;
+            ControllerDialogTitle.Text = title;
+            ControllerDialogMessage.Text = message;
+            ControllerDialogPrimaryButton.Content = $"A  {primaryLabel}";
+            ControllerDialogSecondaryButton.Content = $"B  {secondaryLabel}";
+            ControllerDialogSecondaryButton.Visibility = allowCancel ? Visibility.Visible : Visibility.Collapsed;
+            ControllerDialogScrollViewer.ScrollToTop();
+            if (WindowState == WindowState.Minimized) WindowState = WindowState.Normal;
+            if (!IsVisible) Show();
+            Activate();
+            ControllerDialogOverlay.Visibility = Visibility.Visible;
+            Keyboard.Focus(ControllerDialogPrimaryButton);
+            return await completion.Task;
         }
-        _dialogCompletion = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
-        ControllerDialogTitle.Text = title;
-        ControllerDialogMessage.Text = message;
-        ControllerDialogPrimaryButton.Content = $"A  {primaryLabel}";
-        ControllerDialogSecondaryButton.Content = $"B  {secondaryLabel}";
-        ControllerDialogSecondaryButton.Visibility = allowCancel ? Visibility.Visible : Visibility.Collapsed;
-        if (WindowState == WindowState.Minimized) WindowState = WindowState.Normal;
-        if (!IsVisible) Show();
-        Activate();
-        ControllerDialogOverlay.Visibility = Visibility.Visible;
-        Keyboard.Focus(ControllerDialogPrimaryButton);
-        return _dialogCompletion.Task;
+        finally
+        {
+            if (ReferenceEquals(_dialogCompletion, completion))
+            {
+                _dialogCompletion = null;
+                ControllerDialogOverlay.Visibility = Visibility.Collapsed;
+            }
+            SetWorkspaceInteractive(true);
+            _dialogGate.Release();
+        }
     }
 
     public void FocusControllerDefault()
@@ -187,25 +204,25 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         }
     }
 
-    public void HandleControllerInput(ControllerSnapshot snapshot)
+    public bool HandleControllerInput(ControllerSnapshot snapshot)
     {
         var commands = _uiInput.Process(snapshot);
-        if (!IsVisible || !IsActive || commands.Count == 0) return;
+        if (!IsActive) return false;
 
         if (ControllerDialogOverlay.Visibility == Visibility.Visible)
         {
             foreach (var command in commands) HandleControllerDialogCommand(command);
-            return;
+            return true;
         }
         if (BindingPickerOverlay.Visibility == Visibility.Visible)
         {
             foreach (var command in commands) HandleBindingPickerCommand(command);
-            return;
+            return true;
         }
         if (NameKeyboardOverlay.Visibility == Visibility.Visible)
         {
             foreach (var command in commands) HandleNameKeyboardCommand(command);
-            return;
+            return true;
         }
 
         foreach (var command in commands)
@@ -244,20 +261,25 @@ public partial class MainWindow : Window, INotifyPropertyChanged
                     break;
             }
         }
+        return true;
     }
 
     private void HandleControllerDialogCommand(ControllerUiCommand command)
     {
         switch (command)
         {
-            case ControllerUiCommand.MoveLeft:
             case ControllerUiCommand.MoveUp:
+                ControllerDialogScrollViewer.LineUp();
+                break;
+            case ControllerUiCommand.MoveDown:
+                ControllerDialogScrollViewer.LineDown();
+                break;
+            case ControllerUiCommand.MoveLeft:
                 Keyboard.Focus(ControllerDialogSecondaryButton.Visibility == Visibility.Visible
                     ? ControllerDialogSecondaryButton
                     : ControllerDialogPrimaryButton);
                 break;
             case ControllerUiCommand.MoveRight:
-            case ControllerUiCommand.MoveDown:
                 Keyboard.Focus(ControllerDialogPrimaryButton);
                 break;
             case ControllerUiCommand.Activate:
@@ -502,6 +524,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         if (!CanEditSelected || SelectedProfile is null) return;
         _editingProfileName = SelectedProfile.Name;
         NameKeyboardPreview.Text = _editingProfileName;
+        SetWorkspaceInteractive(false);
         NameKeyboardOverlay.Visibility = Visibility.Visible;
         NameKeyboardKeys.UpdateLayout();
         if (NameKeyboardKeys.ItemContainerGenerator.ContainerFromIndex(0) is ContentPresenter presenter &&
@@ -570,6 +593,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     {
         NameKeyboardOverlay.Visibility = Visibility.Collapsed;
         _editingProfileName = string.Empty;
+        SetWorkspaceInteractive(true);
         FocusControllerDefault();
     }
 
@@ -624,6 +648,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         BindingPickerTitle.Text = $"Map {label}";
         BindingPickerList.ItemsSource = row.TargetOptions;
         BindingPickerList.SelectedItem = row.Target;
+        SetWorkspaceInteractive(false);
         BindingPickerOverlay.Visibility = Visibility.Visible;
         BindingPickerList.UpdateLayout();
         if (BindingPickerList.ItemContainerGenerator.ContainerFromItem(row.Target) is ListBoxItem item)
@@ -654,6 +679,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         BindingPickerOverlay.Visibility = Visibility.Collapsed;
         BindingPickerList.ItemsSource = null;
         _bindingPickerRow = null;
+        SetWorkspaceInteractive(true);
         var origin = _bindingPickerOrigin;
         _bindingPickerOrigin = null;
         if (origin is { IsVisible: true, IsEnabled: true }) Keyboard.Focus(origin);
@@ -669,6 +695,12 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         _dialogCompletion = null;
         ControllerDialogOverlay.Visibility = Visibility.Collapsed;
         completion.TrySetResult(result);
+    }
+
+    private void SetWorkspaceInteractive(bool isInteractive)
+    {
+        NavigationList.IsEnabled = isInteractive;
+        WorkspaceTabs.IsEnabled = isInteractive;
     }
 
     private void CopyDiagnostics_Click(object sender, RoutedEventArgs e)
