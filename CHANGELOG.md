@@ -6,7 +6,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Thi
 
 ## [Unreleased]
 
-## [v0.2.0-preview.1] - 2026-08-01
+## [v0.2.0-preview.2] - 2026-08-01
 
 ### Added
 
@@ -38,6 +38,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Thi
 - Native resets require the recovery gate explicitly; custom mappings require both custom and recovery authorization so a mapping can never be enabled without its rollback path.
 - Missing providers, lost/oversized/dropped ETW events, duplicate/extra report vectors and target identity changes remain review-required and cannot affect write or recovery state.
 - The temporary ETW session stops cooperatively on completion, cancellation, timeout or parent disconnect; its fixed name lets the next capture reclaim a session orphaned by a hard process crash.
+- ETW loss is queried while the session is live, provider enablement is synchronously acknowledged, and action/report correlation uses the shared Windows performance-counter clock.
+- The elevated helper verifies that its pipe server is the same executable image, updater assets are bound exactly to their release tag, and release tags must descend from `main`.
+- Capture output is a single private ZIP with an externally displayable SHA-256; loose duplicate artifacts are no longer retained.
 
 ## [v0.01] - 2026-08-01
 
@@ -63,4 +66,4 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Thi
 - Releases are not Authenticode-signed.
 
 [v0.01]: https://github.com/dggomes/ally-bindings/releases/tag/v0.01
-[v0.2.0-preview.1]: https://github.com/dggomes/ally-bindings/releases/tag/v0.2.0-preview.1
+[v0.2.0-preview.2]: https://github.com/dggomes/ally-bindings/releases/tag/v0.2.0-preview.2

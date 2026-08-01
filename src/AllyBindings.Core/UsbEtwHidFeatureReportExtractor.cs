@@ -20,7 +20,8 @@ public static class UsbEtwHidFeatureReportExtractor
         string eventName,
         int eventId,
         IReadOnlyList<UsbEtwBinaryField> binaryFields,
-        int maximumReports)
+        int maximumReports,
+        long performanceCounterTimestamp = 0)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(providerName);
         ArgumentNullException.ThrowIfNull(binaryFields);
@@ -58,6 +59,7 @@ public static class UsbEtwHidFeatureReportExtractor
                 var report = field.Value.AsSpan(offset, available).ToArray();
                 reports.Add(new(
                     timestamp,
+                    performanceCounterTimestamp,
                     providerName,
                     eventName,
                     eventId,
@@ -80,6 +82,7 @@ public sealed record UsbEtwBinaryField(string Name, byte[] Value);
 
 public sealed record UsbEtwFeatureReport(
     DateTimeOffset Timestamp,
+    long PerformanceCounterTimestamp,
     string ProviderName,
     string EventName,
     int EventId,

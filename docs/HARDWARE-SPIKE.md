@@ -34,7 +34,7 @@ Known limitation: there is no proven read-back path for preserving a user's cust
 2. Confirm the displayed ROG Ally model and compatible ASUS feature-report interfaces.
 3. Accept Windows' one-time UAC prompt for the same Ally Bindings executable acting as the temporary ETW helper.
 4. Apply the three prompted Armoury states: `M1=A/M2=B`, `M1=X/M2=Y`, then Armoury Reset to Default. Capture stops automatically.
-5. Retain the filtered JSON, action markers, manifest and SHA-256 hash; verify the manifest says `rawSystemTraceWritten: false`.
+5. Retain the single ZIP, record the displayed bundle SHA-256 outside the capture directory, and verify its manifest says `rawSystemTraceWritten: false`. The user-writable ZIP is not immutable provenance; require at least two independent matching captures before proposing a protocol change.
 6. Compare mapping prefix (`5A D1 02 08 2C`), action ordering/slots, complete 50-byte vector plus any preserved zero padding, provider/event/field metadata and default modifier bytes.
 7. Keep both write gates closed on any unexplained extra command, mismatch, dropped/oversized event, ambiguous device identity, unavailable provider or absent reset packet.
 

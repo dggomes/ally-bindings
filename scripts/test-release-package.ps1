@@ -17,6 +17,7 @@ $required = @(
     'CONTRIBUTING.md',
     'docs/ARCHITECTURE.md',
     'docs/HARDWARE-SPIKE.md',
+    'docs/PLAN.md',
     'LICENSES/HidSharp-Apache-2.0.txt',
     'LICENSES/TraceEvent-MIT.txt'
 )
@@ -25,6 +26,15 @@ foreach ($relative in $required) {
     if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
         throw "Release package is missing required artifact: $relative"
     }
+}
+
+$expectedFiles = @($required | Sort-Object)
+$actualFiles = @(Get-ChildItem -LiteralPath $PackageRoot -Recurse -File | ForEach-Object {
+    [IO.Path]::GetRelativePath($PackageRoot, $_.FullName).Replace('\', '/')
+} | Sort-Object)
+$compositionDifference = @(Compare-Object -ReferenceObject $expectedFiles -DifferenceObject $actualFiles)
+if ($compositionDifference.Count -ne 0) {
+    throw "Release package directory does not match the exact allowlist: $($compositionDifference | Out-String)"
 }
 
 $unexpected = Get-ChildItem -LiteralPath $PackageRoot -Recurse -File | Where-Object {
@@ -44,6 +54,21 @@ if (-not (Test-Path -LiteralPath $ZipPath -PathType Leaf)) {
 $zip = Get-Item -LiteralPath $ZipPath
 if ($zip.Length -gt $MaximumZipBytes) {
     throw "Release ZIP is $($zip.Length) bytes, above the lean-install budget of $MaximumZipBytes bytes."
+}
+
+$archive = [IO.Compression.ZipFile]::OpenRead($ZipPath)
+try {
+    $zipFiles = @($archive.Entries | Where-Object { $_.Name } | ForEach-Object {
+        $_.FullName.Replace('\', '/')
+    } | Sort-Object)
+    $duplicates = @($zipFiles | Group-Object | Where-Object Count -gt 1)
+    $zipDifference = @(Compare-Object -ReferenceObject $expectedFiles -DifferenceObject $zipFiles)
+    if ($duplicates.Count -ne 0 -or $zipDifference.Count -ne 0) {
+        throw "Release ZIP does not match the exact allowlist or contains duplicate entries: $($zipDifference | Out-String)"
+    }
+}
+finally {
+    $archive.Dispose()
 }
 
 $notices = Get-Content -Raw -LiteralPath (Join-Path $PackageRoot 'THIRD-PARTY-NOTICES.md')

@@ -13,21 +13,22 @@ public sealed class GitHubReleaseUpdateTests : IDisposable
     {
         var release = new GitHubRelease
         {
-            TagName = "v0.02",
-            Name = "Preview 0.02",
+            TagName = "v0.2.0-preview.1",
+            Name = "Preview 0.2.0-preview.1",
             Prerelease = true,
-            HtmlUrl = "https://github.com/dggomes/ally-bindings/releases/tag/v0.02",
+            HtmlUrl = "https://github.com/dggomes/ally-bindings/releases/tag/v0.2.0-preview.1",
             Assets =
             [
                 new GitHubReleaseAsset
                 {
-                    Name = "AllyBindings-v0.02-win-x64.zip",
-                    BrowserDownloadUrl = "https://github.com/dggomes/ally-bindings/releases/download/v0.02/AllyBindings-v0.02-win-x64.zip",
+                    Name = "AllyBindings-v0.2.0-preview.1-win-x64.zip",
+                    BrowserDownloadUrl = "https://github.com/dggomes/ally-bindings/releases/download/v0.2.0-preview.1/AllyBindings-v0.2.0-preview.1-win-x64.zip",
                     Digest = $"sha256:{new string('a', 64)}",
                 },
             ],
         };
 
+        Assert.NotNull(GitHubReleaseUpdateSelector.ParseSemanticVersion(release.TagName));
         var candidate = GitHubReleaseUpdateSelector.Select([release], new Version(0, 1), includePrerelease: true);
 
         Assert.NotNull(candidate);
@@ -64,15 +65,15 @@ public sealed class GitHubReleaseUpdateTests : IDisposable
     {
         var release = new GitHubRelease
         {
-            TagName = "v0.02",
+            TagName = "v0.2.0-preview.1",
             Prerelease = true,
-            HtmlUrl = "https://github.com/dggomes/ally-bindings/releases/tag/v0.02",
+            HtmlUrl = "https://github.com/dggomes/ally-bindings/releases/tag/v0.2.0-preview.1",
             Assets =
             [
                 new GitHubReleaseAsset
                 {
-                    Name = "AllyBindings-v0.02-win-x64.zip",
-                    BrowserDownloadUrl = "https://github.com/dggomes/ally-bindings/releases/download/v0.02/file.zip",
+                    Name = "AllyBindings-v0.2.0-preview.1-win-x64.zip",
+                    BrowserDownloadUrl = "https://github.com/dggomes/ally-bindings/releases/download/v0.2.0-preview.1/file.zip",
                 },
             ],
         };
@@ -86,20 +87,62 @@ public sealed class GitHubReleaseUpdateTests : IDisposable
     {
         var release = new GitHubRelease
         {
-            TagName = "v0.02",
-            HtmlUrl = "https://github.com/attacker/releases/releases/tag/v0.02",
+            TagName = "v0.2.0-preview.1",
+            Prerelease = true,
+            HtmlUrl = "https://github.com/attacker/releases/releases/tag/v0.2.0-preview.1",
             Assets =
             [
                 new GitHubReleaseAsset
                 {
-                    Name = "AllyBindings-v0.02-win-x64.zip",
-                    BrowserDownloadUrl = "https://github.com/attacker/releases/releases/download/v0.02/AllyBindings-v0.02-win-x64.zip",
+                    Name = "AllyBindings-v0.2.0-preview.1-win-x64.zip",
+                    BrowserDownloadUrl = "https://github.com/attacker/releases/releases/download/v0.2.0-preview.1/AllyBindings-v0.2.0-preview.1-win-x64.zip",
                     Digest = $"sha256:{new string('a', 64)}",
                 },
             ],
         };
 
         Assert.Null(GitHubReleaseUpdateSelector.Select([release], new Version(0, 1), includePrerelease: true));
+    }
+
+    [Fact]
+    public void Rejects_asset_name_or_download_path_that_does_not_match_release_tag()
+    {
+        var release = CreateRelease("v0.3.0-preview.1", prerelease: true);
+        release.Assets[0] = release.Assets[0] with
+        {
+            Name = "AllyBindings-v0.2.0-preview.1-win-x64.zip",
+            BrowserDownloadUrl = "https://github.com/dggomes/ally-bindings/releases/download/v0.2.0-preview.1/AllyBindings-v0.2.0-preview.1-win-x64.zip",
+        };
+
+        Assert.Null(GitHubReleaseUpdateSelector.Select(
+            [release],
+            "0.2.0-preview.1",
+            includePrerelease: true));
+    }
+
+    [Theory]
+    [InlineData("v0.2")]
+    [InlineData("v0.2.0.1")]
+    [InlineData("v01.2.3")]
+    [InlineData("v1.02.3")]
+    [InlineData("v1.2.03")]
+    [InlineData("v1.2.3-preview.01")]
+    [InlineData("v1.2.3-preview..1")]
+    [InlineData("v1.2.3+")]
+    public void Rejects_non_semver_release_versions(string value)
+    {
+        Assert.Null(GitHubReleaseUpdateSelector.ParseSemanticVersion(value));
+    }
+
+    [Fact]
+    public void Rejects_release_whose_prerelease_flag_disagrees_with_tag()
+    {
+        var release = CreateRelease("v0.3.0-preview.1", prerelease: false);
+
+        Assert.Null(GitHubReleaseUpdateSelector.Select(
+            [release],
+            "0.2.0-preview.1",
+            includePrerelease: true));
     }
 
     [Fact]

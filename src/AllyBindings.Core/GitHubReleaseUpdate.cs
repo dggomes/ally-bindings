@@ -128,18 +128,40 @@ public static partial class GitHubReleaseUpdateSelector
                      .OrderByDescending(candidate => candidate.Version)
                      .ThenByDescending(candidate => candidate.Release.PublishedAt))
         {
+            var tagName = release.Release.TagName;
+            var expectedAssetName = $"AllyBindings-{tagName}-win-x64.zip";
+            var expectedReleasePath = $"{expectedReleasePrefix}tag/{tagName}";
+            var expectedDownloadPath = $"{expectedReleasePrefix}download/{tagName}/{expectedAssetName}";
+
+            if (release.Release.Prerelease != (release.Version!.Prerelease is not null))
+            {
+                continue;
+            }
             var asset = release.Release.Assets.FirstOrDefault(asset =>
-                WindowsPackageName().IsMatch(asset.Name) &&
-                Uri.TryCreate(asset.BrowserDownloadUrl, UriKind.Absolute, out var uri) &&
-                uri.Scheme == Uri.UriSchemeHttps &&
-                uri.Host.Equals("github.com", StringComparison.OrdinalIgnoreCase) &&
-                uri.AbsolutePath.StartsWith(expectedReleasePrefix, StringComparison.OrdinalIgnoreCase) &&
-                TryParseSha256(asset.Digest, out _));
+            {
+                var parsed = Uri.TryCreate(asset.BrowserDownloadUrl, UriKind.Absolute, out var uri);
+                var matches = asset.Name.Equals(expectedAssetName, StringComparison.Ordinal) &&
+                    parsed &&
+                    uri!.Scheme == Uri.UriSchemeHttps &&
+                    uri.Host.Equals("github.com", StringComparison.OrdinalIgnoreCase) &&
+                    Uri.UnescapeDataString(uri.AbsolutePath).Equals(expectedDownloadPath, StringComparison.Ordinal) &&
+                    string.IsNullOrEmpty(uri.Query) &&
+                    string.IsNullOrEmpty(uri.Fragment) &&
+                    TryParseSha256(asset.Digest, out _);
+
+                return matches;
+            });
+            var releasePageParsed = Uri.TryCreate(release.Release.HtmlUrl, UriKind.Absolute, out var releasePage);
+            var downloadParsed = Uri.TryCreate(asset?.BrowserDownloadUrl, UriKind.Absolute, out var downloadUrl);
+
             if (asset is null ||
-                !Uri.TryCreate(release.Release.HtmlUrl, UriKind.Absolute, out var releasePage) ||
-                !Uri.TryCreate(asset.BrowserDownloadUrl, UriKind.Absolute, out var downloadUrl) ||
+                !releasePageParsed ||
+                !downloadParsed ||
+                releasePage!.Scheme != Uri.UriSchemeHttps ||
                 !releasePage.Host.Equals("github.com", StringComparison.OrdinalIgnoreCase) ||
-                !releasePage.AbsolutePath.StartsWith(expectedReleasePrefix, StringComparison.OrdinalIgnoreCase) ||
+                !Uri.UnescapeDataString(releasePage.AbsolutePath).TrimEnd('/').Equals(expectedReleasePath, StringComparison.Ordinal) ||
+                !string.IsNullOrEmpty(releasePage.Query) ||
+                !string.IsNullOrEmpty(releasePage.Fragment) ||
                 !TryParseSha256(asset.Digest, out var sha256))
             {
                 continue;
@@ -150,7 +172,7 @@ public static partial class GitHubReleaseUpdateSelector
                 release.Release.TagName,
                 string.IsNullOrWhiteSpace(release.Release.Name) ? release.Release.TagName : release.Release.Name,
                 releasePage,
-                downloadUrl,
+                downloadUrl!,
                 sha256,
                 release.Release.Prerelease);
         }
@@ -163,10 +185,13 @@ public static partial class GitHubReleaseUpdateSelector
     {
         if (string.IsNullOrWhiteSpace(value)) return null;
         var match = VersionTag().Match(value.Trim());
-        if (!match.Success || !Version.TryParse(match.Groups[1].Value, out var core)) return null;
+        if (!match.Success ||
+            !int.TryParse(match.Groups[1].Value, out var major) ||
+            !int.TryParse(match.Groups[2].Value, out var minor) ||
+            !int.TryParse(match.Groups[3].Value, out var patch)) return null;
         return new(
-            Normalize(core),
-            match.Groups[2].Success ? match.Groups[2].Value : null);
+            new Version(major, minor, patch, 0),
+            match.Groups[4].Success ? match.Groups[4].Value : null);
     }
 
     public static bool TryParseSha256(string? digest, out string sha256)
@@ -186,12 +211,10 @@ public static partial class GitHubReleaseUpdateSelector
             Math.Max(version.Build, 0),
             Math.Max(version.Revision, 0));
 
-    [GeneratedRegex("^v?(\\d+(?:\\.\\d+){1,3})(?:-([0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*))?(?:\\+[0-9A-Za-z.-]+)?$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    [GeneratedRegex("^v?(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)(?:-((?:0|[1-9]\\d*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*)(?:\\.(?:0|[1-9]\\d*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*))*))?(?:\\+([0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*))?$", RegexOptions.CultureInvariant)]
     private static partial Regex VersionTag();
 
     [GeneratedRegex("^sha256:([a-f0-9]{64})$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex Sha256Digest();
 
-    [GeneratedRegex("^AllyBindings(?:-v\\d+(?:\\.\\d+){1,3}(?:-[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?)?-win-x64\\.zip$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
-    private static partial Regex WindowsPackageName();
 }

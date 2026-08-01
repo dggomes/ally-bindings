@@ -570,7 +570,7 @@ public partial class App : System.Windows.Application
             var result = await captureService.CompleteAsync(session);
             session = null;
             _mainWindow.SetArmouryCaptureStatus(
-                $"Capture complete — review required: {result.FeatureReportCount} report 0x5A candidate(s), {result.RearMappingReportCount} structurally valid candidate(s). Bundle: {result.BundlePath}");
+                $"Capture complete — review required: {result.FeatureReportCount} report 0x5A candidate(s), {result.RearMappingReportCount} structurally valid candidate(s). Bundle SHA-256: {result.BundleSha256}. Bundle: {result.BundlePath}");
             _mainWindow.SetStatus(
                 $"ETW candidates captured for hardware review. They cannot unlock ASUS writes or clear recovery state: {string.Join(" ", result.AssessmentReasons)}");
             Process.Start(new ProcessStartInfo

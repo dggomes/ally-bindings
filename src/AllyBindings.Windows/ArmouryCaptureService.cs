@@ -155,6 +155,8 @@ internal sealed class ArmouryCaptureService
                 output.PayloadDecodeFailureCount,
                 output.AmbiguousCandidateCount,
                 output.DroppedMatchingReportCount,
+                output.DecodedBinaryByteCount,
+                output.AggregateLimitExceeded,
                 retainedReportCount = reports.Count,
                 fullDataBusTraceKeyword = $"0x{ArmouryEtwCaptureHelper.FullDataTraceKeywords:X}",
                 privacy = "A system-wide USB ETW stream was filtered in memory. Only bounded candidate binary fields were retained; no raw ETL was written.",
@@ -191,15 +193,6 @@ internal sealed class ArmouryCaptureService
         });
         var readmeBytes = Encoding.UTF8.GetBytes(BuildReadme(reports.Count, assessment));
 
-        var outputPath = Path.Combine(session.Directory, ArmouryEtwCapturePipe.ResultFileName);
-        var reportPath = Path.Combine(session.Directory, "feature-reports.json");
-        var manifestPath = Path.Combine(session.Directory, "manifest.json");
-        var instructionsPath = Path.Combine(session.Directory, "README.txt");
-        await WriteArtifactAsync(outputPath, outputBytes, cancellationToken).ConfigureAwait(false);
-        await WriteArtifactAsync(reportPath, reportBytes, cancellationToken).ConfigureAwait(false);
-        await WriteArtifactAsync(manifestPath, manifestBytes, cancellationToken).ConfigureAwait(false);
-        await WriteArtifactAsync(instructionsPath, readmeBytes, cancellationToken).ConfigureAwait(false);
-
         var bundlePath = Path.Combine(
             session.Directory,
             $"ally-bindings-armoury-etw-{DateTimeOffset.UtcNow:yyyyMMdd-HHmmss}.zip");
@@ -208,15 +201,19 @@ internal sealed class ArmouryCaptureService
             ("feature-reports.json", reportBytes),
             ("manifest.json", manifestBytes),
             ("README.txt", readmeBytes));
+        string bundleHash;
+        using (var bundle = File.OpenRead(bundlePath))
+        {
+            bundleHash = Convert.ToHexString(SHA256.HashData(bundle)).ToLowerInvariant();
+        }
         session.Dispose();
         return new(
             bundlePath,
-            outputPath,
             reports.Count,
             reports.Count(report => report.IsStructurallyValidRearMapping),
             assessment.IsConclusive,
             assessment.Reasons,
-            evidenceHash);
+            bundleHash);
     }
 
     private static async Task<EtwPipeConnection> WaitForReadyAsync(
@@ -345,6 +342,7 @@ internal sealed class ArmouryCaptureService
         return new(
             index,
             report.Timestamp,
+            report.PerformanceCounterTimestamp,
             report.ProviderName,
             report.EventName,
             report.EventId,
@@ -364,9 +362,12 @@ internal sealed class ArmouryCaptureService
         IReadOnlyList<CapturedReportAnalysis> reports,
         bool targetIdentityStable)
     {
-        DateTimeOffset Marker(string name) => session.Actions.Single(action => action.Action == name).TimestampUtc;
+        static DateTimeOffset MonotonicTimestamp(long qpc) =>
+            DateTimeOffset.UnixEpoch.AddSeconds((double)qpc / Stopwatch.Frequency);
+        DateTimeOffset Marker(string name) => MonotonicTimestamp(
+            session.Actions.Single(action => action.Action == name).PerformanceCounterTimestamp);
         var evidence = reports.Select(report => new ArmouryCaptureReportEvidence(
-            report.Timestamp,
+            MonotonicTimestamp(report.PerformanceCounterTimestamp),
             report.IsStructurallyValidRearMapping,
             report.MatchesRequestedM1A_M2B,
             report.MatchesRequestedM1X_M2Y,
@@ -394,7 +395,8 @@ internal sealed class ArmouryCaptureService
             output.OversizedEventCount != 0 ||
             output.PayloadDecodeFailureCount != 0 ||
             output.AmbiguousCandidateCount != 0 ||
-            output.DroppedMatchingReportCount != 0;
+            output.DroppedMatchingReportCount != 0 ||
+            output.AggregateLimitExceeded;
         var validation = ArmouryCaptureSequenceValidator.Validate(
             evidence,
             windows,
@@ -464,21 +466,6 @@ internal sealed class ArmouryCaptureService
     private static byte[] SerializeJson(object value) =>
         JsonSerializer.SerializeToUtf8Bytes(value, JsonOptions);
 
-    private static async Task WriteArtifactAsync(
-        string path,
-        byte[] content,
-        CancellationToken cancellationToken)
-    {
-        await using var stream = new FileStream(
-            path,
-            FileMode.CreateNew,
-            FileAccess.Write,
-            FileShare.None,
-            bufferSize: 4096,
-            useAsync: true);
-        await stream.WriteAsync(content, cancellationToken).ConfigureAwait(false);
-        await stream.FlushAsync(cancellationToken).ConfigureAwait(false);
-    }
 
     private static void CreateBundle(
         string bundlePath,
@@ -527,7 +514,8 @@ internal sealed class ArmouryCaptureSession(
     public IReadOnlyList<string> EnabledProviders { get; } = enabledProviders;
     public List<CaptureActionMarker> Actions { get; } = [];
 
-    public void MarkAction(string action) => Actions.Add(new(DateTimeOffset.UtcNow, action));
+    public void MarkAction(string action) =>
+        Actions.Add(new(DateTimeOffset.UtcNow, Stopwatch.GetTimestamp(), action));
 
     public void Dispose()
     {
@@ -593,18 +581,21 @@ internal sealed record EtwPipeConnection(
     EtwCaptureReady Ready);
 
 internal sealed record ArmouryCaptureTarget(string Model, IReadOnlyList<string> DeviceIds);
-internal sealed record CaptureActionMarker(DateTimeOffset TimestampUtc, string Action);
+internal sealed record CaptureActionMarker(
+    DateTimeOffset TimestampUtc,
+    long PerformanceCounterTimestamp,
+    string Action);
 internal sealed record ArmouryCaptureResult(
     string BundlePath,
-    string EvidencePath,
     int FeatureReportCount,
     int RearMappingReportCount,
     bool IsConclusive,
     IReadOnlyList<string> AssessmentReasons,
-    string EvidenceSha256);
+    string BundleSha256);
 internal sealed record CapturedReportAnalysis(
     int Index,
     DateTimeOffset Timestamp,
+    long PerformanceCounterTimestamp,
     string ProviderName,
     string EventName,
     int EventId,

@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.IO;
 using System.IO.Pipes;
 using System.Runtime.InteropServices;
@@ -15,7 +16,10 @@ internal static class ArmouryEtwCaptureHelper
     internal const ulong FullDataTraceKeywords = 0x8101; // Default | FullDataBusTrace | Rundown
     private const int MaximumEventPayloadBytes = 1024 * 1024;
     private const int MaximumRetainedReports = 256;
+    private const long MaximumObservedEvents = 2_000_000;
+    private const long MaximumDecodedBinaryBytes = 512L * 1024 * 1024;
     private const int MaximumCommandCharacters = 16;
+    private const int ProviderEnableTimeoutMilliseconds = 10_000;
     private const string CaptureSessionName = "AllyBindings-Armoury-Capture";
     private static readonly TimeSpan MaximumCaptureDuration = TimeSpan.FromMinutes(10);
     private static readonly EtwProviderDefinition[] RequiredProviders =
@@ -54,6 +58,7 @@ internal static class ArmouryEtwCaptureHelper
             {
                 throw new InvalidOperationException("The ETW pipe server was not the expected unelevated Ally Bindings parent process.");
             }
+            VerifyParentExecutableIdentity(parentProcessId);
             using var reader = new StreamReader(pipe, Encoding.UTF8, detectEncodingFromByteOrderMarks: false, leaveOpen: true);
             await using var writer = new StreamWriter(pipe, new UTF8Encoding(false), leaveOpen: true)
             {
@@ -103,6 +108,8 @@ internal static class ArmouryEtwCaptureHelper
         long payloadDecodeFailureCount = 0;
         long ambiguousCandidateCount = 0;
         long droppedMatchingReportCount = 0;
+        long decodedBinaryByteCount = 0;
+        var aggregateLimitExceeded = false;
         // A fixed name lets TraceEvent reclaim a session orphaned by a prior
         // process crash instead of leaking one GUID-named logger per attempt.
         using var session = new TraceEventSession(CaptureSessionName)
@@ -110,10 +117,16 @@ internal static class ArmouryEtwCaptureHelper
             StopOnDispose = true,
             BufferSizeMB = 128,
             BufferQuantumKB = 128,
+            EnableProviderTimeoutMSec = ProviderEnableTimeoutMilliseconds,
         };
         session.Source.Dynamic.All += data =>
         {
             observedEventCount++;
+            if (observedEventCount > MaximumObservedEvents || aggregateLimitExceeded)
+            {
+                aggregateLimitExceeded = true;
+                return;
+            }
             if (data.EventDataLength < 0 || data.EventDataLength > MaximumEventPayloadBytes)
             {
                 oversizedEventCount++;
@@ -122,7 +135,17 @@ internal static class ArmouryEtwCaptureHelper
 
             try
             {
+                var fields = GetBinaryFields(data, MaximumDecodedBinaryBytes - decodedBinaryByteCount);
+                decodedBinaryByteCount += fields.DecodedBytes;
+                if (fields.LimitExceeded)
+                {
+                    aggregateLimitExceeded = true;
+                    return;
+                }
                 var remaining = Math.Max(1, MaximumRetainedReports - reports.Count);
+#pragma warning disable CS0618 // Raw ETW QPC intentionally shares the Windows performance-counter clock with parent markers.
+                var eventQpc = data.TimeStampQPC;
+#pragma warning restore CS0618
                 var extraction = UsbEtwHidFeatureReportExtractor.Extract(
                     new DateTimeOffset(session.Source.SessionStartTime)
                         .AddMilliseconds(data.TimeStampRelativeMSec)
@@ -130,8 +153,9 @@ internal static class ArmouryEtwCaptureHelper
                     data.ProviderName ?? data.ProviderGuid.ToString("D"),
                     data.EventName ?? $"event-{data.ID}",
                     (int)data.ID,
-                    GetBinaryFields(data),
-                    remaining);
+                    fields.Fields,
+                    remaining,
+                    eventQpc);
                 foreach (var report in extraction.Reports)
                 {
                     if (reports.Count >= MaximumRetainedReports)
@@ -167,6 +191,7 @@ internal static class ArmouryEtwCaptureHelper
 
         string? command = null;
         Exception? commandFailure = null;
+        long eventsLost = 0;
         using var lifetime = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         lifetime.CancelAfter(MaximumCaptureDuration);
         try
@@ -183,8 +208,19 @@ internal static class ArmouryEtwCaptureHelper
         }
         finally
         {
-            session.Stop();
-            await processing.WaitAsync(TimeSpan.FromSeconds(10), CancellationToken.None).ConfigureAwait(false);
+            try
+            {
+                // EventsLost queries the live named session. Snapshot it before
+                // Stop destroys that session; querying afterwards throws
+                // ERROR_WMI_INSTANCE_NOT_FOUND in TraceEvent 3.2.5.
+                session.Flush();
+                eventsLost = session.EventsLost;
+            }
+            finally
+            {
+                session.Stop();
+                await processing.WaitAsync(TimeSpan.FromSeconds(10), CancellationToken.None).ConfigureAwait(false);
+            }
         }
 
         if (commandFailure is not null) throw commandFailure;
@@ -203,22 +239,38 @@ internal static class ArmouryEtwCaptureHelper
                 Output: new(
                     enabledProviders,
                     observedEventCount,
-                    session.EventsLost,
+                    eventsLost,
                     oversizedEventCount,
                     payloadDecodeFailureCount,
                     ambiguousCandidateCount,
                     droppedMatchingReportCount,
+                    decodedBinaryByteCount,
+                    aggregateLimitExceeded,
                     reports))).ConfigureAwait(false);
         return 0;
     }
 
-    private static IReadOnlyList<UsbEtwBinaryField> GetBinaryFields(TraceEvent data)
+    private static BinaryFieldExtraction GetBinaryFields(TraceEvent data, long remainingByteBudget)
     {
         var fields = new List<UsbEtwBinaryField>();
+        long decodedBytes = 0;
         var names = data.PayloadNames;
         for (var index = 0; index < names.Length; index++)
         {
             var value = data.PayloadValue(index);
+            var length = value switch
+            {
+                byte[] bytes => bytes.LongLength,
+                ArraySegment<byte> segment => segment.Count,
+                ReadOnlyMemory<byte> memory => memory.Length,
+                Memory<byte> memory => memory.Length,
+                _ => 0,
+            };
+            if (length == 0) continue;
+            if (length > remainingByteBudget - decodedBytes)
+            {
+                return new(fields, decodedBytes, LimitExceeded: true);
+            }
             switch (value)
             {
                 case byte[] bytes:
@@ -234,8 +286,23 @@ internal static class ArmouryEtwCaptureHelper
                     fields.Add(new(names[index], memory.ToArray()));
                     break;
             }
+            decodedBytes += length;
         }
-        return fields;
+        return new(fields, decodedBytes, LimitExceeded: false);
+    }
+
+    private static void VerifyParentExecutableIdentity(int parentProcessId)
+    {
+        var helperPath = Environment.ProcessPath
+            ?? throw new InvalidOperationException("Windows did not expose the elevated helper executable path.");
+        using var parent = Process.GetProcessById(parentProcessId);
+        var parentPath = parent.MainModule?.FileName
+            ?? throw new InvalidOperationException("Windows did not expose the ETW pipe server executable path.");
+        if (!Path.GetFullPath(parentPath).Equals(Path.GetFullPath(helperPath), StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException(
+                "The ETW pipe server is not the same Ally Bindings executable as the elevated helper.");
+        }
     }
 
     private static async Task<string?> ReadBoundedLineAsync(
@@ -287,6 +354,10 @@ internal static class ArmouryEtwCapturePipe
 
 internal sealed record EtwProviderDefinition(string Name, Guid Id);
 internal sealed record EtwProviderStatus(string Name, Guid Id, ulong KeywordMask);
+internal sealed record BinaryFieldExtraction(
+    IReadOnlyList<UsbEtwBinaryField> Fields,
+    long DecodedBytes,
+    bool LimitExceeded);
 internal sealed record EtwPipeEnvelope(
     string Type,
     EtwCaptureReady? Ready = null,
@@ -301,4 +372,6 @@ internal sealed record EtwCaptureOutput(
     long PayloadDecodeFailureCount,
     long AmbiguousCandidateCount,
     long DroppedMatchingReportCount,
+    long DecodedBinaryByteCount,
+    bool AggregateLimitExceeded,
     IReadOnlyList<UsbEtwFeatureReport> Reports);

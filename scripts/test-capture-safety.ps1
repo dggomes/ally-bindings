@@ -59,11 +59,24 @@ foreach ($required in @(
     'MaximumEventPayloadBytes',
     'FullDataTraceKeywords = 0x8101',
     'session.EventsLost',
+    'EnableProviderTimeoutMSec',
     'MaximumCaptureDuration',
-    'MaximumRetainedReports')) {
+    'MaximumRetainedReports',
+    'MaximumObservedEvents',
+    'MaximumDecodedBinaryBytes',
+    'VerifyParentExecutableIdentity')) {
     if ($helper.IndexOf($required, [StringComparison]::Ordinal) -lt 0) {
         throw "The integrated ETW helper is missing safety/lifecycle control: $required"
     }
+}
+if ($helper.IndexOf('eventsLost = session.EventsLost', [StringComparison]::Ordinal) -gt
+    $helper.IndexOf('session.Stop()', [StringComparison]::Ordinal)) {
+    throw 'ETW loss is queried after destroying the live trace session.'
+}
+if ($service -notmatch 'Stopwatch\.GetTimestamp\(\)' -or
+    $service -notmatch 'PerformanceCounterTimestamp' -or
+    $extractor -notmatch 'PerformanceCounterTimestamp') {
+    throw 'Action markers and ETW reports are not correlated on the shared QPC clock.'
 }
 if ($extractor -notmatch '0x5A,\s*0xD1,\s*0x02,\s*0x08,\s*0x2C' -or
     $extractor -notmatch 'AsusRearButtonProtocol\.ReportLength' -or
@@ -96,6 +109,9 @@ if ($app -notmatch '_executableIntegrityLock' -or
 if ($service -notmatch 'rawSystemTraceWritten\s*=\s*false' -or
     $service -notmatch 'No USBPcap/Wireshark driver, raw ETL, or raw PCAP was written') {
     throw 'The bundle no longer records the no-raw-trace privacy invariant.'
+}
+if ($service -match 'WriteArtifactAsync') {
+    throw 'Successful capture still retains loose duplicate private artifacts outside the ZIP.'
 }
 if ($service -notmatch 'captureScopeVerified:\s*false' -or
     $service -notmatch 'hardwareUnlockEvidence\s*=\s*false' -or

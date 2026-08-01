@@ -12,10 +12,11 @@ jobs:
     name: Verify, package and publish
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
-      - uses: actions/setup-dotnet@v4
+          fetch-depth: 0
+      - uses: actions/setup-dotnet@v6
         with:
           dotnet-version: 8.0.x
       - name: Verify tag matches application version
@@ -23,12 +24,21 @@ jobs:
         run: |
           [xml]$project = Get-Content src/AllyBindings.Windows/AllyBindings.Windows.csproj
           $appVersion = [string]$project.Project.PropertyGroup.Version
-          if ($env:GITHUB_REF_NAME -notmatch '^v\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$') {
-            throw "Tag $env:GITHUB_REF_NAME is not a supported semantic-version tag"
+          $previewSemVer = '^v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)-((?:0|[1-9]\d*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9]\d*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*))*)$'
+          if ($env:GITHUB_REF_NAME -notmatch $previewSemVer) {
+            throw "Tag $env:GITHUB_REF_NAME is not a strict semantic-version preview tag"
           }
           $tagVersion = $env:GITHUB_REF_NAME.Substring(1)
           if ($appVersion -cne $tagVersion) {
             throw "Tag $env:GITHUB_REF_NAME does not match application version $appVersion"
+          }
+      - name: Verify tagged commit descends from main
+        shell: pwsh
+        run: |
+          git fetch --no-tags origin main
+          git merge-base --is-ancestor $env:GITHUB_SHA origin/main
+          if ($LASTEXITCODE -ne 0) {
+            throw "Tagged commit $env:GITHUB_SHA is not reachable from origin/main"
           }
       - name: Verify Windows USB ETW providers and FullDataBusTrace
         shell: pwsh
@@ -57,6 +67,9 @@ jobs:
           Get-FileHash "artifacts/AllyBindings-$tag-win-x64.zip" -Algorithm SHA256 |
             ForEach-Object { "$($_.Hash.ToLower())  AllyBindings-$tag-win-x64.zip" } |
             Set-Content "artifacts/AllyBindings-$tag-win-x64.zip.sha256" -NoNewline
+          Get-FileHash "artifacts/AllyBindings-$tag-win-x64.exe" -Algorithm SHA256 |
+            ForEach-Object { "$($_.Hash.ToLower())  AllyBindings-$tag-win-x64.exe" } |
+            Set-Content "artifacts/AllyBindings-$tag-win-x64.exe.sha256" -NoNewline
           ./scripts/get-release-notes.ps1 -Tag $tag -OutputPath artifacts/release-notes.md
       - name: Publish preview release
         shell: pwsh
@@ -67,4 +80,5 @@ jobs:
           gh release create $tag --repo $env:GITHUB_REPOSITORY --prerelease --title "Ally Bindings $tag — Preview" --notes-file artifacts/release-notes.md `
             "artifacts/AllyBindings-$tag-win-x64.zip#Recommended Windows x64 package" `
             "artifacts/AllyBindings-$tag-win-x64.zip.sha256#Package SHA-256" `
-            "artifacts/AllyBindings-$tag-win-x64.exe#Standalone Windows x64 executable"
+            "artifacts/AllyBindings-$tag-win-x64.exe#Standalone Windows x64 executable" `
+            "artifacts/AllyBindings-$tag-win-x64.exe.sha256#Standalone executable SHA-256"

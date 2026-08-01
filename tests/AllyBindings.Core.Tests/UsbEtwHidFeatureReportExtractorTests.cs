@@ -142,6 +142,24 @@ public sealed class UsbEtwHidFeatureReportExtractorTests
     }
 
     [Fact]
+    public void Preserves_the_shared_performance_counter_timestamp()
+    {
+        const long qpc = 987_654_321;
+        var expected = AsusRearButtonProtocol.BuildMappingReport(ControllerButton.A, ControllerButton.B);
+
+        var result = UsbEtwHidFeatureReportExtractor.Extract(
+            DateTimeOffset.UtcNow,
+            "Microsoft-Windows-USB-UCX",
+            "ControlTransferData",
+            53,
+            [new("TransferBuffer", expected)],
+            maximumReports: 1,
+            performanceCounterTimestamp: qpc);
+
+        Assert.Equal(qpc, Assert.Single(result.Reports).PerformanceCounterTimestamp);
+    }
+
+    [Fact]
     public void Rejects_blank_provider_names_and_nonpositive_limits()
     {
         Assert.Throws<ArgumentException>(() =>
