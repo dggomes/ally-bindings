@@ -9,6 +9,8 @@ $helperPath = Join-Path $root 'src/AllyBindings.Windows/ArmouryEtwCaptureHelper.
 $appPath = Join-Path $root 'src/AllyBindings.Windows/App.xaml.cs'
 $xamlPath = Join-Path $root 'src/AllyBindings.Windows/MainWindow.xaml'
 $projectPath = Join-Path $root 'src/AllyBindings.Windows/AllyBindings.Windows.csproj'
+$buildWorkflowPath = Join-Path $root '.github/workflows/build.yml'
+$releaseWorkflowPath = Join-Path $root '.github/workflows/release.yml'
 
 $core = Get-Content -Raw -LiteralPath $corePath
 $backend = Get-Content -Raw -LiteralPath $backendPath
@@ -18,6 +20,8 @@ $helper = Get-Content -Raw -LiteralPath $helperPath
 $app = Get-Content -Raw -LiteralPath $appPath
 $xaml = Get-Content -Raw -LiteralPath $xamlPath
 $project = Get-Content -Raw -LiteralPath $projectPath
+$buildWorkflow = Get-Content -Raw -LiteralPath $buildWorkflowPath
+$releaseWorkflow = Get-Content -Raw -LiteralPath $releaseWorkflowPath
 
 if ($core -notmatch 'CustomWritesApproved\s*=>\s*false') {
     throw 'Custom M1/M2 writes are not source-locked.'
@@ -59,11 +63,24 @@ foreach ($required in @(
     'MaximumEventPayloadBytes',
     'FullDataTraceKeywords = 0x8101',
     'session.EventsLost',
+    'EnableProviderTimeoutMSec',
     'MaximumCaptureDuration',
-    'MaximumRetainedReports')) {
+    'MaximumRetainedReports',
+    'MaximumObservedEvents',
+    'MaximumDecodedBinaryBytes',
+    'VerifyParentExecutableIdentity')) {
     if ($helper.IndexOf($required, [StringComparison]::Ordinal) -lt 0) {
         throw "The integrated ETW helper is missing safety/lifecycle control: $required"
     }
+}
+if ($helper.IndexOf('eventsLost = session.EventsLost', [StringComparison]::Ordinal) -gt
+    $helper.IndexOf('session.Stop()', [StringComparison]::Ordinal)) {
+    throw 'ETW loss is queried after destroying the live trace session.'
+}
+if ($service -notmatch 'Stopwatch\.GetTimestamp\(\)' -or
+    $service -notmatch 'PerformanceCounterTimestamp' -or
+    $extractor -notmatch 'PerformanceCounterTimestamp') {
+    throw 'Action markers and ETW reports are not correlated on the shared QPC clock.'
 }
 if ($extractor -notmatch '0x5A,\s*0xD1,\s*0x02,\s*0x08,\s*0x2C' -or
     $extractor -notmatch 'AsusRearButtonProtocol\.ReportLength' -or
@@ -84,6 +101,11 @@ if ($service -notmatch 'PipeOptions\.Asynchronous\s*\|\s*PipeOptions\.CurrentUse
     $helper -notmatch 'serverProcessId\s*!=\s*\(uint\)parentProcessId') {
     throw 'The parent and elevated helper do not mutually authenticate over a current-user-only named pipe.'
 }
+foreach ($workflow in @($buildWorkflow, $releaseWorkflow)) {
+    if ($workflow.IndexOf('test-etw-helper-auth.ps1', [StringComparison]::Ordinal) -lt 0) {
+        throw 'A shipping workflow does not run the behavioral ETW helper authentication test.'
+    }
+}
 if ($app.IndexOf('TryParseArguments(e.Args', [StringComparison]::Ordinal) -gt
     $app.IndexOf('new Mutex(', [StringComparison]::Ordinal)) {
     throw 'The ETW helper is still subject to the normal single-instance mutex.'
@@ -96,6 +118,14 @@ if ($app -notmatch '_executableIntegrityLock' -or
 if ($service -notmatch 'rawSystemTraceWritten\s*=\s*false' -or
     $service -notmatch 'No USBPcap/Wireshark driver, raw ETL, or raw PCAP was written') {
     throw 'The bundle no longer records the no-raw-trace privacy invariant.'
+}
+if ($service -match 'WriteArtifactAsync') {
+    throw 'Successful capture still retains loose duplicate private artifacts outside the ZIP.'
+}
+if ($service -notmatch '\.tmp-' -or
+    $service -notmatch 'File\.Move\(temporaryPath, bundlePath\)' -or
+    $app -notmatch 'PRIVACY WARNING') {
+    throw 'Capture artifacts are not atomically committed or cleanup failures can remain silent.'
 }
 if ($service -notmatch 'captureScopeVerified:\s*false' -or
     $service -notmatch 'hardwareUnlockEvidence\s*=\s*false' -or

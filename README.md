@@ -9,7 +9,7 @@ A lightweight, local-first Windows controller-profile selector for Xbox Remote P
 
 Ally Bindings lets you save named mappings, rotate them from the controller, and see the pending choice in a small overlay. It is intentionally conservative: the current public build exercises the complete profile-selection experience without hiding the physical controller, creating a virtual controller, or writing unvalidated ASUS controller settings.
 
-> **Project status: preview.** This source tree targets `v0.2.0-preview.1`. Standard-button remapping is preview-only, and M1/M2 writes are locked until passive Armoury Crate capture data has been reviewed on physical hardware. See [Current capabilities](#current-capabilities) before installing.
+> **Project status: preview.** This source tree targets `v0.2.0-preview.2`. Standard-button remapping is preview-only, and M1/M2 writes are locked until passive Armoury Crate capture data has been reviewed on physical hardware. See [Current capabilities](#current-capabilities) before installing.
 
 Ally Bindings is an independent project and is not affiliated with ASUS, ROG, Microsoft or Xbox.
 
@@ -104,7 +104,7 @@ The logger:
 - records sequence diagnostics but labels every capture **REVIEW REQUIRED** until physical Ally validation binds the Windows-build-specific event schema to the confirmed HID interface and outbound feature `SET_REPORT`;
 - keeps custom and recovery writes source-locked and never clears recovery state from a capture;
 - requires recovery authorization before custom mappings can ever be enabled, while reset writes still require the recovery gate explicitly;
-- creates a ZIP with the filtered evidence JSON, action markers, manifest and SHA-256 hash.
+- creates one ZIP containing the filtered evidence JSON, action markers and manifest, then displays the ZIP's SHA-256; no duplicate loose evidence files are retained.
 
 ### One-time capture procedure
 
@@ -113,9 +113,9 @@ The logger:
 3. Confirm the displayed ROG Ally model and compatible ASUS HID interfaces.
 4. Accept Windows' one-time UAC prompt for Ally Bindings' integrated ETW helper.
 5. Follow the prompts to apply `M1=A / M2=B`, then `M1=X / M2=Y`, then Armoury's **Reset to Default**. The helper stops automatically.
-6. Keep the generated ZIP under `%LOCALAPPDATA%\AllyBindings\captures\` and share it only deliberately.
+6. Keep the generated ZIP under `%LOCALAPPDATA%\AllyBindings\captures\`, record its displayed SHA-256 separately if it will be reviewed, and share it only deliberately.
 
-The app never writes the broad ETW stream to disk. It keeps only bounded ASUS report candidates, but the bundle still records controller configuration bytes and should be treated as **private diagnostic data**. No verdict automatically unlocks writes; the capture requires human review and a later source change.
+The app never writes the broad ETW stream to disk. It keeps only bounded ASUS report candidates, but the bundle still records controller configuration bytes and should be treated as **private diagnostic data**. The ZIP lives in a user-writable directory, so its internal hashes are integrity checks, not immutable provenance: protocol approval requires repeated captures plus an independently recorded bundle digest. No verdict automatically unlocks writes; enabling hardware requires human review and a later source change.
 
 More detail: [hardware validation runbook](docs/HARDWARE-SPIKE.md).
 
