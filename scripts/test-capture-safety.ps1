@@ -9,6 +9,8 @@ $helperPath = Join-Path $root 'src/AllyBindings.Windows/ArmouryEtwCaptureHelper.
 $appPath = Join-Path $root 'src/AllyBindings.Windows/App.xaml.cs'
 $xamlPath = Join-Path $root 'src/AllyBindings.Windows/MainWindow.xaml'
 $projectPath = Join-Path $root 'src/AllyBindings.Windows/AllyBindings.Windows.csproj'
+$buildWorkflowPath = Join-Path $root '.github/workflows/build.yml'
+$releaseWorkflowPath = Join-Path $root '.github/workflows/release.yml'
 
 $core = Get-Content -Raw -LiteralPath $corePath
 $backend = Get-Content -Raw -LiteralPath $backendPath
@@ -18,6 +20,8 @@ $helper = Get-Content -Raw -LiteralPath $helperPath
 $app = Get-Content -Raw -LiteralPath $appPath
 $xaml = Get-Content -Raw -LiteralPath $xamlPath
 $project = Get-Content -Raw -LiteralPath $projectPath
+$buildWorkflow = Get-Content -Raw -LiteralPath $buildWorkflowPath
+$releaseWorkflow = Get-Content -Raw -LiteralPath $releaseWorkflowPath
 
 if ($core -notmatch 'CustomWritesApproved\s*=>\s*false') {
     throw 'Custom M1/M2 writes are not source-locked.'
@@ -97,6 +101,11 @@ if ($service -notmatch 'PipeOptions\.Asynchronous\s*\|\s*PipeOptions\.CurrentUse
     $helper -notmatch 'serverProcessId\s*!=\s*\(uint\)parentProcessId') {
     throw 'The parent and elevated helper do not mutually authenticate over a current-user-only named pipe.'
 }
+foreach ($workflow in @($buildWorkflow, $releaseWorkflow)) {
+    if ($workflow.IndexOf('test-etw-helper-auth.ps1', [StringComparison]::Ordinal) -lt 0) {
+        throw 'A shipping workflow does not run the behavioral ETW helper authentication test.'
+    }
+}
 if ($app.IndexOf('TryParseArguments(e.Args', [StringComparison]::Ordinal) -gt
     $app.IndexOf('new Mutex(', [StringComparison]::Ordinal)) {
     throw 'The ETW helper is still subject to the normal single-instance mutex.'
@@ -112,6 +121,11 @@ if ($service -notmatch 'rawSystemTraceWritten\s*=\s*false' -or
 }
 if ($service -match 'WriteArtifactAsync') {
     throw 'Successful capture still retains loose duplicate private artifacts outside the ZIP.'
+}
+if ($service -notmatch '\.tmp-' -or
+    $service -notmatch 'File\.Move\(temporaryPath, bundlePath\)' -or
+    $app -notmatch 'PRIVACY WARNING') {
+    throw 'Capture artifacts are not atomically committed or cleanup failures can remain silent.'
 }
 if ($service -notmatch 'captureScopeVerified:\s*false' -or
     $service -notmatch 'hardwareUnlockEvidence\s*=\s*false' -or

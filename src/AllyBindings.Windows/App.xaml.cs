@@ -582,20 +582,21 @@ public partial class App : System.Windows.Application
         }
         catch (Exception ex)
         {
+            var failureMessage = ex.Message;
             if (session is not null)
             {
                 try
                 {
                     session.CancelAndDelete();
                 }
-                catch
+                catch (Exception cleanupFailure)
                 {
-                    // Best-effort capture cleanup; this path never talks to the controller.
+                    failureMessage = $"{failureMessage}\n\nPRIVACY WARNING: {cleanupFailure.Message}";
                 }
             }
-            _mainWindow.SetArmouryCaptureStatus($"Capture failed safely: {ex.Message}");
+            _mainWindow.SetArmouryCaptureStatus($"Capture failed safely: {failureMessage}");
             Forms.MessageBox.Show(
-                $"No Ally Bindings controller write was attempted.\n\n{ex.Message}",
+                $"No Ally Bindings controller write was attempted.\n\n{failureMessage}",
                 "Armoury capture failed safely",
                 Forms.MessageBoxButtons.OK,
                 Forms.MessageBoxIcon.Error);

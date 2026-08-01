@@ -196,16 +196,11 @@ internal sealed class ArmouryCaptureService
         var bundlePath = Path.Combine(
             session.Directory,
             $"ally-bindings-armoury-etw-{DateTimeOffset.UtcNow:yyyyMMdd-HHmmss}.zip");
-        CreateBundle(bundlePath,
+        var bundleSha256 = CreateBundle(bundlePath,
             (ArmouryEtwCapturePipe.ResultFileName, outputBytes),
             ("feature-reports.json", reportBytes),
             ("manifest.json", manifestBytes),
             ("README.txt", readmeBytes));
-        string bundleHash;
-        using (var bundle = File.OpenRead(bundlePath))
-        {
-            bundleHash = Convert.ToHexString(SHA256.HashData(bundle)).ToLowerInvariant();
-        }
         session.Dispose();
         return new(
             bundlePath,
@@ -213,7 +208,7 @@ internal sealed class ArmouryCaptureService
             reports.Count(report => report.IsStructurallyValidRearMapping),
             assessment.IsConclusive,
             assessment.Reasons,
-            bundleHash);
+            bundleSha256);
     }
 
     private static async Task<EtwPipeConnection> WaitForReadyAsync(
@@ -467,17 +462,46 @@ internal sealed class ArmouryCaptureService
         JsonSerializer.SerializeToUtf8Bytes(value, JsonOptions);
 
 
-    private static void CreateBundle(
+    private static string CreateBundle(
         string bundlePath,
         params (string Name, byte[] Content)[] artifacts)
     {
-        using var stream = new FileStream(bundlePath, FileMode.CreateNew, FileAccess.Write, FileShare.None);
-        using var archive = new ZipArchive(stream, ZipArchiveMode.Create, leaveOpen: false);
-        foreach (var artifact in artifacts)
+        var temporaryPath = $"{bundlePath}.tmp-{Guid.NewGuid():N}";
+        try
         {
-            var entry = archive.CreateEntry(artifact.Name, CompressionLevel.Optimal);
-            using var entryStream = entry.Open();
-            entryStream.Write(artifact.Content);
+            using (var stream = new FileStream(temporaryPath, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+            using (var archive = new ZipArchive(stream, ZipArchiveMode.Create, leaveOpen: false))
+            {
+                foreach (var artifact in artifacts)
+                {
+                    var entry = archive.CreateEntry(artifact.Name, CompressionLevel.Optimal);
+                    using var entryStream = entry.Open();
+                    entryStream.Write(artifact.Content);
+                }
+            }
+
+            string sha256;
+            using (var bundleStream = File.OpenRead(temporaryPath))
+            {
+                sha256 = Convert.ToHexString(SHA256.HashData(bundleStream)).ToLowerInvariant();
+            }
+            File.Move(temporaryPath, bundlePath);
+            return sha256;
+        }
+        catch (Exception captureFailure)
+        {
+            try
+            {
+                File.Delete(temporaryPath);
+            }
+            catch (Exception cleanupFailure)
+            {
+                throw new AggregateException(
+                    $"Capture failed and the incomplete private artifact could not be removed: {temporaryPath}",
+                    captureFailure,
+                    cleanupFailure);
+            }
+            throw;
         }
     }
 
@@ -528,6 +552,7 @@ internal sealed class ArmouryCaptureSession(
 
     public void CancelAndDelete()
     {
+        Exception? cleanupFailure = null;
         try
         {
             PipeWriter.WriteLine("cancel");
@@ -555,10 +580,16 @@ internal sealed class ArmouryCaptureSession(
             {
                 System.IO.Directory.Delete(Directory, recursive: true);
             }
-            catch
+            catch (Exception ex)
             {
-                // No evidence from a cancelled capture is accepted.
+                cleanupFailure = ex;
             }
+        }
+        if (cleanupFailure is not null)
+        {
+            throw new IOException(
+                $"Cancelled capture data could not be removed and remains at: {Directory}",
+                cleanupFailure);
         }
     }
 

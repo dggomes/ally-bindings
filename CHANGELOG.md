@@ -40,7 +40,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Thi
 - The temporary ETW session stops cooperatively on completion, cancellation, timeout or parent disconnect; its fixed name lets the next capture reclaim a session orphaned by a hard process crash.
 - ETW loss is queried while the session is live, provider enablement is synchronously acknowledged, and action/report correlation uses the shared Windows performance-counter clock.
 - The elevated helper verifies that its pipe server is the same executable image, updater assets are bound exactly to their release tag, and release tags must descend from `main`.
-- Capture output is a single private ZIP with an externally displayable SHA-256; loose duplicate artifacts are no longer retained.
+- Capture output is atomically committed as a single private ZIP with an externally displayable SHA-256; loose duplicate artifacts are no longer retained, and cleanup failures surface an explicit privacy warning.
+- Windows CI adversarially tests forged pipe-server PIDs, a same-user server running from the wrong executable, and executable replacement while the integrity lock is held.
 
 ## [v0.01] - 2026-08-01
 
