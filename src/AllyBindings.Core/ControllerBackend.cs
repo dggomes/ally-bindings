@@ -98,7 +98,7 @@ public sealed class AsusRearButtonControllerBackend : IControllerBackend
                 $"{_deviceStatus.Message} No controller settings were changed.");
         }
 
-        if (!ArmouryProtocolValidation.CustomWritesApproved)
+        if (!ArmouryProtocolValidation.IsOperationApproved(isRecoveryReset: false))
         {
             return new(
                 "ASUS capture-only + Preview",
@@ -134,7 +134,7 @@ public sealed class AsusRearButtonControllerBackend : IControllerBackend
         MappingProfile profile,
         CancellationToken cancellationToken = default)
     {
-        if (!ArmouryProtocolValidation.CustomWritesApproved)
+        if (!ArmouryProtocolValidation.IsOperationApproved(isRecoveryReset: false))
         {
             var status = GetStatus();
             return Task.FromResult(new BackendApplyResult(false, ArmouryProtocolValidation.GateMessage, status));
@@ -152,7 +152,7 @@ public sealed class AsusRearButtonControllerBackend : IControllerBackend
 
     public Task<BackendApplyResult> RestoreDefaultAsync(CancellationToken cancellationToken = default)
     {
-        if (!ArmouryProtocolValidation.CustomWritesApproved && !ArmouryProtocolValidation.RecoveryWritesApproved)
+        if (!ArmouryProtocolValidation.IsOperationApproved(isRecoveryReset: true))
         {
             var status = GetStatus();
             return Task.FromResult(new BackendApplyResult(false, ArmouryProtocolValidation.GateMessage, status));
@@ -177,14 +177,13 @@ public sealed class AsusRearButtonControllerBackend : IControllerBackend
         try
         {
             var status = GetStatus();
-            var canWrite = status.CanRemap ||
-                (isRecoveryReset && ArmouryProtocolValidation.RecoveryWritesApproved && _deviceStatus.IsAvailable);
+            var operationApproved = ArmouryProtocolValidation.IsOperationApproved(isRecoveryReset);
+            var canWrite = operationApproved && _deviceStatus.IsSupportedModel && _deviceStatus.IsAvailable;
             if (!canWrite && allowReprobe)
             {
                 _deviceStatus = await _device.InitializeAsync(cancellationToken).ConfigureAwait(false);
                 status = GetStatus();
-                canWrite = status.CanRemap ||
-                    (isRecoveryReset && ArmouryProtocolValidation.RecoveryWritesApproved && _deviceStatus.IsAvailable);
+                canWrite = operationApproved && _deviceStatus.IsSupportedModel && _deviceStatus.IsAvailable;
             }
             if (!canWrite)
             {

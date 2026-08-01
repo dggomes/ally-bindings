@@ -11,6 +11,29 @@ public sealed class AsusRearButtonProtocolTests
         Assert.False(ArmouryProtocolValidation.RecoveryWritesApproved);
     }
 
+    [Theory]
+    [InlineData(false, false, false, false)]
+    [InlineData(false, false, true, false)]
+    [InlineData(false, true, false, false)]
+    [InlineData(false, true, true, true)]
+    [InlineData(true, false, false, false)]
+    [InlineData(true, false, true, true)]
+    [InlineData(true, true, false, false)]
+    [InlineData(true, true, true, true)]
+    public void Write_authorization_uses_the_gate_for_the_requested_operation(
+        bool isRecoveryReset,
+        bool customWritesApproved,
+        bool recoveryWritesApproved,
+        bool expected)
+    {
+        Assert.Equal(
+            expected,
+            ArmouryProtocolValidation.IsOperationApproved(
+                isRecoveryReset,
+                customWritesApproved,
+                recoveryWritesApproved));
+    }
+
     [Fact]
     public void Native_reset_report_writes_both_corroborated_modifier_actions()
     {

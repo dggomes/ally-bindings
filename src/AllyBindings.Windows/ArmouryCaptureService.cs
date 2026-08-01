@@ -16,14 +16,29 @@ internal sealed partial class ArmouryCaptureService
     private static readonly TimeSpan CaptureStartTimeout = TimeSpan.FromSeconds(30);
     private static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = true };
 
-    public async Task<ArmouryCaptureSession> StartAsync(CancellationToken cancellationToken = default)
+    public Task<ArmouryCaptureTarget> DiscoverTargetAsync(CancellationToken cancellationToken = default)
     {
         var toolPath = FindUsbPcapCommand()
             ?? throw new InvalidOperationException(
                 "USBPcap is not installed. Install Wireshark with the USBPcap component, reboot if its installer asks, then retry. Ally Bindings will never install a kernel capture driver automatically.");
+        return FindTargetAsync(toolPath, cancellationToken);
+    }
+
+    public async Task<ArmouryCaptureSession> StartAsync(
+        ArmouryCaptureTarget confirmedTarget,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(confirmedTarget);
+        var target = await FindTargetAsync(confirmedTarget.ToolPath, cancellationToken).ConfigureAwait(false);
+        if (!IsSameTarget(confirmedTarget, target))
+        {
+            throw new InvalidOperationException(
+                "The selected ASUS USB device identity changed before capture began. No PCAP was created; discover and confirm the device again.");
+        }
+
+        var toolPath = target.ToolPath;
         var directory = CreateCaptureDirectory();
         var enumerationPath = Path.Combine(directory, "usbpcap-selected-device.txt");
-        var target = await FindTargetAsync(toolPath, cancellationToken).ConfigureAwait(false);
         await File.WriteAllTextAsync(
             enumerationPath,
             $"Control device: {target.ControlDevice}{Environment.NewLine}" +
@@ -61,8 +76,38 @@ internal sealed partial class ArmouryCaptureService
         }
         catch
         {
-            processJob?.Dispose();
+            if (processJob is null)
+            {
+                try
+                {
+                    if (!process.HasExited) process.Kill(entireProcessTree: true);
+                }
+                catch
+                {
+                    // Best effort fallback when the stronger Job Object boundary could not be established.
+                }
+            }
+            else
+            {
+                processJob.Dispose();
+            }
+            try
+            {
+                if (!process.HasExited) process.WaitForExit(5_000);
+            }
+            catch
+            {
+                // Best effort only; termination was requested above.
+            }
             process.Dispose();
+            try
+            {
+                Directory.Delete(directory, recursive: true);
+            }
+            catch
+            {
+                // A failed startup is never accepted as evidence. Windows may briefly retain a driver handle.
+            }
             throw;
         }
     }
@@ -178,7 +223,7 @@ internal sealed partial class ArmouryCaptureService
             pcapHash);
     }
 
-    private static async Task<UsbPcapTarget> FindTargetAsync(
+    private static async Task<ArmouryCaptureTarget> FindTargetAsync(
         string toolPath,
         CancellationToken cancellationToken)
     {
@@ -192,7 +237,7 @@ internal sealed partial class ArmouryCaptureService
             throw new InvalidOperationException("USBPcap is installed, but it exposed no capture control devices.");
         }
 
-        var targets = new List<UsbPcapTarget>();
+        var targets = new List<ArmouryCaptureTarget>();
         foreach (var controlDevice in controlDevices)
         {
             var output = await RunToolAsync(
@@ -211,7 +256,7 @@ internal sealed partial class ArmouryCaptureService
                 var descriptions = group.Select(item => item.Description).Distinct().ToArray();
                 if (descriptions.Any(IsAsusNKeyDescription))
                 {
-                    targets.Add(new(controlDevice, group.Key, descriptions));
+                    targets.Add(new(toolPath, controlDevice, group.Key, descriptions));
                 }
             }
         }
@@ -363,7 +408,7 @@ internal sealed partial class ArmouryCaptureService
 
     private static string BuildCaptureScript(
         string toolPath,
-        UsbPcapTarget target,
+        ArmouryCaptureTarget target,
         string pcapPath,
         string ownerReadyPath)
     {
@@ -387,7 +432,7 @@ internal sealed partial class ArmouryCaptureService
 
     private static void ValidateCmdPath(string value)
     {
-        if (value.IndexOfAny(['\r', '\n', '"', '&', '|', '<', '>']) >= 0)
+        if (value.IndexOfAny(['\r', '\n', '"', '&', '|', '<', '>', '^', '!', '%']) >= 0)
         {
             throw new InvalidOperationException("A capture path contained characters that are unsafe for a Windows command script.");
         }
@@ -424,24 +469,43 @@ internal sealed partial class ArmouryCaptureService
         IReadOnlyList<CapturedReportAnalysis> reports,
         bool targetIdentityStable)
     {
-        var reasons = new List<string>();
         DateTimeOffset Marker(string name) => session.Actions.Single(action => action.Action == name).TimestampUtc;
-        var start = Marker("capture-started");
-        var first = Marker("armoury-applied-m1-a-m2-b");
-        var second = Marker("armoury-applied-m1-x-m2-y");
-        var reset = Marker("armoury-reset-m1-m2-to-default");
-
-        var firstMatch = reports.Any(report => report.Timestamp >= start && report.Timestamp <= first && report.MatchesRequestedM1A_M2B);
-        var secondMatch = reports.Any(report => report.Timestamp > first && report.Timestamp <= second && report.MatchesRequestedM1X_M2Y);
-        var resetMatch = reports.Any(report => report.Timestamp > second && report.Timestamp <= reset && report.MatchesExpectedNativeReset);
-        if (!firstMatch) reasons.Add("No exact M1=A / M2=B report was captured in its action window.");
-        if (!secondMatch) reasons.Add("No exact M1=X / M2=Y report was captured in its action window.");
-        if (!resetMatch) reasons.Add("No exact native-reset report was captured in its action window.");
-        if (parsed.TruncatedRecordCount != 0) reasons.Add($"The PCAP contains {parsed.TruncatedRecordCount} truncated record(s).");
-        if (reports.Any(report => report.Device != session.Target.Address)) reasons.Add("A parsed report did not match the confirmed USB device address.");
-        if (!targetIdentityStable) reasons.Add("The selected ASUS USB identity changed or disappeared before post-capture verification.");
-
-        return new(reasons.Count == 0, firstMatch, secondMatch, resetMatch, reasons);
+        var evidence = reports.Select(report => new ArmouryCaptureReportEvidence(
+            report.Timestamp,
+            report.IsStructurallyValidRearMapping,
+            report.MatchesRequestedM1A_M2B,
+            report.MatchesRequestedM1X_M2Y,
+            report.MatchesExpectedNativeReset)).ToList();
+        var windows = new[]
+        {
+            new ArmouryCaptureStepWindow(
+                "M1=A / M2=B",
+                Marker("step-started-m1-a-m2-b"),
+                Marker("armoury-applied-m1-a-m2-b"),
+                ArmouryCaptureExpectedReport.M1A_M2B),
+            new ArmouryCaptureStepWindow(
+                "M1=X / M2=Y",
+                Marker("step-started-m1-x-m2-y"),
+                Marker("armoury-applied-m1-x-m2-y"),
+                ArmouryCaptureExpectedReport.M1X_M2Y),
+            new ArmouryCaptureStepWindow(
+                "Reset to Default",
+                Marker("step-started-reset-to-default"),
+                Marker("armoury-reset-m1-m2-to-default"),
+                ArmouryCaptureExpectedReport.NativeReset),
+        };
+        var validation = ArmouryCaptureSequenceValidator.Validate(
+            evidence,
+            windows,
+            parsed.TruncatedRecordCount,
+            reports.All(report => report.Device == session.Target.Address),
+            targetIdentityStable);
+        return new(
+            validation.IsConclusive,
+            validation.FirstMappingMatched,
+            validation.SecondMappingMatched,
+            validation.NativeResetMatched,
+            validation.Reasons);
     }
 
     private static async Task<bool> IsTargetIdentityStableAsync(
@@ -451,16 +515,19 @@ internal sealed partial class ArmouryCaptureService
         try
         {
             var current = await FindTargetAsync(session.ToolPath, cancellationToken).ConfigureAwait(false);
-            return current.Address == session.Target.Address &&
-                string.Equals(current.ControlDevice, session.Target.ControlDevice, StringComparison.OrdinalIgnoreCase) &&
-                current.Descriptions.Order(StringComparer.OrdinalIgnoreCase)
-                    .SequenceEqual(session.Target.Descriptions.Order(StringComparer.OrdinalIgnoreCase), StringComparer.OrdinalIgnoreCase);
+            return IsSameTarget(session.Target, current);
         }
         catch
         {
             return false;
         }
     }
+
+    private static bool IsSameTarget(ArmouryCaptureTarget expected, ArmouryCaptureTarget actual) =>
+        expected.Address == actual.Address &&
+        string.Equals(expected.ControlDevice, actual.ControlDevice, StringComparison.OrdinalIgnoreCase) &&
+        expected.Descriptions.Order(StringComparer.OrdinalIgnoreCase)
+            .SequenceEqual(actual.Descriptions.Order(StringComparer.OrdinalIgnoreCase), StringComparer.OrdinalIgnoreCase);
 
     private static async Task<string> ComputeSha256Async(string path, CancellationToken cancellationToken)
     {
@@ -506,13 +573,13 @@ internal sealed class ArmouryCaptureSession(
     CaptureProcessJob processJob,
     string directory,
     string pcapPath,
-    UsbPcapTarget target,
+    ArmouryCaptureTarget target,
     string toolPath) : IDisposable
 {
     public Process Process { get; } = process;
     public string Directory { get; } = directory;
     public string PcapPath { get; } = pcapPath;
-    public UsbPcapTarget Target { get; } = target;
+    public ArmouryCaptureTarget Target { get; } = target;
     public string ToolPath { get; } = toolPath;
     public List<CaptureActionMarker> Actions { get; } = [];
 
@@ -521,7 +588,28 @@ internal sealed class ArmouryCaptureSession(
     public void Dispose()
     {
         processJob.Dispose();
+        try
+        {
+            if (!Process.HasExited) Process.WaitForExit(5_000);
+        }
+        catch
+        {
+            // The kill-on-close job remains the authoritative lifecycle boundary.
+        }
         Process.Dispose();
+    }
+
+    public void CancelAndDelete()
+    {
+        Dispose();
+        try
+        {
+            System.IO.Directory.Delete(Directory, recursive: true);
+        }
+        catch
+        {
+            // A cancelled capture is never bundled or accepted; Windows may briefly retain a driver handle.
+        }
     }
 }
 
@@ -628,7 +716,11 @@ internal sealed class CaptureProcessJob : IDisposable
     private static extern bool CloseHandle(IntPtr handle);
 }
 
-internal sealed record UsbPcapTarget(string ControlDevice, ushort Address, IReadOnlyList<string> Descriptions);
+internal sealed record ArmouryCaptureTarget(
+    string ToolPath,
+    string ControlDevice,
+    ushort Address,
+    IReadOnlyList<string> Descriptions);
 internal sealed record CaptureActionMarker(DateTimeOffset TimestampUtc, string Action);
 internal sealed record ArmouryCaptureResult(
     string BundlePath,

@@ -13,7 +13,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Thi
 - A passive Armoury Crate capture workflow using device-address-filtered USBPcap traffic.
 - Exact HID `SET_REPORT(feature)` extraction with setup bytes, interface, bus/device identity, declared/captured lengths, timestamps and complete payloads.
 - Action-window validation for `M1=A / M2=B`, `M1=X / M2=Y`, and Armoury's Reset to Default.
-- Conclusive/inconclusive capture verdicts; missing, reordered, mismatched or truncated evidence fails closed.
+- Conclusive/inconclusive capture verdicts; missing, duplicate, extra, malformed, reordered, mismatched, out-of-window or truncated evidence fails closed.
 - Private capture bundles containing the raw PCAP, extracted JSON, manifest, action markers and SHA-256 evidence.
 - RT confirmation while the shortcut chord remains held to open the editor.
 - Automatic daily update checks and independently configurable preview-release checks.
@@ -32,7 +32,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Thi
 ### Security
 
 - ASUS custom and recovery writes no longer expose caller-controlled approval parameters.
-- Passive capture refuses broad root-hub collection, requires confirmation of the selected ASUS USB device address and revalidates the identity after capture.
+- Passive capture refuses broad root-hub collection, requires confirmation of the selected ASUS USB device address before creating a PCAP and revalidates the identity after capture.
+- Native resets require the recovery gate explicitly; custom mappings require both custom and recovery authorization so a mapping can never be enabled without its rollback path.
 - Unexpected extra HID payload bytes are retained and cause exact-vector comparison to fail instead of being discarded.
 - USBPcap is launched through a tracked `start /wait` wrapper and a kill-on-close Windows Job Object established before capture begins.
 

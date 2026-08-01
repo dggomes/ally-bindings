@@ -63,7 +63,7 @@ public partial class App : System.Windows.Application
             Configuration = loaded.Configuration;
             _configurationWarnings = loaded.Warnings;
 
-            if (Configuration.EnableAsusRearButtonMappings && !ArmouryProtocolValidation.CustomWritesApproved)
+            if (Configuration.EnableAsusRearButtonMappings && !ArmouryProtocolValidation.IsOperationApproved(isRecoveryReset: false))
             {
                 Configuration = Configuration with { EnableAsusRearButtonMappings = false };
                 await _profileStore.SaveAsync(Configuration);
@@ -273,7 +273,7 @@ public partial class App : System.Windows.Application
                 AsusRearButtonMappingActive = Configuration.AsusRearButtonMappingActive,
             };
             var validated = ConfigurationValidator.Normalize(candidate);
-            if (validated.Configuration.EnableAsusRearButtonMappings && !ArmouryProtocolValidation.CustomWritesApproved)
+            if (validated.Configuration.EnableAsusRearButtonMappings && !ArmouryProtocolValidation.IsOperationApproved(isRecoveryReset: false))
             {
                 throw new InvalidOperationException(ArmouryProtocolValidation.GateMessage);
             }
@@ -515,22 +515,26 @@ public partial class App : System.Windows.Application
             _cycle.Cancel();
             _mainWindow.SetArmouryCaptureStatus("Discovering the ASUS N-KEY USB address…");
             var captureService = new ArmouryCaptureService();
-            session = await captureService.StartAsync();
+            var target = await captureService.DiscoverTargetAsync();
+            RequireCaptureStep(
+                $"Confirm this is the controller you intend to inspect:\n\nCapture device: {target.ControlDevice}\nUSB address: {target.Address}\nDescription: {string.Join(" | ", target.Descriptions)}\n\nNo capture has started yet. Click Cancel if this is not the ASUS N-KEY / ROG Ally controller.",
+                "Confirm device-only capture");
+            session = await captureService.StartAsync(target);
             _mainWindow.SetArmouryCaptureStatus("Capture running. Follow the Armoury prompts; this app remains write-locked.");
 
-            RequireCaptureStep(
-                $"Confirm this is the controller you intend to inspect:\n\nCapture device: {session.Target.ControlDevice}\nUSB address: {session.Target.Address}\nDescription: {string.Join(" | ", session.Target.Descriptions)}\n\nOnly this device address is being captured. Click Cancel if it is not the ASUS N-KEY / ROG Ally controller.",
-                "Confirm device-only capture");
+            session.MarkAction("step-started-m1-a-m2-b");
             RequireCaptureStep(
                 "In Armoury Crate, set M1 to A and M2 to B. Wait until Armoury shows the assignment as applied, then return here and click OK.",
                 "Capture step 1 of 3 · M1=A, M2=B");
             session.MarkAction("armoury-applied-m1-a-m2-b");
 
+            session.MarkAction("step-started-m1-x-m2-y");
             RequireCaptureStep(
                 "In Armoury Crate, now set M1 to X and M2 to Y. Wait until it is applied, then return here and click OK.",
                 "Capture step 2 of 3 · M1=X, M2=Y");
             session.MarkAction("armoury-applied-m1-x-m2-y");
 
+            session.MarkAction("step-started-reset-to-default");
             RequireCaptureStep(
                 "In Armoury Crate, use its Reset to Default action for M1/M2. Wait until the defaults are applied, then return here and click OK. This captures Armoury's real recovery bytes.",
                 "Capture step 3 of 3 · Armoury defaults");
@@ -573,7 +577,7 @@ public partial class App : System.Windows.Application
             {
                 try
                 {
-                    session.Dispose();
+                    session.CancelAndDelete();
                 }
                 catch
                 {
@@ -720,7 +724,7 @@ public partial class App : System.Windows.Application
         bool allowUnverifiedRecoveryReset = false)
     {
         var useAsusBackend =
-            (enableRearButtons && ArmouryProtocolValidation.CustomWritesApproved) ||
+            (enableRearButtons && ArmouryProtocolValidation.IsOperationApproved(isRecoveryReset: false)) ||
             (allowUnverifiedRecoveryReset && ArmouryProtocolValidation.RecoveryWritesApproved);
         IControllerBackend replacement = useAsusBackend
             ? new AsusRearButtonControllerBackend(new AsusRearButtonHidDevice())

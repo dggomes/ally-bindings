@@ -55,7 +55,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     public bool CheckForUpdatesAutomatically { get => _checkForUpdatesAutomatically; set { _checkForUpdatesAutomatically = value; OnPropertyChanged(); } }
     public bool IncludePrereleaseUpdates { get => _includePrereleaseUpdates; set { _includePrereleaseUpdates = value; OnPropertyChanged(); } }
     public bool EnableAsusRearButtonMappings { get => _enableAsusRearButtonMappings; set { _enableAsusRearButtonMappings = value; OnPropertyChanged(); } }
-    public bool CanEnableAsusRearButtonMappings => ArmouryProtocolValidation.CustomWritesApproved;
+    public bool CanEnableAsusRearButtonMappings =>
+        ArmouryProtocolValidation.IsOperationApproved(isRecoveryReset: false);
 
     public AppConfiguration BuildConfiguration(string activeProfileId, int? controllerIndex)
     {

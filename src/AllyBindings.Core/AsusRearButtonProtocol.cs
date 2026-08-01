@@ -6,6 +6,15 @@ public static class ArmouryProtocolValidation
     // Crate emits the same report shape and native-reset bytes we build.
     public static bool CustomWritesApproved => false;
     public static bool RecoveryWritesApproved => false;
+
+    internal static bool IsOperationApproved(
+        bool isRecoveryReset,
+        bool customWritesApproved,
+        bool recoveryWritesApproved) =>
+        isRecoveryReset ? recoveryWritesApproved : customWritesApproved && recoveryWritesApproved;
+
+    internal static bool IsOperationApproved(bool isRecoveryReset) =>
+        IsOperationApproved(isRecoveryReset, CustomWritesApproved, RecoveryWritesApproved);
     public const string GateMessage =
         "ASUS M1/M2 writes are locked pending passive Armoury Crate protocol validation.";
 }

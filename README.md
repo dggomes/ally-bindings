@@ -97,13 +97,14 @@ The next release includes a deliberately passive logger for proving what Armoury
 The logger:
 
 - discovers exactly one ASUS N-KEY / ROG Ally USB device address;
-- asks the user to confirm it and revalidates the same identity after capture;
+- asks the user to confirm it before any PCAP is created and revalidates the same identity after capture;
 - invokes USBPcap with `--devices <address>` and refuses whole-root-hub capture;
 - binds the capture process tree to a Windows kill-on-close job before USBPcap is allowed to start;
 - extracts outbound HID `SET_REPORT(feature)` payloads without truncating unexpected bytes;
 - records action windows for `M1=A / M2=B`, `M1=X / M2=Y`, and Armoury's Reset to Default;
-- labels missing, mismatched, reordered or truncated evidence **INCONCLUSIVE**;
+- requires exactly one expected report in each bounded action window and labels missing, duplicate, extra, malformed, mismatched, reordered, out-of-window or truncated evidence **INCONCLUSIVE**;
 - keeps custom and recovery writes source-locked regardless of the capture verdict;
+- requires recovery authorization before custom mappings can ever be enabled, while reset writes still require the recovery gate explicitly;
 - creates a ZIP with the raw PCAP, extracted JSON, manifest and SHA-256 hash.
 
 ### One-time capture procedure

@@ -128,9 +128,10 @@ Backend results distinguish a selected app profile from a mapping physically app
 - Mapping command: report `0x5A`, command `0xD1`, zone `0x08`.
 - Both primary and secondary paddle slots receive the selected action to avoid retaining a stale Armoury secondary action.
 - `CustomWritesApproved` and `RecoveryWritesApproved` are both `false`; profile, panic, exit and stale-marker paths therefore send no ASUS report.
-- The passive logger enumerates USBPcap interfaces, accepts exactly one ASUS N-KEY address, displays it for explicit confirmation, invokes `USBPcapCMD --devices <address>` through a tracked `start /wait` wrapper, and revalidates the same device identity after capture.
+- Native reset authorization depends only on `RecoveryWritesApproved`; custom mappings require both validation gates so they cannot be enabled without an approved recovery path.
+- The passive logger enumerates USBPcap interfaces, accepts exactly one ASUS N-KEY address, obtains explicit confirmation before creating a PCAP, invokes `USBPcapCMD --devices <address>` through a tracked `start /wait` wrapper, and revalidates the same device identity after capture.
 - The parser accepts only outbound HID class-interface `SET_REPORT(feature)` control transfers and retains complete captured payloads alongside declared/captured lengths. Exact matches require report-ID, length, prefix and complete wire-vector agreement.
-- A capture is conclusive only when both requested mappings and Armoury's reset appear in their expected action windows with no truncated records; every other result is labelled inconclusive and cannot become unlock evidence.
+- A capture is conclusive only when exactly one correct report appears in each bounded action window and there are no duplicate, extra, malformed, mismatched, out-of-window or truncated ASUS report records; every other result is labelled inconclusive and cannot become unlock evidence.
 - The raw PCAP and extracted report JSON are hashed and bundled locally. Device ambiguity fails closed; broad root-hub capture is forbidden.
 - No physical controller is hidden and no virtual output is created by this backend.
 
