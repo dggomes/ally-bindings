@@ -20,6 +20,10 @@ $project = Get-Content -Raw -LiteralPath $projectPath
 
 foreach ($requiredText in @(
     'Capture &amp; update',
+    'AutomationProperties.AutomationId="NavigationProfiles"',
+    'AutomationProperties.AutomationId="NavigationController"',
+    'AutomationProperties.AutomationId="NavigationShortcut"',
+    'AutomationProperties.AutomationId="NavigationCaptureUpdate"',
     'Capture Armoury M1/M2',
     'x:Name="ArmouryCaptureButton"',
     'Content="Start capture"',

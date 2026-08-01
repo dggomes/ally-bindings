@@ -49,16 +49,16 @@
           <ListBox x:Name="NavigationList" Background="Transparent" BorderThickness="0"
                    SelectedIndex="{Binding SelectedIndex, ElementName=WorkspaceTabs, Mode=TwoWay}"
                    AutomationProperties.Name="App sections">
-            <ListBoxItem>
+            <ListBoxItem AutomationProperties.Name="Profiles" AutomationProperties.AutomationId="NavigationProfiles">
               <StackPanel><TextBlock Text="Profiles" FontSize="18" FontWeight="SemiBold" /><TextBlock Text="Choose and manage" Foreground="{StaticResource MutedBrush}" /></StackPanel>
             </ListBoxItem>
-            <ListBoxItem>
+            <ListBoxItem AutomationProperties.Name="Controller" AutomationProperties.AutomationId="NavigationController">
               <StackPanel><TextBlock Text="Controller" FontSize="18" FontWeight="SemiBold" /><TextBlock Text="Visual button mapping" Foreground="{StaticResource MutedBrush}" /></StackPanel>
             </ListBoxItem>
-            <ListBoxItem>
+            <ListBoxItem AutomationProperties.Name="Shortcut" AutomationProperties.AutomationId="NavigationShortcut">
               <StackPanel><TextBlock Text="Shortcut" FontSize="18" FontWeight="SemiBold" /><TextBlock Text="Profile rotation chord" Foreground="{StaticResource MutedBrush}" /></StackPanel>
             </ListBoxItem>
-            <ListBoxItem>
+            <ListBoxItem AutomationProperties.Name="Capture &amp; update" AutomationProperties.AutomationId="NavigationCaptureUpdate">
               <StackPanel><TextBlock Text="Capture &amp; update" FontSize="18" FontWeight="SemiBold" /><TextBlock Text="Armoury ETW and app care" Foreground="{StaticResource MutedBrush}" /></StackPanel>
             </ListBoxItem>
           </ListBox>
