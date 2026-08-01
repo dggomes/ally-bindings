@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.IO;
 using System.Reflection;
 using System.Threading;
@@ -27,6 +28,7 @@ public partial class App : System.Windows.Application
     private bool _mutexReleased;
     private bool _exiting;
     private bool _updateCheckInProgress;
+    private bool _armouryCaptureInProgress;
     private bool _allowExitWithPendingRearMapping;
 
     public AppConfiguration Configuration { get; private set; } = AppConfiguration.CreateDefault();
@@ -61,6 +63,15 @@ public partial class App : System.Windows.Application
             Configuration = loaded.Configuration;
             _configurationWarnings = loaded.Warnings;
 
+            if (Configuration.EnableAsusRearButtonMappings && !ArmouryProtocolValidation.CustomWritesApproved)
+            {
+                Configuration = Configuration with { EnableAsusRearButtonMappings = false };
+                await _profileStore.SaveAsync(Configuration);
+                _configurationWarnings = _configurationWarnings
+                    .Append("Experimental ASUS writes were disabled because physical Armoury protocol validation is still pending.")
+                    .ToList();
+            }
+
             var startupCommand = StartupRegistration.CurrentCommand;
             var startupEnabled = StartupRegistration.IsEnabled();
             if (startupCommand is not null && !startupEnabled)
@@ -78,9 +89,11 @@ public partial class App : System.Windows.Application
             var recoveryWasPending = Configuration.AsusRearButtonMappingActive;
             var backendStatus = await ReplaceBackendAsync(
                 Configuration.EnableAsusRearButtonMappings || recoveryWasPending,
-                restoreCurrent: false);
+                restoreCurrent: false,
+                allowUnverifiedRecoveryReset:
+                    recoveryWasPending && ArmouryProtocolValidation.RecoveryWritesApproved);
             _backendNeedsRestore = Configuration.AsusRearButtonMappingActive;
-            if (Configuration.AsusRearButtonMappingActive)
+            if (Configuration.AsusRearButtonMappingActive && ArmouryProtocolValidation.RecoveryWritesApproved)
             {
                 var recovery = await _backend.RestoreDefaultAsync();
                 if (recovery.CommandAccepted)
@@ -105,6 +118,12 @@ public partial class App : System.Windows.Application
                         .Append($"Could not send the M1/M2 reset command: {recovery.Message}")
                         .ToList();
                 }
+            }
+            else if (Configuration.AsusRearButtonMappingActive)
+            {
+                _configurationWarnings = _configurationWarnings
+                    .Append("A stale M1/M2 recovery marker exists, but this capture-only build sent no reset report. Restore through Armoury Crate.")
+                    .ToList();
             }
             _cycle = new ProfileCycleStateMachine(Configuration.Shortcut);
             _overlay = new OverlayWindow();
@@ -254,6 +273,10 @@ public partial class App : System.Windows.Application
                 AsusRearButtonMappingActive = Configuration.AsusRearButtonMappingActive,
             };
             var validated = ConfigurationValidator.Normalize(candidate);
+            if (validated.Configuration.EnableAsusRearButtonMappings && !ArmouryProtocolValidation.CustomWritesApproved)
+            {
+                throw new InvalidOperationException(ArmouryProtocolValidation.GateMessage);
+            }
             var rearBackendChanged =
                 validated.Configuration.EnableAsusRearButtonMappings != Configuration.EnableAsusRearButtonMappings;
             BackendStatus? replacementStatus = null;
@@ -261,7 +284,8 @@ public partial class App : System.Windows.Application
             {
                 replacementStatus = await ReplaceBackendAsync(
                     validated.Configuration.EnableAsusRearButtonMappings,
-                    restoreCurrent: Configuration.EnableAsusRearButtonMappings);
+                    restoreCurrent: Configuration.EnableAsusRearButtonMappings,
+                    allowUnverifiedRecoveryReset: false);
             }
             var nextConfiguration = validated.Configuration;
             if (rearBackendChanged && !nextConfiguration.EnableAsusRearButtonMappings)
@@ -459,6 +483,118 @@ public partial class App : System.Windows.Application
         return DiagnosticsExporter.ToJson(snapshot);
     }
 
+    public async Task CaptureArmouryProtocolAsync()
+    {
+        if (_armouryCaptureInProgress) return;
+        _armouryCaptureInProgress = true;
+        await _operationGate.WaitAsync();
+        ArmouryCaptureSession? session = null;
+        var staleRecoveryMarker = _backendNeedsRestore;
+        static void RequireCaptureStep(string message, string title)
+        {
+            if (Forms.MessageBox.Show(
+                    message,
+                    title,
+                    Forms.MessageBoxButtons.OKCancel,
+                    Forms.MessageBoxIcon.Information) != Forms.DialogResult.OK)
+            {
+                throw new OperationCanceledException("The capture was cancelled. Any running USBPcap process was stopped and no bundle was accepted as evidence.");
+            }
+        }
+        try
+        {
+            _mainWindow.SetArmouryCaptureBusy(true);
+            var proceed = Forms.MessageBox.Show(
+                "This starts a passive, device-address-filtered USBPcap session. Ally Bindings will send no HID reports and its ASUS write backend is source locked.\n\n" +
+                "You will deliberately change M1/M2 three times through Armoury Crate so we can compare its exact packets. USBPcap must already be installed (normally via Wireshark); Ally Bindings will not install a kernel driver.\n\nContinue?",
+                "Capture Armoury M1/M2 protocol",
+                Forms.MessageBoxButtons.OKCancel,
+                Forms.MessageBoxIcon.Information) == Forms.DialogResult.OK;
+            if (!proceed) return;
+
+            _cycle.Cancel();
+            _mainWindow.SetArmouryCaptureStatus("Discovering the ASUS N-KEY USB address…");
+            var captureService = new ArmouryCaptureService();
+            session = await captureService.StartAsync();
+            _mainWindow.SetArmouryCaptureStatus("Capture running. Follow the Armoury prompts; this app remains write-locked.");
+
+            RequireCaptureStep(
+                $"Confirm this is the controller you intend to inspect:\n\nCapture device: {session.Target.ControlDevice}\nUSB address: {session.Target.Address}\nDescription: {string.Join(" | ", session.Target.Descriptions)}\n\nOnly this device address is being captured. Click Cancel if it is not the ASUS N-KEY / ROG Ally controller.",
+                "Confirm device-only capture");
+            RequireCaptureStep(
+                "In Armoury Crate, set M1 to A and M2 to B. Wait until Armoury shows the assignment as applied, then return here and click OK.",
+                "Capture step 1 of 3 · M1=A, M2=B");
+            session.MarkAction("armoury-applied-m1-a-m2-b");
+
+            RequireCaptureStep(
+                "In Armoury Crate, now set M1 to X and M2 to Y. Wait until it is applied, then return here and click OK.",
+                "Capture step 2 of 3 · M1=X, M2=Y");
+            session.MarkAction("armoury-applied-m1-x-m2-y");
+
+            RequireCaptureStep(
+                "In Armoury Crate, use its Reset to Default action for M1/M2. Wait until the defaults are applied, then return here and click OK. This captures Armoury's real recovery bytes.",
+                "Capture step 3 of 3 · Armoury defaults");
+            session.MarkAction("armoury-reset-m1-m2-to-default");
+
+            RequireCaptureStep(
+                "Switch to the black USBPcap console, press q to stop cleanly, then return here and click OK. Do not close the console with X.",
+                "Stop passive capture");
+            var result = await captureService.CompleteAsync(session);
+            session = null;
+            if (staleRecoveryMarker && result.IsConclusive)
+            {
+                Configuration = Configuration with
+                {
+                    ActiveProfileId = MappingProfile.Default.Id,
+                    AsusRearButtonMappingActive = false,
+                };
+                _backendNeedsRestore = false;
+                await _profileStore.SaveAsync(Configuration);
+                _configurationWarnings = _configurationWarnings
+                    .Append("Cleared the stale recovery marker after the user-confirmed Armoury Reset to Default capture step; Ally Bindings sent no reset report.")
+                    .ToList();
+            }
+
+            _mainWindow.SetArmouryCaptureStatus(
+                $"Capture {(result.IsConclusive ? "CONCLUSIVE" : "INCONCLUSIVE")}: {result.FeatureReportCount} report 0x5A packet(s), {result.RearMappingReportCount} structurally valid candidate(s). Bundle: {result.BundlePath}");
+            _mainWindow.SetStatus(result.IsConclusive
+                ? "Passive Armoury capture is structurally conclusive. ASUS writes remain locked pending human analysis."
+                : $"Passive Armoury capture is INCONCLUSIVE: {string.Join(" ", result.AssessmentReasons)} ASUS writes remain locked.");
+            Process.Start(new ProcessStartInfo
+            {
+                FileName = "explorer.exe",
+                Arguments = $"/select,\"{result.BundlePath}\"",
+                UseShellExecute = true,
+            });
+        }
+        catch (Exception ex)
+        {
+            if (session is not null)
+            {
+                try
+                {
+                    session.Dispose();
+                }
+                catch
+                {
+                    // Best-effort capture cleanup; this path never talks to the controller.
+                }
+            }
+            _mainWindow.SetArmouryCaptureStatus($"Capture failed safely: {ex.Message}");
+            Forms.MessageBox.Show(
+                $"No Ally Bindings controller write was attempted.\n\n{ex.Message}",
+                "Armoury capture failed safely",
+                Forms.MessageBoxButtons.OK,
+                Forms.MessageBoxIcon.Error);
+        }
+        finally
+        {
+            _mainWindow.SetArmouryCaptureBusy(false);
+            _operationGate.Release();
+            _armouryCaptureInProgress = false;
+        }
+    }
+
     public async Task CheckForUpdatesAsync(bool userInitiated)
     {
         if (_updateCheckInProgress || _updateService is null) return;
@@ -578,9 +714,15 @@ public partial class App : System.Windows.Application
         }
     }
 
-    private async Task<BackendStatus> ReplaceBackendAsync(bool enableRearButtons, bool restoreCurrent)
+    private async Task<BackendStatus> ReplaceBackendAsync(
+        bool enableRearButtons,
+        bool restoreCurrent,
+        bool allowUnverifiedRecoveryReset = false)
     {
-        IControllerBackend replacement = enableRearButtons
+        var useAsusBackend =
+            (enableRearButtons && ArmouryProtocolValidation.CustomWritesApproved) ||
+            (allowUnverifiedRecoveryReset && ArmouryProtocolValidation.RecoveryWritesApproved);
+        IControllerBackend replacement = useAsusBackend
             ? new AsusRearButtonControllerBackend(new AsusRearButtonHidDevice())
             : new PreviewControllerBackend();
         var replacementStatus = await replacement.InitializeAsync();

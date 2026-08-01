@@ -1,5 +1,15 @@
 namespace AllyBindings.Core;
 
+public static class ArmouryProtocolValidation
+{
+    // Deliberately locked until a physical Ally capture proves that Armoury
+    // Crate emits the same report shape and native-reset bytes we build.
+    public static bool CustomWritesApproved => false;
+    public static bool RecoveryWritesApproved => false;
+    public const string GateMessage =
+        "ASUS M1/M2 writes are locked pending passive Armoury Crate protocol validation.";
+}
+
 /// <summary>
 /// Clean-room packet builder for the ASUS embedded-controller M1/M2 mapping zone.
 ///
@@ -67,6 +77,15 @@ public static class AsusRearButtonProtocol
     /// </summary>
     public static byte[] BuildNativeResetReport() =>
         BuildMappingReport(ControllerButton.M1, ControllerButton.M2);
+
+    public static bool MatchesWireReport(ReadOnlySpan<byte> captured, ReadOnlySpan<byte> expected)
+    {
+        if (captured.Length < expected.Length || !captured[..expected.Length].SequenceEqual(expected))
+        {
+            return false;
+        }
+        return captured[expected.Length..].IndexOfAnyExcept((byte)0) < 0;
+    }
 
     private static void ValidateRearTarget(ControllerButton source, ControllerButton target)
     {

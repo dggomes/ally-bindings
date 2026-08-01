@@ -5,6 +5,13 @@ namespace AllyBindings.Core.Tests;
 public sealed class AsusRearButtonProtocolTests
 {
     [Fact]
+    public void Capture_release_keeps_custom_and_recovery_writes_locked()
+    {
+        Assert.False(ArmouryProtocolValidation.CustomWritesApproved);
+        Assert.False(ArmouryProtocolValidation.RecoveryWritesApproved);
+    }
+
+    [Fact]
     public void Native_reset_report_writes_both_corroborated_modifier_actions()
     {
         var report = AsusRearButtonProtocol.BuildNativeResetReport();
@@ -30,6 +37,21 @@ public sealed class AsusRearButtonProtocolTests
         AssertAction(report, 38, 0x01, 0x0E, 0x00);
     }
 
+    [Fact]
+    public void Wire_report_comparison_accepts_only_the_expected_packet_plus_zero_padding()
+    {
+        var expected = AsusRearButtonProtocol.BuildMappingReport(ControllerButton.A, ControllerButton.B);
+        var padded = new byte[64];
+        expected.CopyTo(padded, 0);
+
+        Assert.True(AsusRearButtonProtocol.MatchesWireReport(expected, expected));
+        Assert.True(AsusRearButtonProtocol.MatchesWireReport(padded, expected));
+        Assert.False(AsusRearButtonProtocol.MatchesWireReport(expected[..^1], expected));
+
+        padded[^1] = 0x01;
+        Assert.False(AsusRearButtonProtocol.MatchesWireReport(padded, expected));
+    }
+
     [Theory]
     [InlineData(ControllerButton.None)]
     [InlineData(ControllerButton.M2)]
@@ -50,36 +72,15 @@ public sealed class AsusRearButtonProtocolTests
 public sealed class AsusRearButtonControllerBackendTests
 {
     [Fact]
-    public async Task Applies_profile_rear_bindings_and_reports_partial_backend()
+    public void Public_backend_constructor_has_no_write_approval_override()
     {
-        var device = FakeRearButtonDevice.Available();
-        await using var backend = new AsusRearButtonControllerBackend(device);
-        var initialized = await backend.InitializeAsync();
-        var profile = new MappingProfile
-        {
-            Id = "rear",
-            Name = "Rear",
-            Bindings = new Dictionary<ControllerButton, ControllerButton>
-            {
-                [ControllerButton.M1] = ControllerButton.B,
-                [ControllerButton.M2] = ControllerButton.LeftTrigger,
-            },
-        };
-
-        var result = await backend.ApplyAsync(profile);
-
-        Assert.Equal(BackendHealth.Partial, initialized.Health);
-        Assert.True(result.CommandAccepted);
-        Assert.Single(device.Reports);
-        AssertAction(device.Reports[0], 5, 0x01, 0x0D);
-        AssertAction(device.Reports[0], 27, 0x01, 0x02);
-        Assert.Contains("command accepted", result.Message, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("live state cannot be read back", result.Message, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("standard mappings remain preview-only", result.Message, StringComparison.OrdinalIgnoreCase);
+        var constructor = Assert.Single(typeof(AsusRearButtonControllerBackend).GetConstructors());
+        var parameter = Assert.Single(constructor.GetParameters());
+        Assert.Equal(typeof(IAsusRearButtonDevice), parameter.ParameterType);
     }
 
     [Fact]
-    public async Task Custom_apply_cannot_reprobe_and_write_behind_the_recovery_marker()
+    public async Task Locked_custom_apply_cannot_probe_or_write()
     {
         var device = FakeRearButtonDevice.Available();
         await using var backend = new AsusRearButtonControllerBackend(device);
@@ -101,6 +102,45 @@ public sealed class AsusRearButtonControllerBackendTests
     }
 
     [Fact]
+    public async Task Initialized_backend_rejects_custom_and_reset_writes()
+    {
+        var device = FakeRearButtonDevice.Available();
+        await using var backend = new AsusRearButtonControllerBackend(device);
+        var initialized = await backend.InitializeAsync();
+
+        var custom = await backend.ApplyAsync(new MappingProfile
+        {
+            Id = "rear",
+            Name = "Rear",
+            Bindings = new Dictionary<ControllerButton, ControllerButton>
+            {
+                [ControllerButton.M1] = ControllerButton.A,
+            },
+        });
+        var reset = await backend.RestoreDefaultAsync();
+
+        Assert.Equal(BackendHealth.Preview, initialized.Health);
+        Assert.False(initialized.CanRemap);
+        Assert.False(custom.CommandAccepted);
+        Assert.False(reset.CommandAccepted);
+        Assert.Empty(device.Reports);
+        Assert.Contains("locked", custom.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task Capture_release_cannot_reprobe_or_send_a_recovery_reset()
+    {
+        var device = FakeRearButtonDevice.Available();
+        await using var backend = new AsusRearButtonControllerBackend(device);
+
+        var reset = await backend.RestoreDefaultAsync();
+
+        Assert.False(reset.CommandAccepted);
+        Assert.Equal(0, device.InitializeCalls);
+        Assert.Empty(device.Reports);
+    }
+
+    [Fact]
     public async Task Unsupported_machine_never_attempts_a_write()
     {
         var device = FakeRearButtonDevice.Unsupported();
@@ -112,25 +152,6 @@ public sealed class AsusRearButtonControllerBackendTests
         Assert.False(result.CommandAccepted);
         Assert.Empty(device.Reports);
         Assert.Equal(BackendHealth.Unavailable, result.Status.Health);
-    }
-
-    [Fact]
-    public async Task Restore_reprobes_and_writes_native_reset_report()
-    {
-        var device = FakeRearButtonDevice.Available();
-        await using var backend = new AsusRearButtonControllerBackend(device);
-
-        var result = await backend.RestoreDefaultAsync();
-
-        Assert.True(result.CommandAccepted);
-        Assert.Equal(1, device.InitializeCalls);
-        Assert.Equal(AsusRearButtonProtocol.BuildNativeResetReport(), Assert.Single(device.Reports));
-    }
-
-    private static void AssertAction(byte[] report, int offset, byte kind, byte code)
-    {
-        Assert.Equal(kind, report[offset]);
-        Assert.Equal(code, report[offset + 1]);
     }
 
     private sealed class FakeRearButtonDevice(AsusRearButtonDeviceStatus status) : IAsusRearButtonDevice

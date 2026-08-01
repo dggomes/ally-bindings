@@ -55,6 +55,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     public bool CheckForUpdatesAutomatically { get => _checkForUpdatesAutomatically; set { _checkForUpdatesAutomatically = value; OnPropertyChanged(); } }
     public bool IncludePrereleaseUpdates { get => _includePrereleaseUpdates; set { _includePrereleaseUpdates = value; OnPropertyChanged(); } }
     public bool EnableAsusRearButtonMappings { get => _enableAsusRearButtonMappings; set { _enableAsusRearButtonMappings = value; OnPropertyChanged(); } }
+    public bool CanEnableAsusRearButtonMappings => ArmouryProtocolValidation.CustomWritesApproved;
 
     public AppConfiguration BuildConfiguration(string activeProfileId, int? controllerIndex)
     {
@@ -68,7 +69,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             CheckForUpdatesAutomatically = CheckForUpdatesAutomatically,
             IncludePrereleaseUpdates = IncludePrereleaseUpdates,
             LastUpdateCheckUtc = _lastUpdateCheckUtc,
-            EnableAsusRearButtonMappings = EnableAsusRearButtonMappings,
+            EnableAsusRearButtonMappings = CanEnableAsusRearButtonMappings && EnableAsusRearButtonMappings,
             Shortcut = new ShortcutSettings
             {
                 Buttons = [ShortcutButton1, ShortcutButton2],
@@ -107,7 +108,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         CheckForUpdatesAutomatically = configuration.CheckForUpdatesAutomatically;
         IncludePrereleaseUpdates = configuration.IncludePrereleaseUpdates;
         _lastUpdateCheckUtc = configuration.LastUpdateCheckUtc;
-        EnableAsusRearButtonMappings = configuration.EnableAsusRearButtonMappings;
+        EnableAsusRearButtonMappings =
+            CanEnableAsusRearButtonMappings && configuration.EnableAsusRearButtonMappings;
     }
 
     public void SetBackendStatus(BackendStatus status) => BackendStatusText.Text = $"Backend: {status.Name} · {status.Health}\n{status.Message}";
@@ -121,6 +123,10 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     public void SetStatus(string message) => StatusText.Text = message;
 
     public void SetUpdateStatus(string message) => UpdateStatusText.Text = message;
+
+    public void SetArmouryCaptureStatus(string message) => ArmouryCaptureStatusText.Text = message;
+
+    public void SetArmouryCaptureBusy(bool isBusy) => ArmouryCaptureButton.IsEnabled = !isBusy;
 
     public void AllowClose() => _allowClose = true;
 
@@ -157,6 +163,9 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
     private async void CheckForUpdates_Click(object sender, RoutedEventArgs e) =>
         await ((App)System.Windows.Application.Current).CheckForUpdatesAsync(userInitiated: true);
+
+    private async void CaptureArmouryProtocol_Click(object sender, RoutedEventArgs e) =>
+        await ((App)System.Windows.Application.Current).CaptureArmouryProtocolAsync();
 
     private void CopyDiagnostics_Click(object sender, RoutedEventArgs e)
     {

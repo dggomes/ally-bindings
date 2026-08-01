@@ -33,6 +33,9 @@ dotnet publish (Join-Path $repo "src/AllyBindings.Windows/AllyBindings.Windows.c
 Assert-NativeSuccess "dotnet publish"
 
 Copy-Item (Join-Path $repo "README.md") $publishDir
+Copy-Item (Join-Path $repo "CHANGELOG.md") $publishDir
+Copy-Item (Join-Path $repo "SECURITY.md") $publishDir
+Copy-Item (Join-Path $repo "LICENSE") $publishDir
 Copy-Item (Join-Path $repo "docs/HARDWARE-SPIKE.md") $publishDir
 Copy-Item (Join-Path $repo "THIRD-PARTY-NOTICES.md") $publishDir
 New-Item -ItemType Directory -Path (Join-Path $publishDir "LICENSES") -Force | Out-Null

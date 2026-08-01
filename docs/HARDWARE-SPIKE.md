@@ -19,14 +19,25 @@ This supports a narrow direct-write backend; it does **not** make M1/M2 readable
 
 Implementation safety gates:
 
-1. The user must explicitly enable ASUS M1/M2 hardware mappings.
-2. DMI must exactly match manufacturer `ASUSTeK COMPUTER INC.` and an Ally family model (`RC71L`, `RC72LA`, `RC73XA`, `RC73YA`).
-3. An ASUS VID `0x0B05` HID interface with corroborated Ally embedded-controller PID `0x1ABE`, `0x1B4C`, or `0x1B6E` must expose a feature report `0x5A` whose own descriptor length is at least 50 bytes and open successfully.
-4. Only mapping zone `0x08` is written.
-5. Default/panic/normal exit after an active rear remap writes the best-known native M1/M2 modifier actions; an unclean-exit marker retries on next launch.
+1. Both custom and recovery writes are source locked until the passive Armoury capture below is reviewed.
+2. USBPcap must identify exactly one ASUS N-KEY USB address; no whole-root-hub fallback is allowed.
+3. The capture parser accepts only outbound HID class-interface `SET_REPORT(feature)` control transfers and retains the exact payload.
+4. Before a later build can unlock writes, Armoury's `M1=A/M2=B`, `M1=X/M2=Y`, and Reset-to-Default reports must be compared byte-for-byte with the clean-room builder.
+5. The later write path must still require exact DMI manufacturer/model, known ASUS VID/PID, an openable report `0x5A`, and mapping zone `0x08`.
 6. Standard mappings remain preview-only and are labelled as such.
 
-Known limitation: there is no proven read-back path for preserving a user's custom Armoury M1/M2 assignment. Applying a rear-button profile can replace it; reset uses the native mapping packet independently corroborated by G-Helper and Handheld Companion, but exact stock behavior still requires validation on the installed model/firmware. Armoury may later overwrite Ally Bindings. Photograph/export the current assignments first.
+Known limitation: there is no proven read-back path for preserving a user's custom Armoury M1/M2 assignment. The validation run deliberately changes mappings through Armoury and finishes with Armoury's own reset. Photograph/export any custom assignments first. The capture ZIP is private diagnostic data because its raw PCAP contains traffic from the selected ASUS composite USB device.
+
+## Passive Armoury capture gate
+
+1. Install Wireshark's USBPcap component and reboot if requested; Ally Bindings never installs the kernel driver.
+2. Run **Capture Armoury M1/M2 protocol (passive)**.
+3. Confirm the selected USBPcap tree is the ASUS N-KEY device and no broad capture was used.
+4. Apply the three prompted Armoury states: `M1=A/M2=B`, `M1=X/M2=Y`, then Armoury Reset to Default.
+5. Press `q` in the capture console to stop cleanly.
+6. Retain the generated PCAP, extracted JSON, action markers, manifest and SHA-256 hash.
+7. Compare report setup (`21 09 5A 03`), mapping prefix (`5A D1 02 08 2C`), action ordering/slots, wire length, interface number, and default modifier bytes.
+8. Keep both write gates closed on any unexplained extra command, mismatch, truncated report, ambiguous device identity or absent reset packet.
 
 Research references:
 
@@ -44,7 +55,7 @@ Research references:
 - Create a Windows restore point before installing any filter/virtual-controller driver.
 - Keep a keyboard/touch recovery path available.
 - Test in Windows controller diagnostics, the Remote Play menu or a non-competitive local title; never an anti-cheat game.
-- Start from an unsigned-free/self-contained Ally Bindings CI artifact in preview mode.
+- Start from an unsigned, self-contained Ally Bindings CI artifact in preview mode.
 
 ## Inventory
 

@@ -46,6 +46,12 @@ jobs:
       - name: Exercise updater config and binary rollback
         shell: powershell
         run: ./scripts/test-updater-rollback.ps1 -RepositoryRoot $PWD
+      - name: Assert passive capture cannot write or capture a whole root hub
+        shell: powershell
+        run: ./scripts/test-capture-safety.ps1
+      - name: Validate changelog release-note extraction
+        shell: pwsh
+        run: ./scripts/get-release-notes.ps1 -Tag v0.01 -OutputPath artifacts/release-notes-test.md
       - uses: actions/upload-artifact@v4
         with:
           name: AllyBindings-win-x64

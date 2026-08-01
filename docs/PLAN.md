@@ -19,7 +19,8 @@ A lightweight Windows tray application that lets Daniel rotate named controller 
 - [x] Small always-on-top overlay.
 - [x] Explicit hold-chord-then-RT editor activation, separate from carousel rotation.
 - [x] M1/M2 profile sources and controller-button/trigger targets.
-- [x] Opt-in ASUS feature-report backend with positive model/report gates and a best-known native reset command; live firmware state remains unreadable.
+- [x] ASUS feature-report backend implemented behind closed custom/recovery validation gates; no M1/M2 write is enabled before physical capture analysis.
+- [x] Passive USBPcap Armoury logger with exact feature-report extraction, action markers, device-only filtering, hashes and export bundle.
 - [x] WPF profile/shortcut editor, tray mode and opt-in sign-in startup.
 - [x] Ctrl+Alt+F12 panic/default shortcut.
 - [x] Redacted diagnostics export.
@@ -83,7 +84,7 @@ Required runtime sequence:
 
 ### Preview application
 
-A clean CI checkout builds a downloadable Windows app; Daniel can create profiles, rotate them with the controller, use chord+RT to open the editor, configure M1/M2 behind an explicit opt-in, restore Default, use tray/startup mode and see truthful partial/preview backend status.
+A clean CI checkout builds a downloadable Windows app; Daniel can create profiles, rotate them with the controller, use chord+RT to open the editor, run a passive Armoury M1/M2 capture, use tray/startup mode and see truthful locked/preview backend status. M1/M2 writes remain unavailable until capture review.
 
 ### Remapping release
 

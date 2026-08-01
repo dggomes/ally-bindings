@@ -36,6 +36,9 @@ jobs:
       - name: Exercise updater config and binary rollback
         shell: powershell
         run: ./scripts/test-updater-rollback.ps1 -RepositoryRoot $PWD
+      - name: Assert passive capture cannot write or capture a whole root hub
+        shell: powershell
+        run: ./scripts/test-capture-safety.ps1
       - name: Name and hash release assets
         shell: pwsh
         run: |
@@ -45,13 +48,14 @@ jobs:
           Get-FileHash "artifacts/AllyBindings-$tag-win-x64.zip" -Algorithm SHA256 |
             ForEach-Object { "$($_.Hash.ToLower())  AllyBindings-$tag-win-x64.zip" } |
             Set-Content "artifacts/AllyBindings-$tag-win-x64.zip.sha256" -NoNewline
+          ./scripts/get-release-notes.ps1 -Tag $tag -OutputPath artifacts/release-notes.md
       - name: Publish preview release
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           $tag = $env:GITHUB_REF_NAME
-          gh release create $tag --repo $env:GITHUB_REPOSITORY --prerelease --title "Ally Bindings $tag — Preview" --notes "Binary release for Ally Bindings $tag." `
+          gh release create $tag --repo $env:GITHUB_REPOSITORY --prerelease --title "Ally Bindings $tag — Preview" --notes-file artifacts/release-notes.md `
             "artifacts/AllyBindings-$tag-win-x64.zip#Recommended Windows x64 package" `
             "artifacts/AllyBindings-$tag-win-x64.zip.sha256#Package SHA-256" `
             "artifacts/AllyBindings-$tag-win-x64.exe#Standalone Windows x64 executable"
