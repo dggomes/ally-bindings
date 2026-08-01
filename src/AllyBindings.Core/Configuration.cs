@@ -27,10 +27,15 @@ public sealed record ShortcutSettings
 
 public sealed record AppConfiguration
 {
-    public int SchemaVersion { get; init; } = 1;
+    public int SchemaVersion { get; init; } = 2;
     public string ActiveProfileId { get; init; } = MappingProfile.Default.Id;
     public int? ControllerIndex { get; init; }
     public bool RunAtStartup { get; init; }
+    public bool CheckForUpdatesAutomatically { get; init; } = true;
+    public bool IncludePrereleaseUpdates { get; init; } = true;
+    public DateTimeOffset? LastUpdateCheckUtc { get; init; }
+    public bool EnableAsusRearButtonMappings { get; init; }
+    public bool AsusRearButtonMappingActive { get; init; }
     public ShortcutSettings Shortcut { get; init; } = new();
     public List<MappingProfile> Profiles { get; init; } = [MappingProfile.Default];
 
@@ -47,7 +52,7 @@ public sealed class UnsupportedConfigurationVersionException(int version)
 
 public static partial class ConfigurationValidator
 {
-    public const int CurrentSchemaVersion = 1;
+    public const int CurrentSchemaVersion = 2;
     private static readonly HashSet<ControllerButton> FaceButtons =
     [ControllerButton.A, ControllerButton.B, ControllerButton.X, ControllerButton.Y];
 
@@ -86,7 +91,7 @@ public static partial class ConfigurationValidator
             var name = string.IsNullOrWhiteSpace(profile.Name) ? id : profile.Name.Trim();
             var sourceBindings = profile.Bindings ?? [];
             var bindings = sourceBindings
-                .Where(pair => ControllerButtons.Mappable.Contains(pair.Key) && ControllerButtons.Mappable.Contains(pair.Value))
+                .Where(pair => ControllerButtons.IsValidBinding(pair.Key, pair.Value))
                 .ToDictionary(pair => pair.Key, pair => pair.Value);
             if (bindings.Count != sourceBindings.Count)
             {
@@ -96,7 +101,7 @@ public static partial class ConfigurationValidator
         }
 
         var shortcutButtons = (input.Shortcut?.Buttons ?? [])
-            .Where(ControllerButtons.Mappable.Contains)
+            .Where(ControllerButtons.ShortcutButtons.Contains)
             .Distinct()
             .Take(4)
             .ToList();
@@ -116,9 +121,12 @@ public static partial class ConfigurationValidator
 
         var normalized = input with
         {
-            SchemaVersion = 1,
+            SchemaVersion = CurrentSchemaVersion,
             ActiveProfileId = activeProfile,
             ControllerIndex = input.ControllerIndex is >= 0 and <= 3 ? input.ControllerIndex : null,
+            // Operational recovery state, not a user preference. Disabling the
+            // feature must not erase evidence that firmware may still need reset.
+            AsusRearButtonMappingActive = input.AsusRearButtonMappingActive,
             Shortcut = new ShortcutSettings
             {
                 Buttons = shortcutButtons,

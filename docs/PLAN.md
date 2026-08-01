@@ -2,7 +2,7 @@
 
 ## Outcome
 
-A lightweight Windows tray application that lets Daniel rotate named controller profiles, open the main editor from the same controller carousel, return to Default instantly and eventually apply mappings safely during Xbox Remote Play on the ROG Xbox Ally X.
+A lightweight Windows tray application that lets Daniel rotate named controller profiles, deliberately open the editor with chord+RT, bind the ASUS M1/M2 rear paddles, return to Default instantly and eventually apply all standard mappings safely during Xbox Remote Play on the ROG Xbox Ally X.
 
 ## Current capability
 
@@ -17,16 +17,21 @@ A lightweight Windows tray application that lets Daniel rotate named controller 
 - [x] Configurable two-button controller chord; View + Menu default.
 - [x] Hold/debounce/release/inactivity carousel state machine.
 - [x] Small always-on-top overlay.
-- [x] `Open application` carousel item.
+- [x] Explicit hold-chord-then-RT editor activation, separate from carousel rotation.
+- [x] M1/M2 profile sources and controller-button/trigger targets.
+- [x] ASUS feature-report backend implemented behind closed custom/recovery validation gates; no M1/M2 write is enabled before physical capture analysis.
+- [x] Integrated Windows USB ETW Armoury logger with bounded in-memory candidate filtering, action markers, hashes and privacy-minimised review bundle; no external driver/tool and no unlock/recovery authority before physical schema validation.
 - [x] WPF profile/shortcut editor, tray mode and opt-in sign-in startup.
 - [x] Ctrl+Alt+F12 panic/default shortcut.
 - [x] Redacted diagnostics export.
+- [x] Digest-verified GitHub updater with hardened extraction, atomic replacement, explicit startup-health handshake and rollback.
 - [x] Linux/macOS core tests plus Windows build/test/package CI.
+- [x] Use the public source repository's Releases feed with automatic checks enabled by default and repository-scoped `GITHUB_TOKEN` publishing.
 
 ### Physical remapping — release gate
 
 - [ ] Inventory actual Ally X input/HID/XInput topology.
-- [ ] Establish whether rear paddles are independently visible outside Armoury mappings.
+- [x] Establish rear-paddle behavior: firmware-managed, not exposed as independent XInput buttons; configurable via ASUS HID mapping zone.
 - [ ] Select an output/hiding backend with acceptable maintenance, signing and licence posture.
 - [ ] Build a minimal physical-input → mapping engine → virtual-output adapter.
 - [ ] Prove exactly one controller reaches Remote Play.
@@ -38,9 +43,9 @@ A lightweight Windows tray application that lets Daniel rotate named controller 
 
 - The app must be running in the tray to hear controller input.
 - Each held/released configured chord advances one item.
-- Enabled profiles appear in stored order, followed by `Open application`.
+- Enabled profiles appear in stored order; the editor is never a carousel item.
 - Stopping on a profile selects/applies it after the inactivity timeout.
-- Stopping on `Open application` activates the editor.
+- Holding the armed chord and then pressing RT activates the editor and cancels the pending profile.
 - Disconnect before commit cancels rather than applying stale intent.
 - Face-button-only chords are allowed but visibly warned until safe interception can swallow them.
 
@@ -70,7 +75,7 @@ Required runtime sequence:
 ## Non-goals
 
 - Automatic title detection from Remote Play video/OCR.
-- Armoury Crate profile mutation.
+- General Armoury Crate profile mutation beyond the explicit M1/M2 firmware mapping opt-in.
 - TDP, fan, RGB, display or game launching.
 - Macros, turbo, scripts, anti-cheat bypasses or competitive automation.
 - Accounts, cloud sync, telemetry or a network listener.
@@ -79,7 +84,7 @@ Required runtime sequence:
 
 ### Preview application
 
-A clean CI checkout builds a downloadable Windows app; Daniel can create profiles, rotate them with the controller, stop on `Open application` to open the editor, restore Default, use tray/startup mode and see truthful preview-backend status.
+A clean CI checkout builds a downloadable Windows app; Daniel can create profiles, rotate them with the controller, use chord+RT to open the editor, run a passive Armoury M1/M2 capture, use tray/startup mode and see truthful locked/preview backend status. M1/M2 writes remain unavailable until capture review.
 
 ### Remapping release
 

@@ -15,12 +15,16 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private string _holdMilliseconds = "250";
     private string _commitDelayMilliseconds = "900";
     private bool _runAtStartup;
+    private bool _checkForUpdatesAutomatically;
+    private bool _includePrereleaseUpdates = true;
+    private DateTimeOffset? _lastUpdateCheckUtc;
+    private bool _enableAsusRearButtonMappings;
     private bool _allowClose;
 
     public MainWindow(AppConfiguration configuration, BackendStatus backendStatus)
     {
         InitializeComponent();
-        ButtonOptions = ControllerButtons.Mappable;
+        ButtonOptions = ControllerButtons.ShortcutButtons;
         Load(configuration);
         SetBackendStatus(backendStatus);
         DataContext = this;
@@ -48,6 +52,11 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     public string HoldMilliseconds { get => _holdMilliseconds; set { _holdMilliseconds = value; OnPropertyChanged(); } }
     public string CommitDelayMilliseconds { get => _commitDelayMilliseconds; set { _commitDelayMilliseconds = value; OnPropertyChanged(); } }
     public bool RunAtStartup { get => _runAtStartup; set { _runAtStartup = value; OnPropertyChanged(); } }
+    public bool CheckForUpdatesAutomatically { get => _checkForUpdatesAutomatically; set { _checkForUpdatesAutomatically = value; OnPropertyChanged(); } }
+    public bool IncludePrereleaseUpdates { get => _includePrereleaseUpdates; set { _includePrereleaseUpdates = value; OnPropertyChanged(); } }
+    public bool EnableAsusRearButtonMappings { get => _enableAsusRearButtonMappings; set { _enableAsusRearButtonMappings = value; OnPropertyChanged(); } }
+    public bool CanEnableAsusRearButtonMappings =>
+        ArmouryProtocolValidation.IsOperationApproved(isRecoveryReset: false);
 
     public AppConfiguration BuildConfiguration(string activeProfileId, int? controllerIndex)
     {
@@ -58,6 +67,10 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             ActiveProfileId = activeProfileId,
             ControllerIndex = controllerIndex,
             RunAtStartup = RunAtStartup,
+            CheckForUpdatesAutomatically = CheckForUpdatesAutomatically,
+            IncludePrereleaseUpdates = IncludePrereleaseUpdates,
+            LastUpdateCheckUtc = _lastUpdateCheckUtc,
+            EnableAsusRearButtonMappings = CanEnableAsusRearButtonMappings && EnableAsusRearButtonMappings,
             Shortcut = new ShortcutSettings
             {
                 Buttons = [ShortcutButton1, ShortcutButton2],
@@ -93,6 +106,11 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         HoldMilliseconds = configuration.Shortcut.HoldMilliseconds.ToString();
         CommitDelayMilliseconds = configuration.Shortcut.CommitDelayMilliseconds.ToString();
         RunAtStartup = configuration.RunAtStartup;
+        CheckForUpdatesAutomatically = configuration.CheckForUpdatesAutomatically;
+        IncludePrereleaseUpdates = configuration.IncludePrereleaseUpdates;
+        _lastUpdateCheckUtc = configuration.LastUpdateCheckUtc;
+        EnableAsusRearButtonMappings =
+            CanEnableAsusRearButtonMappings && configuration.EnableAsusRearButtonMappings;
     }
 
     public void SetBackendStatus(BackendStatus status) => BackendStatusText.Text = $"Backend: {status.Name} · {status.Health}\n{status.Message}";
@@ -104,6 +122,12 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     }
 
     public void SetStatus(string message) => StatusText.Text = message;
+
+    public void SetUpdateStatus(string message) => UpdateStatusText.Text = message;
+
+    public void SetArmouryCaptureStatus(string message) => ArmouryCaptureStatusText.Text = message;
+
+    public void SetArmouryCaptureBusy(bool isBusy) => ArmouryCaptureButton.IsEnabled = !isBusy;
 
     public void AllowClose() => _allowClose = true;
 
@@ -136,7 +160,13 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         await ((App)System.Windows.Application.Current).ApplyProfileAsync(profileId, showOverlay: true);
     }
 
-    private async void Panic_Click(object sender, RoutedEventArgs e) => await ((App)System.Windows.Application.Current).RestoreDefaultAsync("Restored from main window");
+    private async void Panic_Click(object sender, RoutedEventArgs e) => await ((App)System.Windows.Application.Current).RestoreDefaultAsync("Main-window reset");
+
+    private async void CheckForUpdates_Click(object sender, RoutedEventArgs e) =>
+        await ((App)System.Windows.Application.Current).CheckForUpdatesAsync(userInitiated: true);
+
+    private async void CaptureArmouryProtocol_Click(object sender, RoutedEventArgs e) =>
+        await ((App)System.Windows.Application.Current).CaptureArmouryProtocolAsync();
 
     private void CopyDiagnostics_Click(object sender, RoutedEventArgs e)
     {

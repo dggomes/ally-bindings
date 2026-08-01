@@ -13,9 +13,11 @@ public sealed class BindingRow : INotifyPropertyChanged
     {
         Source = source;
         _target = target;
+        TargetOptions = ControllerButtons.OutputTargets;
     }
 
     public ControllerButton Source { get; }
+    public IReadOnlyList<ControllerButton> TargetOptions { get; }
 
     public ControllerButton Target
     {
@@ -29,6 +31,12 @@ public sealed class BindingRow : INotifyPropertyChanged
     }
 
     public event PropertyChangedEventHandler? PropertyChanged;
+
+    public BindingRow(ControllerButton source, ControllerButton target, IReadOnlyList<ControllerButton> targetOptions)
+        : this(source, target)
+    {
+        TargetOptions = targetOptions;
+    }
 }
 
 public sealed class ProfileEditor : INotifyPropertyChanged
@@ -41,8 +49,13 @@ public sealed class ProfileEditor : INotifyPropertyChanged
         Id = profile.Id;
         _name = profile.Name;
         _enabled = profile.Enabled;
-        Bindings = new ObservableCollection<BindingRow>(ControllerButtons.Mappable.Select(source =>
-            new BindingRow(source, profile.Bindings.GetValueOrDefault(source, source))));
+        Bindings = new ObservableCollection<BindingRow>(ControllerButtons.MappableSources.Select(source =>
+        {
+            var targets = ControllerButtons.RearButtons.Contains(source)
+                ? ControllerButtons.OutputTargets.Append(source).ToArray()
+                : ControllerButtons.OutputTargets;
+            return new BindingRow(source, profile.Bindings.GetValueOrDefault(source, source), targets);
+        }));
     }
 
     public string Id { get; private set; }

@@ -18,7 +18,7 @@ public partial class OverlayWindow : Window
         };
     }
 
-    public void ShowSelection(string label, string detail = "Release, then repeat the chord to keep rotating")
+    public void ShowSelection(string label, string detail = "Release and repeat to rotate · keep holding and press RT to open")
     {
         _hideTimer.Stop();
         EyebrowText.Text = "SELECT PROFILE";

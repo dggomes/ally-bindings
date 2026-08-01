@@ -10,7 +10,7 @@ public sealed class PreviewControllerBackendTests
         await using var backend = new PreviewControllerBackend();
         var result = await backend.ApplyAsync(new MappingProfile { Id = "test", Name = "Test" });
 
-        Assert.False(result.AppliedToController);
+        Assert.False(result.CommandAccepted);
         Assert.False(result.Status.CanRemap);
         Assert.True(result.Status.PhysicalPassthroughIntact);
         Assert.Contains("preview mode", result.Message, StringComparison.OrdinalIgnoreCase);

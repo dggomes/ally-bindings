@@ -15,7 +15,6 @@ public sealed class ProfileCycleStateMachineTests
     [
         CycleItem.ForProfile(MappingProfile.Default),
         CycleItem.ForProfile(new MappingProfile { Id = "elden-ring", Name = "Elden Ring" }),
-        CycleItem.OpenApplication,
     ];
 
     [Fact]
@@ -42,7 +41,7 @@ public sealed class ProfileCycleStateMachineTests
     }
 
     [Fact]
-    public void Repeated_press_cycles_to_open_application()
+    public void Repeated_press_rotates_only_through_profiles()
     {
         var machine = new ProfileCycleStateMachine(Shortcut);
         var t0 = DateTimeOffset.Parse("2026-08-01T10:00:00Z");
@@ -55,7 +54,83 @@ public sealed class ProfileCycleStateMachineTests
         machine.Process(chord, t0.AddMilliseconds(300), Items, "default");
         var second = machine.Process(chord, t0.AddMilliseconds(500), Items, "default");
 
-        Assert.Equal(CycleItemKind.OpenApplication, Assert.Single(second).Item?.Kind);
+        Assert.Equal("default", Assert.Single(second).Item?.Id);
+    }
+
+    [Fact]
+    public void Armed_chord_then_new_rt_press_requests_application_and_cancels_selection()
+    {
+        var machine = new ProfileCycleStateMachine(Shortcut);
+        var t0 = DateTimeOffset.Parse("2026-08-01T10:00:00Z");
+        var chord = ControllerButton.View | ControllerButton.Menu;
+
+        machine.Process(new ControllerSnapshot(true, chord), t0, Items, "default");
+        machine.Process(new ControllerSnapshot(true, chord), t0.AddMilliseconds(200), Items, "default");
+        var opened = machine.Process(
+            new ControllerSnapshot(true, chord, RightTrigger: ProfileCycleStateMachine.RightTriggerConfirmationThreshold),
+            t0.AddMilliseconds(220),
+            Items,
+            "default");
+
+        Assert.Equal(CycleEventKind.ApplicationRequested, Assert.Single(opened).Kind);
+        Assert.False(machine.HasPendingSelection);
+
+        machine.Process(new ControllerSnapshot(true, ControllerButton.None), t0.AddMilliseconds(230), Items, "default");
+        Assert.Empty(machine.Process(new ControllerSnapshot(true, ControllerButton.None), t0.AddMilliseconds(800), Items, "default"));
+    }
+
+    [Fact]
+    public void Rt_held_before_chord_arming_does_not_open_until_released_and_pressed_again()
+    {
+        var machine = new ProfileCycleStateMachine(Shortcut);
+        var t0 = DateTimeOffset.Parse("2026-08-01T10:00:00Z");
+        var chord = ControllerButton.View | ControllerButton.Menu;
+        var rt = ProfileCycleStateMachine.RightTriggerConfirmationThreshold;
+
+        Assert.Empty(machine.Process(new ControllerSnapshot(true, chord, RightTrigger: rt), t0, Items, "default"));
+        var selected = machine.Process(new ControllerSnapshot(true, chord, RightTrigger: rt), t0.AddMilliseconds(200), Items, "default");
+        Assert.Equal(CycleEventKind.SelectionChanged, Assert.Single(selected).Kind);
+        Assert.Empty(machine.Process(new ControllerSnapshot(true, chord, RightTrigger: rt), t0.AddMilliseconds(220), Items, "default"));
+        Assert.Empty(machine.Process(new ControllerSnapshot(true, chord), t0.AddMilliseconds(240), Items, "default"));
+
+        var opened = machine.Process(new ControllerSnapshot(true, chord, RightTrigger: rt), t0.AddMilliseconds(260), Items, "default");
+        Assert.Equal(CycleEventKind.ApplicationRequested, Assert.Single(opened).Kind);
+    }
+
+    [Fact]
+    public void Rt_edge_on_the_arming_sample_opens_without_selection_flicker()
+    {
+        var machine = new ProfileCycleStateMachine(Shortcut);
+        var t0 = DateTimeOffset.Parse("2026-08-01T10:00:00Z");
+        var chord = ControllerButton.View | ControllerButton.Menu;
+
+        machine.Process(new ControllerSnapshot(true, chord), t0, Items, "default");
+        var events = machine.Process(
+            new ControllerSnapshot(
+                true,
+                chord,
+                RightTrigger: ProfileCycleStateMachine.RightTriggerConfirmationThreshold),
+            t0.AddMilliseconds(200),
+            Items,
+            "default");
+
+        var requested = Assert.Single(events);
+        Assert.Equal(CycleEventKind.ApplicationRequested, requested.Kind);
+        Assert.False(machine.HasPendingSelection);
+    }
+
+    [Fact]
+    public void Rt_without_an_armed_chord_never_requests_application()
+    {
+        var machine = new ProfileCycleStateMachine(Shortcut);
+        var t0 = DateTimeOffset.Parse("2026-08-01T10:00:00Z");
+        var rtOnly = new ControllerSnapshot(
+            true,
+            ControllerButton.None,
+            RightTrigger: ProfileCycleStateMachine.RightTriggerConfirmationThreshold);
+
+        Assert.Empty(machine.Process(rtOnly, t0, Items, "default"));
+        Assert.Empty(machine.Process(rtOnly, t0.AddMilliseconds(500), Items, "default"));
     }
 
     [Fact]
@@ -69,6 +144,87 @@ public sealed class ProfileCycleStateMachineTests
 
         Assert.Empty(machine.Process(chordWithExtraButton, now, Items, "default"));
         Assert.Empty(machine.Process(chordWithExtraButton, now.AddMilliseconds(250), Items, "default"));
+    }
+
+    [Fact]
+    public void Additional_button_after_selection_cancels_instead_of_committing()
+    {
+        var machine = new ProfileCycleStateMachine(Shortcut);
+        var t0 = DateTimeOffset.Parse("2026-08-01T10:00:00Z");
+        var chord = ControllerButton.View | ControllerButton.Menu;
+        machine.Process(new ControllerSnapshot(true, chord), t0, Items, "default");
+        machine.Process(new ControllerSnapshot(true, chord), t0.AddMilliseconds(200), Items, "default");
+
+        var cancelled = machine.Process(
+            new ControllerSnapshot(true, chord | ControllerButton.A),
+            t0.AddMilliseconds(220),
+            Items,
+            "default");
+
+        Assert.Equal(CycleEventKind.Cancelled, Assert.Single(cancelled).Kind);
+        Assert.False(machine.HasPendingSelection);
+        Assert.Empty(machine.Process(
+            new ControllerSnapshot(true, ControllerButton.None),
+            t0.AddMilliseconds(800),
+            Items,
+            "default"));
+    }
+
+    [Fact]
+    public void Staggered_release_of_the_shortcut_buttons_still_commits()
+    {
+        var machine = new ProfileCycleStateMachine(Shortcut);
+        var t0 = DateTimeOffset.Parse("2026-08-01T10:00:00Z");
+        var chord = ControllerButton.View | ControllerButton.Menu;
+        machine.Process(new ControllerSnapshot(true, chord), t0, Items, "default");
+        machine.Process(new ControllerSnapshot(true, chord), t0.AddMilliseconds(200), Items, "default");
+
+        Assert.Empty(machine.Process(
+            new ControllerSnapshot(true, ControllerButton.View),
+            t0.AddMilliseconds(220),
+            Items,
+            "default"));
+        Assert.Empty(machine.Process(
+            new ControllerSnapshot(true, ControllerButton.None),
+            t0.AddMilliseconds(240),
+            Items,
+            "default"));
+
+        var committed = machine.Process(
+            new ControllerSnapshot(true, ControllerButton.None),
+            t0.AddMilliseconds(740),
+            Items,
+            "default");
+        Assert.Equal(CycleEventKind.SelectionCommitted, Assert.Single(committed).Kind);
+    }
+
+    [Fact]
+    public void Removing_extra_button_while_chord_remains_held_does_not_rearm()
+    {
+        var machine = new ProfileCycleStateMachine(Shortcut);
+        var t0 = DateTimeOffset.Parse("2026-08-01T10:00:00Z");
+        var chord = ControllerButton.View | ControllerButton.Menu;
+
+        Assert.Empty(machine.Process(
+            new ControllerSnapshot(true, chord | ControllerButton.A),
+            t0,
+            Items,
+            "default"));
+        Assert.Empty(machine.Process(
+            new ControllerSnapshot(true, chord),
+            t0.AddMilliseconds(250),
+            Items,
+            "default"));
+        Assert.Empty(machine.Process(
+            new ControllerSnapshot(true, chord),
+            t0.AddMilliseconds(500),
+            Items,
+            "default"));
+
+        machine.Process(new ControllerSnapshot(true, ControllerButton.None), t0.AddMilliseconds(510), Items, "default");
+        machine.Process(new ControllerSnapshot(true, chord), t0.AddMilliseconds(520), Items, "default");
+        var selected = machine.Process(new ControllerSnapshot(true, chord), t0.AddMilliseconds(720), Items, "default");
+        Assert.Equal(CycleEventKind.SelectionChanged, Assert.Single(selected).Kind);
     }
 
     [Fact]

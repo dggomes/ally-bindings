@@ -1,0 +1,59 @@
+name: Bug report
+description: Report reproducible incorrect behavior
+title: "bug: "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting a bug. **Do not attach raw USB captures, configuration files, credentials or private diagnostics to a public issue.** Use the private security process for vulnerabilities.
+  - type: input
+    id: version
+    attributes:
+      label: Ally Bindings version
+      description: Release tag or commit SHA.
+      placeholder: v0.01
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Windows and device
+      description: Windows build, Ally/controller model and relevant Armoury version.
+      placeholder: Windows 11 24H2; ROG Xbox Ally X RC73XA; Armoury Crate SE ...
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Reproduction steps
+      placeholder: |
+        1. Start Ally Bindings...
+        2. Hold...
+        3. Observe...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+    validations:
+      required: true
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Redacted diagnostics
+      description: Paste only the minimum redacted text required. Do not upload PCAP/config files publicly.
+  - type: checkboxes
+    id: safety
+    attributes:
+      label: Safety check
+      options:
+        - label: I removed credentials, personal paths, controller captures and other private data.
+          required: true

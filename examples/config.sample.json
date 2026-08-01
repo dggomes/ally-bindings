@@ -1,8 +1,13 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "activeProfileId": "default",
   "controllerIndex": null,
   "runAtStartup": false,
+  "checkForUpdatesAutomatically": true,
+  "includePrereleaseUpdates": true,
+  "lastUpdateCheckUtc": null,
+  "enableAsusRearButtonMappings": false,
+  "asusRearButtonMappingActive": false,
   "shortcut": {
     "buttons": ["View", "Menu"],
     "holdMilliseconds": 250,
@@ -21,7 +26,9 @@
       "enabled": true,
       "bindings": {
         "A": "B",
-        "B": "A"
+        "B": "A",
+        "M1": "RightTrigger",
+        "M2": "A"
       }
     },
     {

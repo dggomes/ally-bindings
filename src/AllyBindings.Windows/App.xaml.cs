@@ -1,3 +1,5 @@
+using System.Diagnostics;
+using System.IO;
 using System.Reflection;
 using System.Threading;
 using System.Windows;
@@ -9,6 +11,7 @@ namespace AllyBindings.Windows;
 
 public partial class App : System.Windows.Application
 {
+    private readonly SemaphoreSlim _operationGate = new(1, 1);
     private Mutex? _singleInstance;
     private JsonProfileStore _profileStore = null!;
     private IControllerBackend _backend = null!;
@@ -18,16 +21,41 @@ public partial class App : System.Windows.Application
     private OverlayWindow _overlay = null!;
     private MainWindow _mainWindow = null!;
     private Forms.NotifyIcon _trayIcon = null!;
+    private GitHubUpdateService _updateService = null!;
     private IReadOnlyList<string> _configurationWarnings = [];
     private bool _backendDisposed;
+    private bool _backendNeedsRestore;
     private bool _mutexReleased;
     private bool _exiting;
+    private bool _updateCheckInProgress;
+    private bool _armouryCaptureInProgress;
+    private bool _allowExitWithPendingRearMapping;
+    private System.IO.FileStream? _executableIntegrityLock;
 
     public AppConfiguration Configuration { get; private set; } = AppConfiguration.CreateDefault();
 
     protected override void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);
+        if (ArmouryEtwCaptureHelper.TryParseArguments(e.Args, out var etwSessionId, out var parentProcessId))
+        {
+            ShutdownMode = ShutdownMode.OnExplicitShutdown;
+            _ = RunEtwCaptureHelperAsync(etwSessionId, parentProcessId);
+            return;
+        }
+
+        var executablePath = Environment.ProcessPath
+            ?? throw new InvalidOperationException("Windows did not expose the current Ally Bindings executable path.");
+        // Keep the exact on-disk image read-only for this process lifetime. The
+        // same locked path is what ShellExecute elevates for ETW capture, closing
+        // the user-writable-directory replacement window. The updater replaces
+        // it only after this process exits and releases the handle.
+        _executableIntegrityLock = new System.IO.FileStream(
+            executablePath,
+            System.IO.FileMode.Open,
+            System.IO.FileAccess.Read,
+            System.IO.FileShare.Read);
+
         _singleInstance = new Mutex(initiallyOwned: true, @"Local\AllyBindings.SingleInstance", out var createdNew);
         if (!createdNew)
         {
@@ -36,10 +64,21 @@ public partial class App : System.Windows.Application
             return;
         }
 
-        _ = InitializeAsync(e.Args.Contains("--background", StringComparer.OrdinalIgnoreCase));
+        var updateSuccessMarker = Environment.GetEnvironmentVariable("ALLY_BINDINGS_UPDATE_SUCCESS_MARKER");
+        Environment.SetEnvironmentVariable("ALLY_BINDINGS_UPDATE_SUCCESS_MARKER", null);
+        _ = InitializeAsync(
+            e.Args.Contains("--background", StringComparer.OrdinalIgnoreCase),
+            e.Args.Contains("--updated", StringComparer.OrdinalIgnoreCase),
+            updateSuccessMarker);
     }
 
-    private async Task InitializeAsync(bool startInBackground)
+    private async Task RunEtwCaptureHelperAsync(Guid sessionId, int parentProcessId)
+    {
+        var exitCode = await ArmouryEtwCaptureHelper.RunAsync(sessionId, parentProcessId);
+        Shutdown(exitCode);
+    }
+
+    private async Task InitializeAsync(bool startInBackground, bool startedAfterUpdate, string? updateSuccessMarker)
     {
         try
         {
@@ -49,6 +88,15 @@ public partial class App : System.Windows.Application
             var loaded = await _profileStore.LoadAsync();
             Configuration = loaded.Configuration;
             _configurationWarnings = loaded.Warnings;
+
+            if (Configuration.EnableAsusRearButtonMappings && !ArmouryProtocolValidation.IsOperationApproved(isRecoveryReset: false))
+            {
+                Configuration = Configuration with { EnableAsusRearButtonMappings = false };
+                await _profileStore.SaveAsync(Configuration);
+                _configurationWarnings = _configurationWarnings
+                    .Append("Experimental ASUS writes were disabled because physical Armoury protocol validation is still pending.")
+                    .ToList();
+            }
 
             var startupCommand = StartupRegistration.CurrentCommand;
             var startupEnabled = StartupRegistration.IsEnabled();
@@ -64,12 +112,51 @@ public partial class App : System.Windows.Application
                 _configurationWarnings = _configurationWarnings.Append("Run-at-login preference was reconciled with the current Windows registration.").ToList();
             }
 
-            _backend = new PreviewControllerBackend();
-            var backendStatus = await _backend.InitializeAsync();
+            var recoveryWasPending = Configuration.AsusRearButtonMappingActive;
+            var backendStatus = await ReplaceBackendAsync(
+                Configuration.EnableAsusRearButtonMappings || recoveryWasPending,
+                restoreCurrent: false,
+                allowUnverifiedRecoveryReset:
+                    recoveryWasPending && ArmouryProtocolValidation.RecoveryWritesApproved);
+            _backendNeedsRestore = Configuration.AsusRearButtonMappingActive;
+            if (Configuration.AsusRearButtonMappingActive && ArmouryProtocolValidation.RecoveryWritesApproved)
+            {
+                var recovery = await _backend.RestoreDefaultAsync();
+                if (recovery.CommandAccepted)
+                {
+                    Configuration = Configuration with
+                    {
+                        ActiveProfileId = MappingProfile.Default.Id,
+                        AsusRearButtonMappingActive = false,
+                    };
+                    _backendNeedsRestore = false;
+                    await _profileStore.SaveAsync(Configuration);
+                    _configurationWarnings = _configurationWarnings
+                        .Append("Native M1/M2 reset command accepted after a previous non-default session; live state remains unreadable.")
+                        .ToList();
+                    backendStatus = Configuration.EnableAsusRearButtonMappings
+                        ? recovery.Status
+                        : await ReplaceBackendAsync(enableRearButtons: false, restoreCurrent: false);
+                }
+                else
+                {
+                    _configurationWarnings = _configurationWarnings
+                        .Append($"Could not send the M1/M2 reset command: {recovery.Message}")
+                        .ToList();
+                }
+            }
+            else if (Configuration.AsusRearButtonMappingActive)
+            {
+                _configurationWarnings = _configurationWarnings
+                    .Append("A stale M1/M2 recovery marker exists, but this capture-only build sent no reset report. Restore through Armoury Crate.")
+                    .ToList();
+            }
             _cycle = new ProfileCycleStateMachine(Configuration.Shortcut);
             _overlay = new OverlayWindow();
             _mainWindow = new MainWindow(Configuration, backendStatus);
+            _updateService = new GitHubUpdateService();
             MainWindow = _mainWindow;
+            _mainWindow.SetUpdateStatus($"Current version: {GitHubUpdateService.CurrentVersion.ToString(3)}");
 
             ConfigureTray();
             _controllerMonitor = new XInputMonitor(Configuration.ControllerIndex);
@@ -97,12 +184,41 @@ public partial class App : System.Windows.Application
             {
                 _mainWindow.SetStatus(string.Join(" ", _configurationWarnings));
             }
+            if (startedAfterUpdate)
+            {
+                _mainWindow.SetStatus($"Updated successfully to {GitHubUpdateService.CurrentVersion.ToString(3)}.");
+                WriteUpdateSuccessMarker(updateSuccessMarker);
+            }
+            if (Configuration.CheckForUpdatesAutomatically)
+            {
+                _ = CheckForUpdatesAsync(userInitiated: false);
+            }
         }
         catch (Exception ex)
         {
             Forms.MessageBox.Show($"Ally Bindings could not start safely. No controller settings were changed.\n\n{ex.Message}", "Ally Bindings", Forms.MessageBoxButtons.OK, Forms.MessageBoxIcon.Error);
             Shutdown();
         }
+    }
+
+    private static void WriteUpdateSuccessMarker(string? markerPath)
+    {
+        if (string.IsNullOrWhiteSpace(markerPath))
+        {
+            throw new InvalidOperationException("The updater did not provide its startup-health marker.");
+        }
+
+        var updatesRoot = Path.GetFullPath(Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "AllyBindings",
+            "updates")) + Path.DirectorySeparatorChar;
+        var fullMarkerPath = Path.GetFullPath(markerPath);
+        if (!fullMarkerPath.StartsWith(updatesRoot, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException("The updater startup-health marker is outside the managed update directory.");
+        }
+
+        File.WriteAllText(fullMarkerPath, GitHubUpdateService.CurrentVersion.ToString(3));
     }
 
     private void ConfigureTray()
@@ -143,6 +259,10 @@ public partial class App : System.Windows.Application
                 case CycleEventKind.SelectionCommitted when cycleEvent.Item is not null:
                     _ = CommitCycleItemAsync(cycleEvent.Item);
                     break;
+                case CycleEventKind.ApplicationRequested:
+                    _overlay.Dismiss();
+                    OpenMainWindow();
+                    break;
                 case CycleEventKind.Cancelled:
                     _overlay.ShowResult("Selection cancelled", cycleEvent.Message ?? "Controller disconnected");
                     break;
@@ -152,27 +272,20 @@ public partial class App : System.Windows.Application
 
     private IReadOnlyList<CycleItem> BuildCycleItems()
     {
-        var items = Configuration.Profiles
+        return Configuration.Profiles
             .Where(profile => profile.Enabled)
             .Select(CycleItem.ForProfile)
             .ToList();
-        items.Add(CycleItem.OpenApplication);
-        return items;
     }
 
     private async Task CommitCycleItemAsync(CycleItem item)
     {
-        if (item.Kind == CycleItemKind.OpenApplication)
-        {
-            _overlay.Dismiss();
-            OpenMainWindow();
-            return;
-        }
         await ApplyProfileAsync(item.Id, showOverlay: true);
     }
 
     public async Task<bool> SaveEditorAsync(MainWindow editor)
     {
+        await _operationGate.WaitAsync();
         try
         {
             var selectedProfileId = editor.SelectedProfile is null
@@ -180,16 +293,41 @@ public partial class App : System.Windows.Application
                 : editor.SelectedProfile.IsDefault
                     ? MappingProfile.Default.Id
                     : ConfigurationValidator.Slugify(editor.SelectedProfile.Name);
-            var candidate = editor.BuildConfiguration(Configuration.ActiveProfileId, Configuration.ControllerIndex);
+            var candidate = editor.BuildConfiguration(Configuration.ActiveProfileId, Configuration.ControllerIndex) with
+            {
+                LastUpdateCheckUtc = Configuration.LastUpdateCheckUtc,
+                AsusRearButtonMappingActive = Configuration.AsusRearButtonMappingActive,
+            };
             var validated = ConfigurationValidator.Normalize(candidate);
-            Configuration = validated.Configuration;
+            if (validated.Configuration.EnableAsusRearButtonMappings && !ArmouryProtocolValidation.IsOperationApproved(isRecoveryReset: false))
+            {
+                throw new InvalidOperationException(ArmouryProtocolValidation.GateMessage);
+            }
+            var rearBackendChanged =
+                validated.Configuration.EnableAsusRearButtonMappings != Configuration.EnableAsusRearButtonMappings;
+            BackendStatus? replacementStatus = null;
+            if (rearBackendChanged)
+            {
+                replacementStatus = await ReplaceBackendAsync(
+                    validated.Configuration.EnableAsusRearButtonMappings,
+                    restoreCurrent: Configuration.EnableAsusRearButtonMappings,
+                    allowUnverifiedRecoveryReset: false);
+            }
+            var nextConfiguration = validated.Configuration;
+            if (rearBackendChanged && !nextConfiguration.EnableAsusRearButtonMappings)
+            {
+                // ReplaceBackendAsync only returns after the native reset command
+                // was accepted whenever recovery was required.
+                nextConfiguration = nextConfiguration with { AsusRearButtonMappingActive = false };
+            }
+            Configuration = nextConfiguration;
             _configurationWarnings = validated.Warnings;
             await _profileStore.SaveAsync(Configuration);
             StartupRegistration.SetEnabled(Configuration.RunAtStartup);
             _cycle.UpdateShortcut(Configuration.Shortcut);
             _controllerMonitor.SetPreferredIndex(Configuration.ControllerIndex);
             editor.Load(Configuration, selectedProfileId);
-            editor.SetBackendStatus(_backend.GetStatus());
+            editor.SetBackendStatus(replacementStatus ?? _backend.GetStatus());
             editor.SetStatus(validated.Warnings.Count == 0 ? "Saved locally." : string.Join(" ", validated.Warnings));
             return true;
         }
@@ -198,76 +336,162 @@ public partial class App : System.Windows.Application
             editor.SetStatus($"Save failed safely: {ex.Message}");
             return false;
         }
+        finally
+        {
+            _operationGate.Release();
+        }
     }
 
     public async Task ApplyProfileAsync(string profileId, bool showOverlay)
     {
-        var profile = Configuration.Profiles.FirstOrDefault(candidate => candidate.Id.Equals(profileId, StringComparison.OrdinalIgnoreCase));
-        if (profile is null)
-        {
-            if (showOverlay) _overlay.ShowResult("Profile unavailable", "The selected profile no longer exists.");
-            return;
-        }
-
+        await _operationGate.WaitAsync();
         try
         {
+            var profile = Configuration.Profiles.FirstOrDefault(candidate => candidate.Id.Equals(profileId, StringComparison.OrdinalIgnoreCase));
+            if (profile is null)
+            {
+                if (showOverlay) _overlay.ShowResult("Profile unavailable", "The selected profile no longer exists.");
+                return;
+            }
+
+            var rearMappingRequested =
+                Configuration.EnableAsusRearButtonMappings &&
+                profile.Id != MappingProfile.Default.Id &&
+                HasRearRemap(profile);
+            var backendStatus = _backend.GetStatus();
+            if (rearMappingRequested && !backendStatus.CanRemap)
+            {
+                // Reprobe before persisting recovery intent. Custom applies are
+                // forbidden from reprobing internally, so no HID write can get
+                // ahead of the on-disk crash marker.
+                backendStatus = await _backend.InitializeAsync();
+                _mainWindow.SetBackendStatus(backendStatus);
+            }
+            var rearWriteWillBeAttempted = rearMappingRequested && backendStatus.CanRemap;
+            if (rearWriteWillBeAttempted && !_backendNeedsRestore)
+            {
+                // Persist the recovery intent before touching firmware. A hard
+                // kill between SetFeature and the later profile save must still
+                // cause a native M1/M2 reset attempt on next launch.
+                Configuration = Configuration with { AsusRearButtonMappingActive = true };
+                await _profileStore.SaveAsync(Configuration);
+                _backendNeedsRestore = true;
+            }
+
             var result = profile.Id == MappingProfile.Default.Id
                 ? await _backend.RestoreDefaultAsync()
                 : await _backend.ApplyAsync(profile);
-            Configuration = Configuration with { ActiveProfileId = profile.Id };
+            if (Configuration.EnableAsusRearButtonMappings && _backendNeedsRestore && !result.CommandAccepted)
+            {
+                _mainWindow.SetBackendStatus(result.Status);
+                _mainWindow.SetStatus($"Profile not changed: {result.Message}");
+                if (showOverlay)
+                {
+                    _overlay.ShowResult("Apply failed", "Previous M1/M2 mapping may still be active");
+                }
+                return;
+            }
+            var rearMappingActive =
+                result.Status.Health == BackendHealth.Partial &&
+                result.CommandAccepted &&
+                profile.Id != MappingProfile.Default.Id &&
+                HasRearRemap(profile);
+            _backendNeedsRestore = rearMappingActive;
+            Configuration = Configuration with
+            {
+                ActiveProfileId = profile.Id,
+                AsusRearButtonMappingActive = rearMappingActive,
+            };
             await _profileStore.SaveAsync(Configuration);
             _mainWindow.SetBackendStatus(result.Status);
             _mainWindow.SetStatus(result.Message);
-            var trayLabel = result.Status.Health == BackendHealth.Preview
-                ? $"Ally Bindings · Preview · {profile.Name}"
-                : $"Ally Bindings · {profile.Name}";
+            var trayLabel = result.Status.Health switch
+            {
+                BackendHealth.Partial => $"Ally Bindings · M1/M2 · {profile.Name}",
+                BackendHealth.Preview => $"Ally Bindings · Preview · {profile.Name}",
+                _ => $"Ally Bindings · {profile.Name}",
+            };
             _trayIcon.Text = trayLabel[..Math.Min(63, trayLabel.Length)];
             if (showOverlay)
             {
-                _overlay.ShowResult(profile.Name, result.AppliedToController ? "Applied to controller" : "Selected · preview backend only");
+                _overlay.ShowResult(
+                    profile.Name,
+                    result.Status.Health == BackendHealth.Partial && result.CommandAccepted
+                        ? "M1/M2 write accepted · live state unverified"
+                        : result.CommandAccepted
+                            ? "Command accepted · live state unverified"
+                            : "Selected · preview backend only");
             }
         }
         catch (Exception ex)
         {
-            if (showOverlay) _overlay.ShowResult("Apply failed", $"Default passthrough kept intact · {ex.Message}");
-            _mainWindow.SetStatus($"Apply failed safely: {ex.Message}");
+            var safetyDetail = _backendNeedsRestore
+                ? "M1/M2 state may have changed · recovery marker retained"
+                : "Default passthrough kept intact";
+            if (showOverlay) _overlay.ShowResult("Apply failed", $"{safetyDetail} · {ex.Message}");
+            _mainWindow.SetStatus($"Apply failed safely: {safetyDetail}. {ex.Message}");
+        }
+        finally
+        {
+            _operationGate.Release();
         }
     }
 
     public async Task RestoreDefaultAsync(string reason)
     {
-        _cycle.Cancel();
-        BackendApplyResult result;
+        await _operationGate.WaitAsync();
         try
         {
-            result = await _backend.RestoreDefaultAsync();
-        }
-        catch (Exception ex)
-        {
-            _mainWindow.SetBackendStatus(_backend.GetStatus());
-            _mainWindow.SetStatus($"Default restore failed: {ex.Message}");
-            _overlay.ShowResult("Restore failed", "Use the physical controller/keyboard recovery path and open diagnostics.");
-            return;
-        }
+            _cycle.Cancel();
+            BackendApplyResult result;
+            try
+            {
+                result = await _backend.RestoreDefaultAsync();
+            }
+            catch (Exception ex)
+            {
+                _mainWindow.SetBackendStatus(_backend.GetStatus());
+                _mainWindow.SetStatus($"Native reset command failed: {ex.Message}");
+                _overlay.ShowResult("Restore failed", "Use the physical controller/keyboard recovery path and open diagnostics.");
+                return;
+            }
 
-        Configuration = Configuration with { ActiveProfileId = MappingProfile.Default.Id };
-        string? persistenceWarning = null;
-        try
-        {
-            await _profileStore.SaveAsync(Configuration);
-        }
-        catch (Exception ex)
-        {
-            persistenceWarning = $" Controller state was restored, but saving the Default selection failed: {ex.Message}";
-        }
+            if (_backendNeedsRestore && !result.CommandAccepted)
+            {
+                _mainWindow.SetBackendStatus(result.Status);
+                _mainWindow.SetStatus($"{reason}: native reset command was not accepted; the previous M1/M2 mapping may still be active. {result.Message}");
+                _overlay.ShowResult("Restore failed", "Previous M1/M2 mapping may still be active");
+                return;
+            }
 
-        _mainWindow.SetBackendStatus(result.Status);
-        _mainWindow.SetStatus($"{reason}: {result.Message}{persistenceWarning}");
-        _overlay.ShowResult(
-            "Default",
-            persistenceWarning is not null
-                ? "Controller restored · local selection could not be saved"
-                : result.AppliedToController ? "Controller mapping restored" : "Default selected · passthrough remains intact");
+            Configuration = Configuration with { ActiveProfileId = MappingProfile.Default.Id };
+            if (result.CommandAccepted)
+            {
+                _backendNeedsRestore = false;
+                Configuration = Configuration with { AsusRearButtonMappingActive = false };
+            }
+            string? persistenceWarning = null;
+            try
+            {
+                await _profileStore.SaveAsync(Configuration);
+            }
+            catch (Exception ex)
+            {
+                persistenceWarning = $" The reset command was accepted, but saving the Default selection failed: {ex.Message}";
+            }
+
+            _mainWindow.SetBackendStatus(result.Status);
+            _mainWindow.SetStatus($"{reason}: {result.Message}{persistenceWarning}");
+            _overlay.ShowResult(
+                "Native reset",
+                persistenceWarning is not null
+                    ? "Command accepted · live state unverified · local selection not saved"
+                    : result.CommandAccepted ? "Command accepted · live state unverified" : "Default selected · passthrough remains intact");
+        }
+        finally
+        {
+            _operationGate.Release();
+        }
     }
 
     public string BuildDiagnostics()
@@ -285,6 +509,262 @@ public partial class App : System.Windows.Application
         return DiagnosticsExporter.ToJson(snapshot);
     }
 
+    public async Task CaptureArmouryProtocolAsync()
+    {
+        if (_armouryCaptureInProgress) return;
+        _armouryCaptureInProgress = true;
+        await _operationGate.WaitAsync();
+        ArmouryCaptureSession? session = null;
+
+        static void RequireCaptureStep(string message, string title)
+        {
+            if (Forms.MessageBox.Show(
+                    message,
+                    title,
+                    Forms.MessageBoxButtons.OKCancel,
+                    Forms.MessageBoxIcon.Information) != Forms.DialogResult.OK)
+            {
+                throw new OperationCanceledException("The capture was cancelled. The integrated ETW session was stopped and no bundle was accepted as evidence.");
+            }
+        }
+        try
+        {
+            _mainWindow.SetArmouryCaptureBusy(true);
+            var proceed = Forms.MessageBox.Show(
+                "This starts a temporary Windows USB ETW session inside Ally Bindings. Windows will request administrator approval for the capture helper. No driver, Wireshark or USBPcap is installed, and no raw system-wide trace is written.\n\n" +
+                "You will deliberately change M1/M2 three times through Armoury Crate so we can collect candidate bus payloads for hardware review. Ally Bindings will send no HID reports, cannot clear recovery state from this capture, and its ASUS write backend remains source locked.\n\nContinue?",
+                "Capture Armoury M1/M2 protocol",
+                Forms.MessageBoxButtons.OKCancel,
+                Forms.MessageBoxIcon.Information) == Forms.DialogResult.OK;
+            if (!proceed) return;
+
+            _cycle.Cancel();
+            _mainWindow.SetArmouryCaptureStatus("Confirming the ASUS feature-report interface…");
+            var captureService = new ArmouryCaptureService();
+            var target = await captureService.DiscoverTargetAsync();
+            RequireCaptureStep(
+                $"Confirm this is the ROG Ally controller you intend to inspect:\n\nModel: {target.Model}\nCompatible ASUS HID interfaces: {string.Join(" | ", target.DeviceIds)}\n\nNo ETW session has started yet. Click Cancel if this identity is unexpected.",
+                "Confirm integrated Windows capture");
+            session = await captureService.StartAsync(target);
+            _mainWindow.SetArmouryCaptureStatus(
+                $"Integrated ETW capture running through {string.Join(" + ", session.EnabledProviders)}. Follow the Armoury prompts; this app remains write-locked.");
+
+            session.MarkAction("step-started-m1-a-m2-b");
+            RequireCaptureStep(
+                "In Armoury Crate, set M1 to A and M2 to B. Wait until Armoury shows the assignment as applied, then return here and click OK.",
+                "Capture step 1 of 3 · M1=A, M2=B");
+            session.MarkAction("armoury-applied-m1-a-m2-b");
+
+            session.MarkAction("step-started-m1-x-m2-y");
+            RequireCaptureStep(
+                "In Armoury Crate, now set M1 to X and M2 to Y. Wait until it is applied, then return here and click OK.",
+                "Capture step 2 of 3 · M1=X, M2=Y");
+            session.MarkAction("armoury-applied-m1-x-m2-y");
+
+            session.MarkAction("step-started-reset-to-default");
+            RequireCaptureStep(
+                "In Armoury Crate, use its Reset to Default action for M1/M2. Wait until the defaults are applied, then return here and click OK. This captures Armoury's real recovery bytes.",
+                "Capture step 3 of 3 · Armoury defaults");
+            session.MarkAction("armoury-reset-m1-m2-to-default");
+
+            var result = await captureService.CompleteAsync(session);
+            session = null;
+            _mainWindow.SetArmouryCaptureStatus(
+                $"Capture complete — review required: {result.FeatureReportCount} report 0x5A candidate(s), {result.RearMappingReportCount} structurally valid candidate(s). Bundle: {result.BundlePath}");
+            _mainWindow.SetStatus(
+                $"ETW candidates captured for hardware review. They cannot unlock ASUS writes or clear recovery state: {string.Join(" ", result.AssessmentReasons)}");
+            Process.Start(new ProcessStartInfo
+            {
+                FileName = "explorer.exe",
+                Arguments = $"/select,\"{result.BundlePath}\"",
+                UseShellExecute = true,
+            });
+        }
+        catch (Exception ex)
+        {
+            if (session is not null)
+            {
+                try
+                {
+                    session.CancelAndDelete();
+                }
+                catch
+                {
+                    // Best-effort capture cleanup; this path never talks to the controller.
+                }
+            }
+            _mainWindow.SetArmouryCaptureStatus($"Capture failed safely: {ex.Message}");
+            Forms.MessageBox.Show(
+                $"No Ally Bindings controller write was attempted.\n\n{ex.Message}",
+                "Armoury capture failed safely",
+                Forms.MessageBoxButtons.OK,
+                Forms.MessageBoxIcon.Error);
+        }
+        finally
+        {
+            _mainWindow.SetArmouryCaptureBusy(false);
+            _operationGate.Release();
+            _armouryCaptureInProgress = false;
+        }
+    }
+
+    public async Task CheckForUpdatesAsync(bool userInitiated)
+    {
+        if (_updateCheckInProgress || _updateService is null) return;
+        if (!userInitiated && Configuration.LastUpdateCheckUtc is { } lastCheck &&
+            DateTimeOffset.UtcNow - lastCheck < TimeSpan.FromHours(24))
+        {
+            return;
+        }
+
+        _updateCheckInProgress = true;
+        try
+        {
+            _mainWindow.SetUpdateStatus("Checking GitHub Releases…");
+            var includePrerelease = userInitiated
+                ? _mainWindow.IncludePrereleaseUpdates
+                : Configuration.IncludePrereleaseUpdates;
+            var candidate = await _updateService.CheckAsync(includePrerelease);
+            await _operationGate.WaitAsync();
+            try
+            {
+                Configuration = Configuration with { LastUpdateCheckUtc = DateTimeOffset.UtcNow };
+                await _profileStore.SaveAsync(Configuration);
+            }
+            finally
+            {
+                _operationGate.Release();
+            }
+
+            if (candidate is null)
+            {
+                _mainWindow.SetUpdateStatus($"Current version {GitHubUpdateService.CurrentVersion.ToString(3)} is up to date.");
+                return;
+            }
+
+            _mainWindow.SetUpdateStatus($"Update available: {candidate.TagName}");
+            var choice = Forms.MessageBox.Show(
+                $"{candidate.ReleaseName} is available.\n\n" +
+                "The ZIP will be downloaded from this repository, verified against GitHub's SHA-256 digest, staged safely, then installed after Ally Bindings exits.\n\n" +
+                "Install and restart now?",
+                "Ally Bindings update",
+                Forms.MessageBoxButtons.YesNo,
+                Forms.MessageBoxIcon.Information);
+            if (choice != Forms.DialogResult.Yes) return;
+
+            var progress = new Progress<double>(value =>
+                _mainWindow.SetUpdateStatus($"Downloading {candidate.TagName}: {value:P0}"));
+            var prepared = await _updateService.DownloadAndPrepareAsync(candidate, progress);
+            if (!await ConfirmSafeExitForUpdateAsync())
+            {
+                try { Directory.Delete(prepared.UpdateRoot, recursive: true); } catch { }
+                _mainWindow.SetUpdateStatus("Update cancelled; controller recovery was not confirmed.");
+                return;
+            }
+
+            var executable = Environment.ProcessPath
+                ?? throw new InvalidOperationException("The current executable path is unavailable.");
+            GitHubUpdateService.LaunchInstaller(prepared, Path.GetDirectoryName(executable)!, Environment.ProcessId);
+            _mainWindow.SetUpdateStatus("Update verified. Restarting…");
+            await ExitAsync();
+        }
+        catch (Exception ex)
+        {
+            _allowExitWithPendingRearMapping = false;
+            _mainWindow.SetUpdateStatus($"Update failed safely: {ex.Message}");
+            if (userInitiated)
+            {
+                Forms.MessageBox.Show(
+                    $"The update was not installed. Existing app files were not changed.\n\n{ex.Message}",
+                    "Ally Bindings update",
+                    Forms.MessageBoxButtons.OK,
+                    Forms.MessageBoxIcon.Error);
+            }
+        }
+        finally
+        {
+            _updateCheckInProgress = false;
+        }
+    }
+
+    private async Task<bool> ConfirmSafeExitForUpdateAsync()
+    {
+        await _operationGate.WaitAsync();
+        try
+        {
+            if (!_backendNeedsRestore) return true;
+            try
+            {
+                var restored = await _backend.RestoreDefaultAsync();
+                if (restored.CommandAccepted)
+                {
+                    _backendNeedsRestore = false;
+                    Configuration = Configuration with
+                    {
+                        ActiveProfileId = MappingProfile.Default.Id,
+                        AsusRearButtonMappingActive = false,
+                    };
+                    await _profileStore.SaveAsync(Configuration);
+                    return true;
+                }
+            }
+            catch
+            {
+                // The explicit warning below is the recovery gate.
+            }
+
+            var continueWithoutReset = Forms.MessageBox.Show(
+                "The best-known native M1/M2 reset could not be written. Updating now may leave the last paddle mapping active until Armoury Crate or another recovery path overwrites it.\n\nUpdate anyway?",
+                "Controller recovery not confirmed",
+                Forms.MessageBoxButtons.YesNo,
+                Forms.MessageBoxIcon.Warning) == Forms.DialogResult.Yes;
+            _allowExitWithPendingRearMapping = continueWithoutReset;
+            return continueWithoutReset;
+        }
+        finally
+        {
+            _operationGate.Release();
+        }
+    }
+
+    private async Task<BackendStatus> ReplaceBackendAsync(
+        bool enableRearButtons,
+        bool restoreCurrent,
+        bool allowUnverifiedRecoveryReset = false)
+    {
+        var useAsusBackend =
+            (enableRearButtons && ArmouryProtocolValidation.IsOperationApproved(isRecoveryReset: false)) ||
+            (allowUnverifiedRecoveryReset && ArmouryProtocolValidation.RecoveryWritesApproved);
+        IControllerBackend replacement = useAsusBackend
+            ? new AsusRearButtonControllerBackend(new AsusRearButtonHidDevice())
+            : new PreviewControllerBackend();
+        var replacementStatus = await replacement.InitializeAsync();
+
+        if (_backend is not null)
+        {
+            if (restoreCurrent && _backendNeedsRestore)
+            {
+                var restored = await _backend.RestoreDefaultAsync();
+                if (!restored.CommandAccepted)
+                {
+                    await replacement.DisposeAsync();
+                    throw new InvalidOperationException(
+                        "Could not write the best-known native M1/M2 reset, so the hardware backend was not disabled.");
+                }
+            }
+            await _backend.DisposeAsync();
+        }
+
+        _backend = replacement;
+        _backendDisposed = false;
+        _backendNeedsRestore = false;
+        return replacementStatus;
+    }
+
+    private static bool HasRearRemap(MappingProfile profile) =>
+        profile.Bindings.GetValueOrDefault(ControllerButton.M1, ControllerButton.M1) != ControllerButton.M1 ||
+        profile.Bindings.GetValueOrDefault(ControllerButton.M2, ControllerButton.M2) != ControllerButton.M2;
+
     public void OpenMainWindow()
     {
         if (_mainWindow.WindowState == WindowState.Minimized) _mainWindow.WindowState = WindowState.Normal;
@@ -299,19 +779,56 @@ public partial class App : System.Windows.Application
     {
         if (_exiting) return;
         _exiting = true;
+        await _operationGate.WaitAsync();
+        var shouldShutdown = true;
 
         try
         {
-            TryCleanup(() => _controllerMonitor.Stop());
-            try
+            string? restoreFailure = null;
+            if (_backendNeedsRestore)
             {
-                await _backend.RestoreDefaultAsync();
-            }
-            catch
-            {
-                // Continue into fail-open disposal even if explicit restoration fails.
+                try
+                {
+                    var restored = await _backend.RestoreDefaultAsync();
+                    if (restored.CommandAccepted)
+                    {
+                        _backendNeedsRestore = false;
+                        Configuration = Configuration with
+                        {
+                            ActiveProfileId = MappingProfile.Default.Id,
+                            AsusRearButtonMappingActive = false,
+                        };
+                        await _profileStore.SaveAsync(Configuration);
+                    }
+                    else
+                    {
+                        restoreFailure = restored.Message;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    restoreFailure = ex.Message;
+                }
             }
 
+            if (_backendNeedsRestore && !_allowExitWithPendingRearMapping)
+            {
+                var exitAnyway = Forms.MessageBox.Show(
+                    "The best-known native M1/M2 reset failed. Exiting may leave the last paddle mapping active until Armoury Crate or another recovery path overwrites it.\n\n" +
+                    $"Details: {restoreFailure ?? "No interface accepted the reset."}\n\nExit anyway?",
+                    "Controller recovery not confirmed",
+                    Forms.MessageBoxButtons.YesNo,
+                    Forms.MessageBoxIcon.Warning) == Forms.DialogResult.Yes;
+                if (!exitAnyway)
+                {
+                    _exiting = false;
+                    shouldShutdown = false;
+                    _mainWindow.SetStatus("Exit cancelled; M1/M2 recovery is still required.");
+                    return;
+                }
+            }
+
+            TryCleanup(() => _controllerMonitor.Stop());
             try
             {
                 await _backend.DisposeAsync();
@@ -319,10 +836,12 @@ public partial class App : System.Windows.Application
             }
             catch
             {
-                // Process/UI cleanup must continue; real backends must also fail open on process exit.
+                // Continue process cleanup; the persisted recovery marker remains
+                // set if the native reset was not confirmed.
             }
 
             TryCleanup(() => _panicHotKey?.Dispose());
+            TryCleanup(() => _updateService?.Dispose());
             TryCleanup(() => _controllerMonitor.Dispose());
             TryCleanup(() => _trayIcon.Visible = false);
             TryCleanup(() => _trayIcon.Dispose());
@@ -333,7 +852,8 @@ public partial class App : System.Windows.Application
         }
         finally
         {
-            Shutdown();
+            _operationGate.Release();
+            if (shouldShutdown) Shutdown();
         }
     }
 
@@ -350,8 +870,11 @@ public partial class App : System.Windows.Application
             RestoreAndDisposeForTermination();
         }
         TryCleanup(() => _trayIcon?.Dispose());
+        TryCleanup(() => _updateService?.Dispose());
         TryCleanup(() => _controllerMonitor?.Dispose());
         TryCleanup(() => _panicHotKey?.Dispose());
+        TryCleanup(() => _executableIntegrityLock?.Dispose());
+        _executableIntegrityLock = null;
         ReleaseSingleInstanceMutex();
         base.OnExit(e);
     }
@@ -359,9 +882,21 @@ public partial class App : System.Windows.Application
     private void RestoreAndDisposeForTermination()
     {
         if (_backend is null || _backendDisposed) return;
+        var backend = _backend;
         try
         {
-            _backend.RestoreDefaultAsync().Wait(TimeSpan.FromSeconds(2));
+            if (_backendNeedsRestore)
+            {
+                // Session-ending callbacks are synchronous WPF hooks. Start the
+                // async restoration on the thread pool so blocking this dispatcher
+                // cannot deadlock its continuations.
+                var restoreTask = Task.Run(async () =>
+                    await backend.RestoreDefaultAsync().ConfigureAwait(false));
+                if (restoreTask.Wait(TimeSpan.FromSeconds(7)) && restoreTask.Result.CommandAccepted)
+                {
+                    _backendNeedsRestore = false;
+                }
+            }
         }
         catch
         {
@@ -369,7 +904,8 @@ public partial class App : System.Windows.Application
         }
         try
         {
-            var disposeTask = _backend.DisposeAsync().AsTask();
+            var disposeTask = Task.Run(async () =>
+                await backend.DisposeAsync().ConfigureAwait(false));
             _backendDisposed = disposeTask.Wait(TimeSpan.FromSeconds(2));
         }
         catch

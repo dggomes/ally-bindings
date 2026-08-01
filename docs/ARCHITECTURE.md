@@ -2,7 +2,7 @@
 
 ## Product boundary
 
-Ally Bindings is a local controller-mapping selector for the case where multiple streamed Xbox titles share one Windows Remote Play process. It does not modify Armoury Crate records or infer the game inside the video stream.
+Ally Bindings is a local controller-mapping selector for the case where multiple streamed Xbox titles share one Windows Remote Play process. It does not modify Armoury Crate records or infer the game inside the video stream. M1/M2 firmware writes are implemented behind a source-level validation gate that is currently closed; the shipping workflow is passive Armoury traffic capture first.
 
 ## Runtime shape
 
@@ -30,6 +30,7 @@ XInput controller
 ┌─────────────────────────┐
 │ Controller backend      │
 │ Preview (implemented)   │
+│ ASUS M1/M2 (locked)     │
 │ Physical/virtual (gate) │
 └─────────────────────────┘
 ```
@@ -57,7 +58,9 @@ Windows 10 2004+ WPF host:
 - Controller index auto-discovery or persisted preferred index.
 - View + Menu default chord with hold/release/debounce gating.
 - Non-activating, always-on-top profile overlay.
-- `Open application` carousel sentinel.
+- RT confirmation while the configured chord remains held to open the editor.
+- Integrated, temporarily elevated Windows USB ETW logger with an in-memory exact-prefix filter for Armoury M1/M2 feature reports.
+- Positively gated ASUS HID adapter whose custom and reset writes are source-disabled pending capture analysis.
 - Tray icon, startup registration and Ctrl+Alt+F12 panic/default hotkey.
 - Profile/shortcut editor and truthful backend state.
 
@@ -69,10 +72,12 @@ The canonical path is `%LOCALAPPDATA%\AllyBindings\config.json`. The entire user
 
 ```json
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "activeProfileId": "elden-ring",
   "controllerIndex": null,
   "runAtStartup": true,
+  "enableAsusRearButtonMappings": false,
+  "asusRearButtonMappingActive": false,
   "shortcut": {
     "buttons": ["View", "Menu"],
     "holdMilliseconds": 250,
@@ -80,7 +85,7 @@ The canonical path is `%LOCALAPPDATA%\AllyBindings\config.json`. The entire user
   },
   "profiles": [
     { "id": "default", "name": "Default", "enabled": true, "bindings": {} },
-    { "id": "elden-ring", "name": "Elden Ring", "enabled": true, "bindings": { "A": "B" } }
+    { "id": "elden-ring", "name": "Elden Ring", "enabled": true, "bindings": { "A": "B", "M1": "RightTrigger" } }
   ]
 }
 ```
@@ -94,12 +99,13 @@ The controller shortcut is deliberately pure/testable:
 1. Detect all configured buttons down.
 2. Require the hold threshold.
 3. Emit one selection per press, never key-repeat while held.
-4. Require release before another selection.
-5. Reset the inactivity timer after release.
-6. Commit after the inactivity timeout.
-7. Cancel pending selection if the controller disconnects.
+4. If RT rises after the hold threshold while the chord remains exact, cancel the pending selection and request the editor.
+5. Require release before another selection.
+6. Reset the inactivity timer after release.
+7. Commit after the inactivity timeout.
+8. Cancel pending selection if the controller disconnects.
 
-Cycle items are enabled profiles followed by `Open application`. The first activation advances from the active profile to the next item.
+Cycle items are enabled profiles only. Opening the editor is a separate deliberate chord+RT gesture, so rotating can never land on it accidentally. The first activation advances from the active profile to the next item.
 
 ## Backend contract
 
@@ -113,7 +119,22 @@ public interface IControllerBackend : IAsyncDisposable
 }
 ```
 
-Backend results distinguish a selected app profile from a mapping physically applied to controller output. The included preview backend always keeps physical passthrough intact and returns `AppliedToController = false`.
+Backend results distinguish a selected app profile from a mapping physically applied to controller output. The preview backend always keeps physical passthrough intact and returns `CommandAccepted = false`. In the capture-only build, `ArmouryProtocolValidation` prevents the Windows host from constructing a write-capable ASUS backend, and the backend independently rejects custom/reset operations by default.
+
+### ASUS rear-button protocol boundary
+
+- Positive DMI gate: exact manufacturer `ASUSTeK COMPUTER INC.` plus product `RC71L`, `RC72LA`, `RC73XA`, or `RC73YA`.
+- Positive HID gate: ASUS VID `0x0B05`, corroborated Ally embedded-controller PID `0x1ABE`/`0x1B4C`/`0x1B6E`, openable interface, feature report `0x5A` whose own descriptor length is at least 50 bytes.
+- Mapping command: report `0x5A`, command `0xD1`, zone `0x08`.
+- Both primary and secondary paddle slots receive the selected action to avoid retaining a stale Armoury secondary action.
+- `CustomWritesApproved` and `RecoveryWritesApproved` are both `false`; profile, panic, exit and stale-marker paths therefore send no ASUS report.
+- Native reset authorization depends only on `RecoveryWritesApproved`; custom mappings require both validation gates so they cannot be enabled without an approved recovery path.
+- The passive logger confirms the supported ROG Ally model plus compatible ASUS HID feature-report interfaces, obtains explicit confirmation, self-elevates the same executable, enables UCX/USBXHCI/USBHUB3 with `FullDataBusTrace`, and revalidates the identity after capture.
+- The system-wide ETW stream is filtered in memory. The callback retains only bounded metadata-decoded binary fields beginning `5A D1 02 08 2C`, with provider/event metadata and a per-candidate SHA-256; it never writes a broad trace.
+- Sequence matching is diagnostic only. Every capture remains review-required and cannot unlock writes or clear recovery state until physical Ally validation binds the Windows-build-specific ETW schema, selected interface, control-transfer setup packet and payload boundary.
+- Filtered report JSON is hashed and bundled locally. No raw ETL/PCAP is created. Missing providers, oversized/dropped events, device ambiguity and target-identity changes fail closed.
+- The helper uses a fixed ETW session name so a later run reclaims any logger orphaned by an uncatchable hard process termination; normal cancellation and parent disconnect stop cooperatively.
+- No physical controller is hidden and no virtual output is created by this backend.
 
 A real backend must additionally stream normalized input through `MappingEngine`, produce exactly one virtual Xbox device and prove fail-open recovery. No physical-device hide action belongs in the generic UI/core layer.
 
@@ -125,9 +146,10 @@ A real backend must additionally stream normalized input through `MappingEngine`
 4. Ctrl+Alt+F12 does not depend on the controller chord/profile.
 5. Disconnect cancels uncommitted selections.
 6. Startup registration is per-user, opt-in and removable.
-7. Launching the app installs no driver and requires no elevation.
-8. Diagnostics contain status/config metadata, not controller input history.
-9. No code injection, Armoury mutation, macros or network service.
+7. Launching the app installs no driver and requires no elevation; explicit passive capture requests one-time elevation for the same executable's temporary ETW helper and installs nothing.
+8. Normal diagnostics contain status/config metadata, not controller input history. Capture bundles are separate private artifacts created only on explicit request.
+9. No code injection, Armoury database mutation, macros or network service.
+10. No custom or recovery M1/M2 report can be emitted while either source-level validation gate is closed.
 
 ## Release gate
 
