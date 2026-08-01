@@ -1,0 +1,37 @@
+{
+  "schemaVersion": 1,
+  "activeProfileId": "default",
+  "controllerIndex": null,
+  "runAtStartup": false,
+  "shortcut": {
+    "buttons": ["View", "Menu"],
+    "holdMilliseconds": 250,
+    "commitDelayMilliseconds": 900
+  },
+  "profiles": [
+    {
+      "id": "default",
+      "name": "Default",
+      "enabled": true,
+      "bindings": {}
+    },
+    {
+      "id": "elden-ring",
+      "name": "Elden Ring",
+      "enabled": true,
+      "bindings": {
+        "A": "B",
+        "B": "A"
+      }
+    },
+    {
+      "id": "lies-of-p",
+      "name": "Lies of P",
+      "enabled": true,
+      "bindings": {
+        "LeftBumper": "RightBumper",
+        "RightBumper": "LeftBumper"
+      }
+    }
+  ]
+}

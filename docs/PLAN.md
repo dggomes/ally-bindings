@@ -1,107 +1,86 @@
-# Implementation plan
+# Delivery plan
 
 ## Outcome
 
-A lightweight Windows application that lets Daniel choose a named controller-binding profile while Xbox Remote Play is already running on the ROG Xbox Ally X.
+A lightweight Windows tray application that lets Daniel rotate named controller profiles, open the main editor from the same controller carousel, return to Default instantly and eventually apply mappings safely during Xbox Remote Play on the ROG Xbox Ally X.
 
-## Scope contract
+## Current capability
 
-**In scope:** default controller bindings, rear-button mappings, named presets, instant manual selection, local config, overlay confirmation, safe reset.
+### Application foundation — implemented
 
-**Out of scope:** game detection inside the video stream, TDP/fan/RGB/display changes, game launching, macros, telemetry, accounts, and Armoury Crate profile editing.
+- [x] .NET 8 solution split into cross-platform core, WPF host and tests.
+- [x] Versioned JSON profile schema, normalization, atomic writes, backup and recovery.
+- [x] Guaranteed immutable Default profile.
+- [x] Pure one-to-one XInput button mapping engine.
+- [x] Backend status/apply/restore contract and truthful preview backend.
+- [x] XInput controller polling with disconnect handling.
+- [x] Configurable two-button controller chord; View + Menu default.
+- [x] Hold/debounce/release/inactivity carousel state machine.
+- [x] Small always-on-top overlay.
+- [x] `Open application` carousel item.
+- [x] WPF profile/shortcut editor, tray mode and opt-in sign-in startup.
+- [x] Ctrl+Alt+F12 panic/default shortcut.
+- [x] Redacted diagnostics export.
+- [x] Linux/macOS core tests plus Windows build/test/package CI.
 
-## Phase 0 — hardware/backend spike (blocking)
+### Physical remapping — release gate
 
-**Goal:** prove the physical Ally X can be safely remapped into one virtual Xbox controller.
+- [ ] Inventory actual Ally X input/HID/XInput topology.
+- [ ] Establish whether rear paddles are independently visible outside Armoury mappings.
+- [ ] Select an output/hiding backend with acceptable maintenance, signing and licence posture.
+- [ ] Build a minimal physical-input → mapping engine → virtual-output adapter.
+- [ ] Prove exactly one controller reaches Remote Play.
+- [ ] Prove Command Centre and Armoury remain functional.
+- [ ] Pass suspend/resume, reconnect, forced-kill and uninstall rollback tests.
+- [ ] Enable the backend only behind an explicit compatibility decision.
 
-Tasks:
+## Shortcut product contract
 
-1. Inventory physical HID/XInput devices and identify how rear buttons and Command Centre are presented.
-2. Capture baseline mappings and Armoury/firmware versions.
-3. Test candidate backend A (supported ASUS path) then B/C from `HARDWARE-SPIKE.md`.
-4. Run the full test matrix, including Remote Play, sleep/wake, and forced backend failure.
-5. Select backend only with a documented install, rollback, and licence decision.
+- The app must be running in the tray to hear controller input.
+- Each held/released configured chord advances one item.
+- Enabled profiles appear in stored order, followed by `Open application`.
+- Stopping on a profile selects/applies it after the inactivity timeout.
+- Stopping on `Open application` activates the editor.
+- Disconnect before commit cancels rather than applying stale intent.
+- Face-button-only chords are allowed but visibly warned until safe interception can swallow them.
 
-Acceptance criteria:
+## Hardware/backend work
 
-- One input path, no duplicates.
-- Default/restoration path is proven.
-- Command Centre and Armoury Crate remain functional.
-- No backend means no v1 implementation.
+Follow `HARDWARE-SPIKE.md` on the physical Ally X. The backend should be a narrow adapter around the tested core—not a second profile store or duplicate mapping engine.
 
-## Phase 1 — mapping core and CLI proof
+Required runtime sequence:
 
-**Goal:** build the smallest end-to-end, testable remapping proof before any UI.
+1. Identify the intended physical controller deterministically.
+2. Start virtual output and verify it accepts/report states.
+3. Whitelist Ally Bindings for physical reads if a filter is used.
+4. Hide the physical device from consumers only after output health is green.
+5. Feed physical snapshots through the pure mapping engine.
+6. On panic/shutdown/fault, restore Default and unhide/fail open.
 
-Deliverables:
+## Packaging and on-device validation
 
-- `.NET` solution with `AllyBindings.Core`, `AllyBindings.Backend`, and `AllyBindings.Cli`.
-- Versioned JSON profile schema and atomic profile-store implementation.
-- Pure mapping-engine tests: identity map, button swap, rear-to-stick-click mapping, invalid profile rejection.
-- CLI: `list`, `apply <profile>`, `default`, `status`, `restore`.
-- Structured local log with no controller-input recording.
+1. Download the self-contained `AllyBindings-win-x64` CI artifact.
+2. Run without enabling sign-in startup; verify main/tray/overlay first.
+3. Verify View + Menu and a temporary A + B chord in a controller test page, not a game.
+4. Verify profile JSON recovery by testing a copy, never the only config.
+5. Enable sign-in startup and confirm it can be disabled from the UI.
+6. Run the hardware matrix before integrating any driver/backend.
+7. Record Windows, Armoury, firmware and backend versions with results.
 
-Acceptance criteria:
+## Non-goals
 
-- Profiles apply to Xbox Remote Play during a live session.
-- CLI restoration works after backend restart.
-- Unit tests cover mapping resolution and profile persistence.
+- Automatic title detection from Remote Play video/OCR.
+- Armoury Crate profile mutation.
+- TDP, fan, RGB, display or game launching.
+- Macros, turbo, scripts, anti-cheat bypasses or competitive automation.
+- Accounts, cloud sync, telemetry or a network listener.
 
-## Phase 2 — minimal tray and overlay UX
+## Definition of done
 
-**Goal:** eliminate command-line friction without inventing a launcher.
+### Preview application
 
-Deliverables:
+A clean CI checkout builds a downloadable Windows app; Daniel can create profiles, rotate them with the controller, stop on `Open application` to open the editor, restore Default, use tray/startup mode and see truthful preview-backend status.
 
-- WinUI 3 tray host.
-- Compact profile picker opened by a configurable global hotkey.
-- Active-profile toast/overlay lasting roughly one second.
-- `Default` profile pinned first; panic-reset hotkey independent of profiles.
-- Profile editor for standard button mappings only.
-- Accessibility: keyboard navigation, readable focus states, no icon-only mystery controls.
+### Remapping release
 
-Acceptance criteria:
-
-- Switch a profile in two actions or fewer.
-- Overlay identifies the applied profile and succeeds/fails truthfully.
-- UI remains low-idle and starts only when enabled by the user.
-
-## Phase 3 — resilience and packaging
-
-**Goal:** make it safe to trust on a sofa, not merely functional at a desk.
-
-Deliverables:
-
-- Startup checks that never hide input until output is healthy.
-- Suspend/resume and Remote Play reconnect handling.
-- Backend watchdog/recovery with clear status, never silent failure.
-- Export/import profiles and diagnostics (with no secrets/input logs).
-- MSIX or signed installer strategy based on backend requirements.
-- README quick start, rollback guide, privacy statement, and compatibility matrix.
-
-Acceptance criteria:
-
-- Forced crash test returns a usable controller state.
-- Install/uninstall does not damage Armoury configuration.
-- Fresh-machine setup is reproducible from documentation.
-
-## Phase 4 — optional future work (only after v1 is solid)
-
-- Read a documented Xbox title signal, if one exists, and offer optional auto-select with confirmation.
-- Per-profile haptic/LED hints only if achievable without broad Armoury integration.
-- Import/export Armoury-style named layouts manually (not live profile manipulation).
-
-## Risks and mitigations
-
-| Risk | Mitigation |
-|---|---|
-| Xbox Remote Play exposes no title identity | Manual selector is the intended v1 design. |
-| Controller hiding causes an input lockout | Do not hide until virtual output passes a health check; retain panic reset; test forced kill. |
-| ASUS/Windows update changes device topology | Device-identification diagnostics and explicit compatibility gate; never silently remap unknown device. |
-| Driver is unsigned, abandoned, or licence-incompatible | Reject it; do not ship around an unsafe backend. |
-| Armoury Crate conflicts with remapping | Test with Armoury installed; if conflict persists, stop or require a documented mutually-exclusive setup. |
-| Feature creep into a general Ally utility | Non-goals are enforced; keep app focused on mappings. |
-
-## Definition of done for v1
-
-Daniel can start Xbox Remote Play, select `Elden Ring` or `Lies of P` from a lightweight picker, receive exactly the chosen controller mapping, switch back to `Default` instantly, and recover cleanly from sleep/reconnect/app failure — without touching Armoury Crate or risking a stranded controller.
+During Xbox Remote Play, selecting a named profile produces exactly the chosen controller layout with no duplicate input; Default/panic, Command Centre, sleep/reconnect, app failure and uninstall all return to a usable controller state.
