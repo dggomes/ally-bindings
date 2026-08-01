@@ -76,6 +76,7 @@
 
     <Style TargetType="CheckBox">
       <Setter Property="MinHeight" Value="48" />
+      <Setter Property="Foreground" Value="White" />
       <Setter Property="VerticalContentAlignment" Value="Center" />
       <Setter Property="Padding" Value="4" />
     </Style>
