@@ -343,6 +343,7 @@
                   </StackPanel>
                   <Button x:Name="ArmouryCaptureButton" Grid.Column="1" Style="{StaticResource PrimaryButton}"
                           Content="Start capture" Click="CaptureArmouryProtocol_Click" VerticalAlignment="Center"
+                          AutomationProperties.AutomationId="ArmouryCaptureButton"
                           AutomationProperties.Name="Capture Armoury M1 and M2 protocol with Windows ETW" />
                 </Grid>
               </Border>

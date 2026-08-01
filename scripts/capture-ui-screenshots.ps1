@@ -58,8 +58,12 @@ function Find-ElementContaining {
 }
 
 function Select-Section {
-    param([System.Windows.Automation.AutomationElement]$Root, [string]$Name)
-    $item = Find-ElementContaining -Root $Root -Name $Name -ControlType ([System.Windows.Automation.ControlType]::ListItem)
+    param([System.Windows.Automation.AutomationElement]$Root, [string]$AutomationId)
+    $condition = New-Object System.Windows.Automation.PropertyCondition(
+        [System.Windows.Automation.AutomationElement]::AutomationIdProperty,
+        $AutomationId)
+    $item = $Root.FindFirst([System.Windows.Automation.TreeScope]::Descendants, $condition)
+    if (-not $item) { throw "Could not find app section $AutomationId." }
     $selection = [System.Windows.Automation.SelectionItemPattern]$item.GetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern)
     $selection.Select()
     Start-Sleep -Milliseconds 450
@@ -113,13 +117,13 @@ try {
     Start-Sleep -Milliseconds 750
     $root = [System.Windows.Automation.AutomationElement]::FromHandle($handle)
 
-    Select-Section -Root $root -Name 'Profiles'
+    Select-Section -Root $root -AutomationId 'NavigationProfiles'
     Save-WindowScreenshot -Handle $handle -Path (Join-Path $OutputDirectory 'ally-bindings-profiles.png')
-    Select-Section -Root $root -Name 'Controller'
+    Select-Section -Root $root -AutomationId 'NavigationController'
     Save-WindowScreenshot -Handle $handle -Path (Join-Path $OutputDirectory 'ally-bindings-controller.png')
-    Select-Section -Root $root -Name 'Shortcut'
+    Select-Section -Root $root -AutomationId 'NavigationShortcut'
     Save-WindowScreenshot -Handle $handle -Path (Join-Path $OutputDirectory 'ally-bindings-shortcut.png')
-    Select-Section -Root $root -Name 'Capture & update'
+    Select-Section -Root $root -AutomationId 'NavigationCaptureUpdate'
     Save-WindowScreenshot -Handle $handle -Path (Join-Path $OutputDirectory 'ally-bindings-capture-update.png')
 
     Write-Host "Captured Ally Bindings UI screenshots in $OutputDirectory"

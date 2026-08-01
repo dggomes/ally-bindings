@@ -46,6 +46,27 @@ function Wait-ElementContaining {
     throw "UI element was not discoverable: $Name"
 }
 
+function Wait-ElementById {
+    param(
+        [System.Windows.Automation.AutomationElement]$Root,
+        [string]$AutomationId,
+        [int]$TimeoutSeconds = 8
+    )
+    $condition = New-Object System.Windows.Automation.PropertyCondition(
+        [System.Windows.Automation.AutomationElement]::AutomationIdProperty,
+        $AutomationId)
+    $deadline = [DateTime]::UtcNow.AddSeconds($TimeoutSeconds)
+    do {
+        $match = $Root.FindFirst([System.Windows.Automation.TreeScope]::Descendants, $condition)
+        if ($match) { return $match }
+        Start-Sleep -Milliseconds 200
+    } while ([DateTime]::UtcNow -lt $deadline)
+    Write-Host "Automation tree while waiting for $AutomationId`:"
+    $Root.FindAll([System.Windows.Automation.TreeScope]::Descendants, [System.Windows.Automation.Condition]::TrueCondition) |
+        ForEach-Object { Write-Host "$($_.Current.ControlType.ProgrammaticName) | id=$($_.Current.AutomationId) | name=$($_.Current.Name)" }
+    throw "UI element was not discoverable by AutomationId: $AutomationId"
+}
+
 $configRoot = Join-Path ([Environment]::GetFolderPath([Environment+SpecialFolder]::LocalApplicationData)) 'AllyBindings'
 $configPath = Join-Path $configRoot 'config.json'
 $hadConfig = Test-Path -LiteralPath $configPath -PathType Leaf
@@ -69,11 +90,11 @@ try {
     $root = [System.Windows.Automation.AutomationElement]::FromHandle($process.MainWindowHandle)
     Wait-ElementContaining -Root $root -Name 'Check for and install Ally Bindings updates' -ControlType ([System.Windows.Automation.ControlType]::Button) | Out-Null
 
-    $maintenance = Wait-ElementContaining -Root $root -Name 'Capture & update' -ControlType ([System.Windows.Automation.ControlType]::ListItem)
+    $maintenance = Wait-ElementById -Root $root -AutomationId 'NavigationCaptureUpdate'
     $selection = [System.Windows.Automation.SelectionItemPattern]$maintenance.GetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern)
     $selection.Select()
     Start-Sleep -Milliseconds 300
-    $capture = Wait-ElementContaining -Root $root -Name 'Capture Armoury M1 and M2 protocol' -ControlType ([System.Windows.Automation.ControlType]::Button)
+    $capture = Wait-ElementById -Root $root -AutomationId 'ArmouryCaptureButton'
     Wait-ElementContaining -Root $root -Name 'Check for and install updates now' -ControlType ([System.Windows.Automation.ControlType]::Button) | Out-Null
     $invoke = [System.Windows.Automation.InvokePattern]$capture.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern)
     $invoke.Invoke()
@@ -82,7 +103,7 @@ try {
     $invoke.Invoke()
     Start-Sleep -Milliseconds 250
 
-    $controller = Wait-ElementContaining -Root $root -Name 'Controller' -ControlType ([System.Windows.Automation.ControlType]::ListItem)
+    $controller = Wait-ElementById -Root $root -AutomationId 'NavigationController'
     $selection = [System.Windows.Automation.SelectionItemPattern]$controller.GetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern)
     $selection.Select()
     Start-Sleep -Milliseconds 300
@@ -96,7 +117,7 @@ try {
     $invoke = [System.Windows.Automation.InvokePattern]$cancelPicker.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern)
     $invoke.Invoke()
 
-    $profiles = Wait-ElementContaining -Root $root -Name 'Profiles' -ControlType ([System.Windows.Automation.ControlType]::ListItem)
+    $profiles = Wait-ElementById -Root $root -AutomationId 'NavigationProfiles'
     $selection = [System.Windows.Automation.SelectionItemPattern]$profiles.GetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern)
     $selection.Select()
     Start-Sleep -Milliseconds 250
