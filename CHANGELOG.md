@@ -6,6 +6,17 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Thi
 
 ## [Unreleased]
 
+## [v0.3.0-preview.7] - 2026-08-02
+
+### Fixed
+
+- Recognize the ROG Xbox Ally X full DMI product name observed on physical hardware: `ROG Xbox Ally X RC73XA_RC73XA`.
+- Keep model detection fail-closed by allowlisting that exact case-insensitive name rather than accepting arbitrary strings that contain a supported model token.
+
+### Tests
+
+- Added positive coverage for the exact full product name and negative coverage for shortened, mismatched-model, extra-suffix and unrelated-prefix variants.
+
 ## [v0.3.0-preview.6] - 2026-08-02
 
 ### Upgrade note
@@ -162,3 +173,4 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Thi
 [v0.3.0-preview.4]: https://github.com/dggomes/ally-bindings/releases/tag/v0.3.0-preview.4
 [v0.3.0-preview.5]: https://github.com/dggomes/ally-bindings/releases/tag/v0.3.0-preview.5
 [v0.3.0-preview.6]: https://github.com/dggomes/ally-bindings/releases/tag/v0.3.0-preview.6
+[v0.3.0-preview.7]: https://github.com/dggomes/ally-bindings/releases/tag/v0.3.0-preview.7
