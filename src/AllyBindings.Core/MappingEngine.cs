@@ -61,7 +61,7 @@ public static class MappingEngine
         {
             rightTrigger = Math.Max(rightTrigger, intensity);
         }
-        else if (intensity >= TriggerActivationThreshold)
+        else if (intensity > TriggerActivationThreshold)
         {
             mappedButtons |= target;
         }
