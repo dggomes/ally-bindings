@@ -117,6 +117,30 @@ try {
     $selection.Select()
     Start-Sleep -Milliseconds 300
     if ($transform.Current.CanResize) {
+        $transform.Resize(1600, 900)
+        Start-Sleep -Milliseconds 350
+    }
+    $landscapeBounds = $root.Current.BoundingRectangle
+    $wideLandscapeAvailable = $landscapeBounds.Width -ge 1500 -and $landscapeBounds.Height -ge 850
+    if ($landscapeBounds.Width -lt 1000 -or $landscapeBounds.Height -lt 700) {
+        throw "Windows did not expose a usable landscape work area; actual size is $([Math]::Round($landscapeBounds.Width))x$([Math]::Round($landscapeBounds.Height))."
+    }
+    $landscapeMap = Wait-ElementById -Root $root -AutomationId 'ControllerMapScrollViewer'
+    $landscapeScroll = [System.Windows.Automation.ScrollPattern]$landscapeMap.GetCurrentPattern([System.Windows.Automation.ScrollPattern]::Pattern)
+    if ($landscapeScroll.Current.HorizontallyScrollable -or $landscapeScroll.Current.VerticallyScrollable) {
+        throw "Controller map still scrolls in the available $([Math]::Round($landscapeBounds.Width))x$([Math]::Round($landscapeBounds.Height)) landscape viewport (horizontal=$($landscapeScroll.Current.HorizontallyScrollable), vertical=$($landscapeScroll.Current.VerticallyScrollable))."
+    }
+    $landscapeLeftTrigger = Wait-ElementById -Root $root -AutomationId 'Diagram-LeftTrigger'
+    $landscapeRightTrigger = Wait-ElementById -Root $root -AutomationId 'Diagram-RightTrigger'
+    $diagramSpan = $landscapeRightTrigger.Current.BoundingRectangle.Left - $landscapeLeftTrigger.Current.BoundingRectangle.Left
+    if ($wideLandscapeAvailable -and $diagramSpan -lt 440) {
+        throw "Controller illustration did not expand for landscape; trigger span is only $([Math]::Round($diagramSpan, 2)) DIPs."
+    }
+    $landscapeMapping = Wait-ElementById -Root $root -AutomationId 'Mapping-LeftTrigger'
+    if ($wideLandscapeAvailable -and $landscapeMapping.Current.BoundingRectangle.Width -lt 210) {
+        throw "Landscape mapping rail stayed cramped at $([Math]::Round($landscapeMapping.Current.BoundingRectangle.Width, 2)) DIPs."
+    }
+    if ($transform.Current.CanResize) {
         $transform.Resize(1040, 736)
         Start-Sleep -Milliseconds 300
     }

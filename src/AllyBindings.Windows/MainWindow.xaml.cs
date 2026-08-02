@@ -73,12 +73,21 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     public MainWindow(AppConfiguration configuration, BackendStatus backendStatus)
     {
         InitializeComponent();
+        ApplyResponsiveInitialSize();
         ButtonOptions = ControllerButtons.ShortcutButtons;
         Load(configuration);
         SetBackendStatus(backendStatus);
         DataContext = this;
         Closing += OnClosing;
         Activated += (_, _) => EnsureControllerFocus();
+    }
+
+    private void ApplyResponsiveInitialSize()
+    {
+        var workArea = SystemParameters.WorkArea;
+        var compactLandscape = workArea.Width <= 1200;
+        Width = Math.Clamp(workArea.Width * (compactLandscape ? 1.0 : 0.88), MinWidth, 1600);
+        Height = Math.Clamp(workArea.Height * (compactLandscape ? 1.0 : 0.88), MinHeight, 920);
     }
 
     public ObservableCollection<ProfileEditor> Profiles { get; } = [];

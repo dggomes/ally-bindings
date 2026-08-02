@@ -6,6 +6,17 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Thi
 
 ## [Unreleased]
 
+## [v0.3.0-preview.5] - 2026-08-02
+
+### Changed
+
+- Reworked the controller workspace for real 16:9 handheld use: the window now sizes from the available landscape work area, mapping rails expand up to a readable width, and the central Ally illustration consumes the remaining space instead of leaving a blank panel.
+- Increased mapping-label legibility while preserving the 1040×736 compact layout and 900×600 supported minimum.
+
+### Fixed
+
+- Removed the unnecessary internal controller-map scrollbar at 1600×900 and added Windows UI Automation gates for landscape expansion, readable mapping rails, and scroll-free presentation.
+
 ## [v0.3.0-preview.4] - 2026-08-02
 
 ### Fixed
@@ -131,3 +142,4 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Thi
 [v0.3.0-preview.2]: https://github.com/dggomes/ally-bindings/releases/tag/v0.3.0-preview.2
 [v0.3.0-preview.3]: https://github.com/dggomes/ally-bindings/releases/tag/v0.3.0-preview.3
 [v0.3.0-preview.4]: https://github.com/dggomes/ally-bindings/releases/tag/v0.3.0-preview.4
+[v0.3.0-preview.5]: https://github.com/dggomes/ally-bindings/releases/tag/v0.3.0-preview.5
