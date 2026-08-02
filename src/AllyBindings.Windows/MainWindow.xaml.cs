@@ -663,9 +663,23 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private void BindingTile_Click(object sender, RoutedEventArgs e)
     {
         if (sender is not Button { Tag: BindingRow row } button || !CanEditSelected) return;
-        _bindingPickerRow = row;
-        _bindingPickerOrigin = button;
         var label = button.DataContext is ControllerBindingDisplay display ? display.Label : row.Source.ToString();
+        OpenBindingPicker(row, button, label);
+    }
+
+    private void ControllerDiagramButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button { Tag: ControllerButton source } button || !CanEditSelected) return;
+        var display = LeftBindings.Concat(DPadBindings).Concat(FaceBindings).Concat(RightBindings)
+            .FirstOrDefault(candidate => candidate.Row.Source == source);
+        if (display is null) return;
+        OpenBindingPicker(display.Row, button, display.Label);
+    }
+
+    private void OpenBindingPicker(BindingRow row, Button origin, string label)
+    {
+        _bindingPickerRow = row;
+        _bindingPickerOrigin = origin;
         BindingPickerTitle.Text = $"Map {label}";
         BindingPickerList.ItemsSource = row.TargetOptions;
         BindingPickerList.SelectedItem = row.Target;

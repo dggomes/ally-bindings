@@ -134,4 +134,120 @@ public sealed class MappingEngineTests
         Assert.Equal(0, output.LeftTrigger);
         Assert.Equal(173, output.RightTrigger);
     }
+
+    [Theory]
+    [InlineData(29, false)]
+    [InlineData(30, false)]
+    [InlineData(31, true)]
+    public void Trigger_to_digital_requires_value_above_xinput_threshold(byte intensity, bool expected)
+    {
+        var input = new ControllerSnapshot(true, ControllerButton.None, LeftTrigger: intensity);
+        var profile = new MappingProfile
+        {
+            Id = "threshold",
+            Name = "Threshold",
+            Bindings = new() { [ControllerButton.LeftTrigger] = ControllerButton.A },
+        };
+
+        var output = MappingEngine.Apply(input, profile);
+
+        Assert.Equal(expected, output.Buttons.HasFlag(ControllerButton.A));
+    }
+
+    [Fact]
+    public void Right_trigger_uses_the_same_digital_projection_semantics()
+    {
+        var profile = new MappingProfile
+        {
+            Id = "right-threshold",
+            Name = "Right threshold",
+            Bindings = new() { [ControllerButton.RightTrigger] = ControllerButton.B },
+        };
+
+        var below = MappingEngine.Apply(new ControllerSnapshot(true, ControllerButton.None, RightTrigger: 30), profile);
+        var above = MappingEngine.Apply(new ControllerSnapshot(true, ControllerButton.None, RightTrigger: 31), profile);
+
+        Assert.False(below.Buttons.HasFlag(ControllerButton.B));
+        Assert.True(above.Buttons.HasFlag(ControllerButton.B));
+    }
+
+    [Fact]
+    public void Trigger_target_preserves_the_strongest_physical_intensity()
+    {
+        var input = new ControllerSnapshot(true, ControllerButton.None, LeftTrigger: 100, RightTrigger: 200);
+        var profile = new MappingProfile
+        {
+            Id = "strongest-trigger",
+            Name = "Strongest trigger",
+            Bindings = new() { [ControllerButton.LeftTrigger] = ControllerButton.RightTrigger },
+        };
+
+        var output = MappingEngine.Apply(input, profile);
+
+        Assert.Equal(200, output.RightTrigger);
+    }
+
+    [Fact]
+    public void Digital_and_analog_sources_targeting_a_trigger_use_max_intensity()
+    {
+        var input = new ControllerSnapshot(true, ControllerButton.A, LeftTrigger: 180);
+        var profile = new MappingProfile
+        {
+            Id = "mixed-trigger",
+            Name = "Mixed trigger",
+            Bindings = new()
+            {
+                [ControllerButton.A] = ControllerButton.RightTrigger,
+                [ControllerButton.LeftTrigger] = ControllerButton.RightTrigger,
+            },
+        };
+
+        var output = MappingEngine.Apply(input, profile);
+
+        Assert.Equal(byte.MaxValue, output.RightTrigger);
+    }
+
+    [Theory]
+    [InlineData(29, 31, true)]
+    [InlineData(31, 29, true)]
+    [InlineData(30, 30, false)]
+    public void Trigger_collisions_targeting_a_button_are_order_independent(byte left, byte right, bool expected)
+    {
+        var input = new ControllerSnapshot(true, ControllerButton.None, LeftTrigger: left, RightTrigger: right);
+        var profile = new MappingProfile
+        {
+            Id = "trigger-collision",
+            Name = "Trigger collision",
+            Bindings = new()
+            {
+                [ControllerButton.LeftTrigger] = ControllerButton.A,
+                [ControllerButton.RightTrigger] = ControllerButton.A,
+            },
+        };
+
+        var output = MappingEngine.Apply(input, profile);
+
+        Assert.Equal(expected, output.Buttons.HasFlag(ControllerButton.A));
+    }
+
+    [Fact]
+    public void Two_way_trigger_swap_uses_the_original_input_snapshot()
+    {
+        var input = new ControllerSnapshot(true, ControllerButton.None, LeftTrigger: 80, RightTrigger: 170);
+        var profile = new MappingProfile
+        {
+            Id = "trigger-swap",
+            Name = "Trigger swap",
+            Bindings = new()
+            {
+                [ControllerButton.LeftTrigger] = ControllerButton.RightTrigger,
+                [ControllerButton.RightTrigger] = ControllerButton.LeftTrigger,
+            },
+        };
+
+        var output = MappingEngine.Apply(input, profile);
+
+        Assert.Equal(170, output.LeftTrigger);
+        Assert.Equal(80, output.RightTrigger);
+    }
 }

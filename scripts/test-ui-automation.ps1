@@ -155,6 +155,25 @@ try {
         throw "Trigger mapping accessibility name was incomplete: $($leftTrigger.Current.Name)"
     }
 
+    $expectedDiagramIds = $expectedMappingIds | ForEach-Object { $_ -replace '^Mapping-', 'Diagram-' }
+    $diagramButtons = @($expectedDiagramIds | ForEach-Object { Wait-ElementById -Root $root -AutomationId $_ })
+    if ($diagramButtons.Count -ne 18) { throw "Expected 18 interactive controller-diagram controls, found $($diagramButtons.Count)." }
+    foreach ($diagramButton in $diagramButtons) {
+        if (-not $diagramButton.Current.IsEnabled -or $diagramButton.Current.IsOffscreen) {
+            throw "Controller diagram control '$($diagramButton.Current.AutomationId)' is not directly usable."
+        }
+        $invoke = [System.Windows.Automation.InvokePattern]$diagramButton.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern)
+        $invoke.Invoke()
+        Wait-ElementContaining -Root $root -Name 'Binding output choices' -ControlType ([System.Windows.Automation.ControlType]::List) | Out-Null
+        $cancelPicker = Wait-ElementById -Root $root -AutomationId 'BindingPickerCancel'
+        $invoke = [System.Windows.Automation.InvokePattern]$cancelPicker.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern)
+        $invoke.Invoke()
+        Start-Sleep -Milliseconds 60
+        if (-not $diagramButton.Current.HasKeyboardFocus) {
+            throw "Binding picker did not restore focus to '$($diagramButton.Current.AutomationId)'."
+        }
+    }
+
     $leftBumper = Wait-ElementById -Root $root -AutomationId 'Mapping-LeftBumper'
     if (-not $leftBumper.Current.IsEnabled) { throw 'A user-profile visual mapping button is unexpectedly disabled.' }
     if ($leftBumper.Current.Name -ne 'Left bumper, mapped to LeftBumper') { throw "Mapping accessibility name was incomplete: $($leftBumper.Current.Name)" }
@@ -179,6 +198,15 @@ try {
     if ($transform.Current.CanResize) {
         $transform.Resize(900, 600)
         Start-Sleep -Milliseconds 250
+    }
+    $minimumBounds = $root.Current.BoundingRectangle
+    if ([Math]::Abs($minimumBounds.Width - 900) -gt 2 -or [Math]::Abs($minimumBounds.Height - 600) -gt 2) {
+        throw "Window did not reach the supported 900x600 minimum; actual size is $([Math]::Round($minimumBounds.Width))x$([Math]::Round($minimumBounds.Height))."
+    }
+    $mapHint = Wait-ElementById -Root $root -AutomationId 'ControllerMapHint'
+    $mapActions = Wait-ElementById -Root $root -AutomationId 'ControllerMapActions'
+    if ($mapHint.Current.BoundingRectangle.Right -gt $mapActions.Current.BoundingRectangle.Left + 1) {
+        throw 'Controller hint overlaps the footer actions at 900x600.'
     }
 
     $profiles = Wait-ElementById -Root $root -AutomationId 'NavigationProfiles'

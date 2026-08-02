@@ -40,6 +40,38 @@ public sealed class JsonProfileStoreTests : IDisposable
     }
 
     [Fact]
+    public async Task Trigger_source_mappings_round_trip_under_schema_three()
+    {
+        var path = System.IO.Path.Combine(_directory, "config.json");
+        var store = new JsonProfileStore(path);
+        var configuration = AppConfiguration.CreateDefault() with
+        {
+            Profiles =
+            [
+                MappingProfile.Default,
+                new MappingProfile
+                {
+                    Id = "trigger-swap",
+                    Name = "Trigger swap",
+                    Bindings = new Dictionary<ControllerButton, ControllerButton>
+                    {
+                        [ControllerButton.LeftTrigger] = ControllerButton.RightTrigger,
+                        [ControllerButton.RightTrigger] = ControllerButton.LeftTrigger,
+                    },
+                },
+            ],
+        };
+
+        await store.SaveAsync(configuration);
+        var loaded = await store.LoadAsync();
+        var profile = Assert.Single(loaded.Configuration.Profiles, candidate => candidate.Id == "trigger-swap");
+
+        Assert.Equal(3, loaded.Configuration.SchemaVersion);
+        Assert.Equal(ControllerButton.RightTrigger, profile.Bindings[ControllerButton.LeftTrigger]);
+        Assert.Equal(ControllerButton.LeftTrigger, profile.Bindings[ControllerButton.RightTrigger]);
+    }
+
+    [Fact]
     public async Task Concurrent_saves_remain_valid_and_leave_no_temp_files()
     {
         var path = System.IO.Path.Combine(_directory, "config.json");

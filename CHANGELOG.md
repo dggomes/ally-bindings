@@ -13,7 +13,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Thi
 ### Changed
 
 - Rebuilt the controller workspace around an Armoury-style oversized Ally diagram with all 18 physical controls visible as labelled, touch-sized mapping actions.
-- Every mapping action now has a stable UI Automation ID and opens the existing controller-operable binding modal.
+- Every mapping action and every matching control on the controller illustration now opens the controller-operable binding modal; stable UI Automation IDs cover both interaction paths.
+- Preview releases recapture the tagged binary's real WPF screens and replace the packaged documentation images before signing off the archive.
 
 ## [v0.3.0-preview.1] - 2026-08-01
 
