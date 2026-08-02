@@ -571,16 +571,19 @@ public partial class App : System.Windows.Application
 
     public async Task RestoreDefaultAsync(string reason)
     {
-        Task? captureCompletion = null;
-        if (_armouryCaptureInProgress)
-        {
-            captureCompletion = _armouryCaptureCompletion?.Task;
-            _armouryCaptureCancellation?.Cancel();
-            _mainWindow.CancelControllerDialog();
-        }
-        await using var resetGate = await CaptureResetGate.AcquireAfterCaptureAsync(
-            captureCompletion,
-            _operationGate);
+        await using var resetGate = await CaptureResetGate.AcquireWhenCaptureStoppedAsync(
+            _operationGate,
+            () =>
+            {
+                if (!_armouryCaptureInProgress) return null;
+                return _armouryCaptureCompletion?.Task
+                    ?? throw new InvalidOperationException("Capture teardown tracking is unavailable while capture is active.");
+            },
+            () =>
+            {
+                _armouryCaptureCancellation?.Cancel();
+                _mainWindow.CancelControllerDialog();
+            });
         _cycle.Cancel();
         BackendApplyResult result;
         try

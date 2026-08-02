@@ -241,9 +241,11 @@ if ([regex]::Matches($app, $startAckPattern).Count -ne 3) {
 $restoreStart = $app.IndexOf('public async Task RestoreDefaultAsync', [StringComparison]::Ordinal)
 $restoreEnd = $app.IndexOf('public string BuildDiagnostics()', [StringComparison]::Ordinal)
 $restoreMethod = $app.Substring($restoreStart, $restoreEnd - $restoreStart)
-if ($restoreMethod.IndexOf('CaptureResetGate.AcquireAfterCaptureAsync', [StringComparison]::Ordinal) -lt 0 -or
-    $resetGate -notmatch 'await captureCompletion\.WaitAsync' -or
-    $resetGate -notmatch 'await operationGate\.WaitAsync') {
+if ($restoreMethod.IndexOf('CaptureResetGate.AcquireWhenCaptureStoppedAsync', [StringComparison]::Ordinal) -lt 0 -or
+    $resetGate -notmatch 'await operationGate\.WaitAsync' -or
+    $resetGate -notmatch 'captureCompletion = getActiveCaptureCompletion\(\)' -or
+    $resetGate -notmatch 'requestCaptureCancellation\(\)' -or
+    $resetGate -notmatch 'await captureCompletion\.WaitAsync') {
     throw 'Native reset can still begin before active ETW capture cancellation has completed.'
 }
 if ($service -notmatch 'BoundedTextLineReader' -or $helper -notmatch 'BoundedTextLineReader' -or

@@ -105,7 +105,7 @@ public sealed class UsbEtwCapturePhaseTests
         var end = windows.EndNow(1);
 
         Assert.True(end >= start);
-        Assert.Equal(1, windows.Classify(end - 1));
+        if (end > start) Assert.Equal(1, windows.Classify(end - 1));
         Assert.Equal(0, windows.Classify(end));
     }
 

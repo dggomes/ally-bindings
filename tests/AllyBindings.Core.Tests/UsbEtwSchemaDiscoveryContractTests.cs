@@ -1,5 +1,6 @@
 using System.Reflection;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using AllyBindings.Core;
 
 namespace AllyBindings.Core.Tests;
@@ -53,6 +54,16 @@ public sealed class UsbEtwSchemaDiscoveryContractTests
             typeof(UsbEtwSchemaDiscoveryReport),
             new HashSet<Type>(),
             nameof(UsbEtwSchemaDiscoveryReport));
+    }
+
+    [Theory]
+    [InlineData(typeof(ObjectContainer))]
+    [InlineData(typeof(JsonElementContainer))]
+    [InlineData(typeof(JsonIncludedFieldContainer))]
+    public void Recursive_guard_rejects_opaque_system_containers_and_included_fields(Type unsafeType)
+    {
+        Assert.ThrowsAny<Exception>(() =>
+            AssertSerializationGraphSafe(unsafeType, new HashSet<Type>(), "unsafe"));
     }
 
     [Fact]
@@ -117,23 +128,30 @@ public sealed class UsbEtwSchemaDiscoveryContractTests
     {
         Assert.False(IsByteContainer(type), $"Byte container reachable at {path}: {type}.");
 
+        if (type == typeof(string) || type == typeof(bool) || type == typeof(int) || type == typeof(long))
+        {
+            return;
+        }
+        Assert.False(type.IsArray, $"Array serialization container reachable at {path}: {type}.");
         if (type.IsGenericType)
         {
+            Assert.Equal(typeof(IReadOnlyList<>), type.GetGenericTypeDefinition());
             foreach (var argument in type.GetGenericArguments())
             {
                 AssertSerializationGraphSafe(argument, visited, $"{path}<{argument.Name}>");
             }
-        }
-        if (type.IsArray)
-        {
-            AssertSerializationGraphSafe(type.GetElementType()!, visited, $"{path}[]");
             return;
         }
-        if (type.IsPrimitive || type.IsEnum || type == typeof(string) || type == typeof(decimal) ||
-            type.Namespace?.StartsWith("System", StringComparison.Ordinal) == true || !visited.Add(type))
-        {
-            return;
-        }
+        Assert.False(
+            type.Namespace?.StartsWith("System", StringComparison.Ordinal) == true,
+            $"Unapproved System serialization container reachable at {path}: {type}.");
+        if (!visited.Add(type)) return;
+
+        var serializableFields = type.GetFields(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
+            .Where(field => field.IsPublic || field.GetCustomAttributes(inherit: true).Any(attribute =>
+                attribute.GetType().FullName == "System.Text.Json.Serialization.JsonIncludeAttribute"))
+            .ToArray();
+        Assert.Empty(serializableFields);
 
         foreach (var property in type.GetProperties(BindingFlags.Instance | BindingFlags.Public))
         {
@@ -148,5 +166,15 @@ public sealed class UsbEtwSchemaDiscoveryContractTests
                 $"Forbidden serialization property reachable at {propertyPath}.");
             AssertSerializationGraphSafe(property.PropertyType, visited, propertyPath);
         }
+    }
+
+    private sealed record ObjectContainer(object SchemaShapes);
+
+    private sealed record JsonElementContainer(JsonElement SchemaShapes);
+
+    private sealed class JsonIncludedFieldContainer
+    {
+        [JsonInclude]
+        public string IncludedData = string.Empty;
     }
 }

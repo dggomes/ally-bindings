@@ -5,19 +5,58 @@ namespace AllyBindings.Core.Tests;
 public sealed class CaptureResetGateTests
 {
     [Fact]
-    public async Task Does_not_enter_backend_gate_until_capture_teardown_completes()
+    public async Task Cancels_and_awaits_active_capture_before_entering_backend_gate()
     {
         var captureCompletion = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         using var operationGate = new SemaphoreSlim(1, 1);
+        var captureActive = true;
+        var cancellationRequested = false;
 
-        var acquire = CaptureResetGate.AcquireAfterCaptureAsync(
-            captureCompletion.Task,
-            operationGate).AsTask();
+        var acquire = CaptureResetGate.AcquireWhenCaptureStoppedAsync(
+            operationGate,
+            () => captureActive ? captureCompletion.Task : null,
+            () => cancellationRequested = true).AsTask();
 
+        await Task.Yield();
+        Assert.True(cancellationRequested);
         Assert.False(acquire.IsCompleted);
         Assert.True(operationGate.Wait(0));
         operationGate.Release();
 
+        captureActive = false;
+        captureCompletion.SetResult();
+        await using var lease = await acquire;
+        Assert.False(operationGate.Wait(0));
+    }
+
+    [Fact]
+    public async Task Rechecks_capture_state_after_waiting_for_operation_gate()
+    {
+        using var operationGate = new SemaphoreSlim(1, 1);
+        await operationGate.WaitAsync();
+        var captureCompletion = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var captureActive = false;
+        var cancellationRequested = false;
+        var cancellationObserved = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        var acquire = CaptureResetGate.AcquireWhenCaptureStoppedAsync(
+            operationGate,
+            () => captureActive ? captureCompletion.Task : null,
+            () =>
+            {
+                cancellationRequested = true;
+                cancellationObserved.SetResult();
+            }).AsTask();
+
+        // Simulate a capture queued ahead of reset: it starts while reset is waiting,
+        // then releases the shared gate for reset to inspect the new active state.
+        captureActive = true;
+        operationGate.Release();
+        await cancellationObserved.Task.WaitAsync(TimeSpan.FromSeconds(1));
+        Assert.True(cancellationRequested);
+        Assert.False(acquire.IsCompleted);
+
+        captureActive = false;
         captureCompletion.SetResult();
         await using var lease = await acquire;
         Assert.False(operationGate.Wait(0));
@@ -28,7 +67,10 @@ public sealed class CaptureResetGateTests
     {
         using var operationGate = new SemaphoreSlim(1, 1);
 
-        await using (await CaptureResetGate.AcquireAfterCaptureAsync(null, operationGate))
+        await using (await CaptureResetGate.AcquireWhenCaptureStoppedAsync(
+                         operationGate,
+                         () => null,
+                         () => throw new InvalidOperationException("No capture should be cancelled.")))
         {
             Assert.False(operationGate.Wait(0));
         }
@@ -44,9 +86,10 @@ public sealed class CaptureResetGateTests
         using var operationGate = new SemaphoreSlim(1, 1);
         using var cancellation = new CancellationTokenSource();
 
-        var acquire = CaptureResetGate.AcquireAfterCaptureAsync(
-            captureCompletion.Task,
+        var acquire = CaptureResetGate.AcquireWhenCaptureStoppedAsync(
             operationGate,
+            () => captureCompletion.Task,
+            () => { },
             cancellation.Token).AsTask();
         cancellation.Cancel();
 

@@ -1,22 +1,41 @@
 namespace AllyBindings.Core;
 
 /// <summary>
-/// Serializes a reset behind capture teardown and the shared backend operation gate.
+/// Atomically waits for capture teardown and enters the shared backend operation gate.
+/// Capture state is inspected only while holding that gate, preventing a queued capture
+/// from starting between a reset's state snapshot and backend entry.
 /// </summary>
 public static class CaptureResetGate
 {
-    public static async ValueTask<IAsyncDisposable> AcquireAfterCaptureAsync(
-        Task? captureCompletion,
+    public static async ValueTask<IAsyncDisposable> AcquireWhenCaptureStoppedAsync(
         SemaphoreSlim operationGate,
+        Func<Task?> getActiveCaptureCompletion,
+        Action requestCaptureCancellation,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(operationGate);
-        if (captureCompletion is not null)
+        ArgumentNullException.ThrowIfNull(getActiveCaptureCompletion);
+        ArgumentNullException.ThrowIfNull(requestCaptureCancellation);
+
+        while (true)
         {
+            await operationGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+            Task? captureCompletion;
+            try
+            {
+                captureCompletion = getActiveCaptureCompletion();
+                if (captureCompletion is null) return new Lease(operationGate);
+                requestCaptureCancellation();
+            }
+            catch
+            {
+                operationGate.Release();
+                throw;
+            }
+
+            operationGate.Release();
             await captureCompletion.WaitAsync(cancellationToken).ConfigureAwait(false);
         }
-        await operationGate.WaitAsync(cancellationToken).ConfigureAwait(false);
-        return new Lease(operationGate);
     }
 
     private sealed class Lease(SemaphoreSlim operationGate) : IAsyncDisposable
