@@ -248,8 +248,8 @@
                         <Canvas.LayoutTransform><ScaleTransform ScaleY="0.84" /></Canvas.LayoutTransform>
                         <Canvas.Resources>
                           <Style x:Key="DiagramHitTarget" TargetType="Button">
-                            <Setter Property="MinWidth" Value="81" />
-                            <Setter Property="MinHeight" Value="97" />
+                            <Setter Property="MinWidth" Value="90" />
+                            <Setter Property="MinHeight" Value="110" />
                             <Setter Property="IsHitTestVisible" Value="False" />
                             <Setter Property="Padding" Value="0" />
                             <Setter Property="Background" Value="#01000000" />

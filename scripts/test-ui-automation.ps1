@@ -184,7 +184,7 @@ try {
         }
         $diagramBounds = $diagramButton.Current.BoundingRectangle
         if ($diagramBounds.Width -lt 48 -or $diagramBounds.Height -lt 48) {
-            throw "Controller diagram control '$($diagramButton.Current.AutomationId)' is smaller than the 48-DIP touch target at 1040x736."
+            throw "Controller diagram control '$($diagramButton.Current.AutomationId)' is smaller than the 48-DIP touch target at 1040x736: $([Math]::Round($diagramBounds.Width, 2))x$([Math]::Round($diagramBounds.Height, 2))."
         }
         $invoke = [System.Windows.Automation.InvokePattern]$diagramButton.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern)
         $invoke.Invoke()
