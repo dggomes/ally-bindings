@@ -36,6 +36,8 @@ foreach ($requiredText in @(
     'AutomationProperties.Name="Full controller button map"',
     'AutomationProperties.AutomationId="ControllerMapScrollViewer"',
     'HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch"',
+    'Width="{Binding ViewportWidth, ElementName=ControllerMapScroller}"',
+    'Height="{Binding ViewportHeight, ElementName=ControllerMapScroller}"',
     'x:Key="DiagramHitTarget"',
     'Click="ControllerDiagramButton_Click"',
     'AutomationProperties.AutomationId="Diagram-LeftTrigger"',

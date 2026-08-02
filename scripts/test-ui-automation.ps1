@@ -128,7 +128,7 @@ try {
     $landscapeMap = Wait-ElementById -Root $root -AutomationId 'ControllerMapScrollViewer'
     $landscapeScroll = [System.Windows.Automation.ScrollPattern]$landscapeMap.GetCurrentPattern([System.Windows.Automation.ScrollPattern]::Pattern)
     if ($landscapeScroll.Current.HorizontallyScrollable -or $landscapeScroll.Current.VerticallyScrollable) {
-        throw 'Controller map still wastes the landscape viewport behind internal scrolling at 1600x900.'
+        throw "Controller map still scrolls in the available $([Math]::Round($landscapeBounds.Width))x$([Math]::Round($landscapeBounds.Height)) landscape viewport (horizontal=$($landscapeScroll.Current.HorizontallyScrollable), vertical=$($landscapeScroll.Current.VerticallyScrollable))."
     }
     $landscapeLeftTrigger = Wait-ElementById -Root $root -AutomationId 'Diagram-LeftTrigger'
     $landscapeRightTrigger = Wait-ElementById -Root $root -AutomationId 'Diagram-RightTrigger'
