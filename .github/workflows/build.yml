@@ -43,6 +43,9 @@ jobs:
       - name: Verify built Windows version metadata
         shell: pwsh
         run: ./scripts/test-version-metadata.ps1
+      - name: Verify withdrawn release policy
+        shell: pwsh
+        run: ./scripts/test-withdrawn-release-policy.ps1
       - name: Enforce release package contents and size budget
         shell: pwsh
         run: ./scripts/test-release-package.ps1

@@ -16,6 +16,9 @@ jobs:
         with:
           persist-credentials: false
           fetch-depth: 0
+      - name: Refuse withdrawn release tags
+        shell: pwsh
+        run: ./scripts/assert-release-tag-allowed.ps1 -Tag $env:GITHUB_REF_NAME
       - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6
         with:
           dotnet-version: 8.0.x

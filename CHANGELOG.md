@@ -10,17 +10,19 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Thi
 
 ### Upgrade note
 
-- Preview.4 and preview.5 cannot self-update past this bug because their failure occurs before the replacement binary starts. Close Ally Bindings and run the standalone preview.6 EXE once; configuration remains in `%LOCALAPPDATA%\AllyBindings`. In-app updates from preview.6 onward use the repaired handoff.
+- Every updater-enabled build before preview.6 (`v0.2.0-preview.2` through `v0.3.0-preview.5`) fails before the replacement binary starts and therefore cannot self-install this repair. Close Ally Bindings and run the standalone preview.6 EXE once; configuration remains in `%LOCALAPPDATA%\AllyBindings`. In-app updates from preview.6 onward use the repaired handoff.
 
 ### Fixed
 
 - Closed the downloaded update file before hashing and extracting it. Preview.5 kept its exclusive download handle alive and then failed when its own verifier reopened `update.zip`.
 - Reused one bounded-retry read handle for update hashing and extraction, making the handoff tolerant of short-lived antivirus or indexing locks without weakening digest verification.
+- Clean up stale incomplete-download directories on a later app launch while preserving installer/rollback directories and refusing to traverse reparse points.
 
 ### Tests
 
-- Added a Windows end-to-end download-to-verification regression test that requires the prepared ZIP to be exclusively reopenable and the entire staging tree removable after preparation returns.
+- Added a Windows end-to-end download-to-verification regression test that requires the prepared ZIP to be exclusively reopenable, the entire staging tree removable after preparation returns, and a stale abandoned download to be cleaned on startup.
 - Added a transient exclusive-lock test for package verification. The updater handoff gate now runs in both PR and tagged-release CI.
+- Preview.5 now has a public assetless withdrawal tombstone, and release CI permanently rejects its denylisted tag rather than permitting corrected assets to be published under it.
 
 ## [v0.3.0-preview.5] - 2026-08-02
 

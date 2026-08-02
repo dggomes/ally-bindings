@@ -18,6 +18,7 @@ public sealed class GitHubUpdateService : IDisposable
 
     public GitHubUpdateService(HttpMessageHandler? handler = null)
     {
+        CleanupAbandonedDownloads();
         _httpClient = handler is null ? new HttpClient() : new HttpClient(handler, disposeHandler: true);
         _httpClient.Timeout = TimeSpan.FromSeconds(30);
         _httpClient.DefaultRequestHeaders.UserAgent.Add(new ProductInfoHeaderValue("AllyBindings", CurrentVersion.ToString(3)));
@@ -169,6 +170,33 @@ public sealed class GitHubUpdateService : IDisposable
     private static void TryDeleteDirectory(string path)
     {
         try { if (Directory.Exists(path)) Directory.Delete(path, recursive: true); } catch { }
+    }
+
+    private static void CleanupAbandonedDownloads()
+    {
+        var updatesRoot = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "AllyBindings",
+            "updates");
+        if (!Directory.Exists(updatesRoot)) return;
+
+        foreach (var directory in Directory.EnumerateDirectories(updatesRoot))
+        {
+            try
+            {
+                if ((File.GetAttributes(directory) & FileAttributes.ReparsePoint) != 0 ||
+                    File.Exists(Path.Combine(directory, "install-update.ps1")) ||
+                    Directory.GetLastWriteTimeUtc(directory) > DateTime.UtcNow.AddMinutes(-1))
+                {
+                    continue;
+                }
+                Directory.Delete(directory, recursive: true);
+            }
+            catch
+            {
+                // Best effort. A future launch retries stale incomplete-download cleanup.
+            }
+        }
     }
 
     private void ThrowIfDisposed() => ObjectDisposedException.ThrowIf(_disposed, this);

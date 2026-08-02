@@ -42,6 +42,8 @@ public sealed class AllyBindingsStaticUpdateHandler : HttpMessageHandler
 $testRoot = Join-Path ([IO.Path]::GetTempPath()) "ally-bindings-download-handoff-$([Guid]::NewGuid().ToString('N'))"
 $payloadRoot = Join-Path $testRoot 'payload'
 $archivePath = Join-Path $testRoot 'payload.zip'
+$managedUpdatesRoot = Join-Path ([Environment]::GetFolderPath([Environment+SpecialFolder]::LocalApplicationData)) 'AllyBindings/updates'
+$abandonedRoot = Join-Path $managedUpdatesRoot "integration-abandoned-$([Guid]::NewGuid().ToString('N'))"
 $prepared = $null
 $service = $null
 try {
@@ -52,7 +54,13 @@ try {
     $sha256 = ([Security.Cryptography.SHA256]::HashData($archiveBytes) | ForEach-Object { $_.ToString('x2') }) -join ''
 
     $handler = [AllyBindingsStaticUpdateHandler]::new($archiveBytes)
+    New-Item -ItemType Directory -Force -Path $abandonedRoot | Out-Null
+    [IO.File]::WriteAllText((Join-Path $abandonedRoot 'update.zip'), 'orphaned failed download')
+    [IO.Directory]::SetLastWriteTimeUtc($abandonedRoot, [DateTime]::UtcNow.AddMinutes(-5))
     $service = [AllyBindings.Windows.GitHubUpdateService]::new($handler)
+    if (Test-Path -LiteralPath $abandonedRoot) {
+        throw 'Updater startup did not remove an abandoned incomplete-download directory.'
+    }
     $candidate = [AllyBindings.Core.UpdateCandidate]::new(
         [Version]'99.0.0',
         'v99.0.0-preview.1',
@@ -84,4 +92,5 @@ finally {
         Remove-Item -LiteralPath $prepared.UpdateRoot -Recurse -Force -ErrorAction SilentlyContinue
     }
     Remove-Item -LiteralPath $testRoot -Recurse -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath $abandonedRoot -Recurse -Force -ErrorAction SilentlyContinue
 }
