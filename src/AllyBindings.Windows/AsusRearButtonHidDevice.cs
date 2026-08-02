@@ -15,7 +15,7 @@ public sealed class AsusRearButtonHidDevice : IAsusRearButtonDevice
     private static readonly TimeSpan HidOperationTimeout = TimeSpan.FromSeconds(3);
     private const int AsusVendorId = 0x0B05;
     private const string AsusManufacturer = "ASUSTeK COMPUTER INC.";
-    private static readonly string[] SupportedModels = ["RC71L", "RC72LA", "RC73XA", "RC73YA"];
+
     private static readonly int[] EmbeddedControllerProductIds =
     [
         0x1ABE,
@@ -71,7 +71,7 @@ public sealed class AsusRearButtonHidDevice : IAsusRearButtonDevice
         var model = identity.ProductName.Trim();
         var manufacturerMatches =
             identity.Manufacturer.Trim().Equals(AsusManufacturer, StringComparison.OrdinalIgnoreCase);
-        var modelMatches = SupportedModels.Contains(model, StringComparer.OrdinalIgnoreCase);
+        var modelMatches = AsusAllyModelIdentity.IsSupportedProductName(model);
         if (!manufacturerMatches || !modelMatches)
         {
             return new(

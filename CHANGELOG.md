@@ -6,6 +6,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Thi
 
 ## [Unreleased]
 
+## [v0.3.0-preview.4] - 2026-08-02
+
+### Fixed
+
+- Recognize the real ROG Xbox Ally X firmware DMI product form `RC73XA_RC73XA` while retaining the exact ASUS manufacturer gate and rejecting mixed, prefixed, suffixed, or unrelated model identities.
+
 ## [v0.3.0-preview.3] - 2026-08-02
 
 ### Fixed
@@ -124,3 +130,4 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Thi
 [v0.3.0-preview.1]: https://github.com/dggomes/ally-bindings/releases/tag/v0.3.0-preview.1
 [v0.3.0-preview.2]: https://github.com/dggomes/ally-bindings/releases/tag/v0.3.0-preview.2
 [v0.3.0-preview.3]: https://github.com/dggomes/ally-bindings/releases/tag/v0.3.0-preview.3
+[v0.3.0-preview.4]: https://github.com/dggomes/ally-bindings/releases/tag/v0.3.0-preview.4

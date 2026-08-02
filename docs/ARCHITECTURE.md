@@ -128,7 +128,7 @@ Backend results distinguish a selected app profile from a mapping physically app
 
 ### ASUS rear-button protocol boundary
 
-- Positive DMI gate: exact manufacturer `ASUSTeK COMPUTER INC.` plus product `RC71L`, `RC72LA`, `RC73XA`, or `RC73YA`.
+- Positive DMI gate: exact manufacturer `ASUSTeK COMPUTER INC.` plus product `RC71L`, `RC72LA`, `RC73XA`, or `RC73YA`; firmware may expose the same supported token twice (`RC73XA_RC73XA`), which is accepted only when both tokens match.
 - Positive HID gate: ASUS VID `0x0B05`, corroborated Ally embedded-controller PID `0x1ABE`/`0x1B4C`/`0x1B6E`, openable interface, feature report `0x5A` whose own descriptor length is at least 50 bytes.
 - Mapping command: report `0x5A`, command `0xD1`, zone `0x08`.
 - Both primary and secondary paddle slots receive the selected action to avoid retaining a stale Armoury secondary action.
