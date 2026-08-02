@@ -220,6 +220,7 @@ param(
 $ErrorActionPreference = 'Stop'
 $backup = Join-Path $UpdateRoot 'backup'
 $configBackup = Join-Path $UpdateRoot 'config-backup.json'
+$transactionId = [Guid]::NewGuid().ToString('N')
 $copied = New-Object System.Collections.Generic.List[string]
 $temporaries = New-Object System.Collections.Generic.List[string]
 $configSnapshotTaken = $false
@@ -240,36 +241,35 @@ try {
     }
     $configSnapshotTaken = $true
     New-Item -ItemType Directory -Force -Path $backup | Out-Null
-    Get-ChildItem -LiteralPath $PackageRoot -File -Recurse |
-        Sort-Object @{ Expression = { if ($_.Name -ieq 'AllyBindings.exe') { 1 } else { 0 } } }, FullName |
-        ForEach-Object {
-        $relative = $_.FullName.Substring($PackageRoot.TrimEnd('\').Length).TrimStart('\')
-        $target = Join-Path $Destination $relative
-        $saved = Join-Path $backup $relative
-        $incoming = "$target.allybindings-new"
-        $displaced = "$target.allybindings-displaced"
-        if (Test-Path -LiteralPath $target -PathType Container) {
-            throw "Refusing to replace directory with update file: $relative"
-        }
-        New-Item -ItemType Directory -Force -Path (Split-Path -Parent $target) | Out-Null
-        Remove-Item -LiteralPath $incoming -Force -ErrorAction SilentlyContinue
-        $temporaries.Add($incoming)
-        Copy-Item -LiteralPath $_.FullName -Destination $incoming -Force
-        if (Test-Path -LiteralPath $target) {
-            New-Item -ItemType Directory -Force -Path (Split-Path -Parent $saved) | Out-Null
-            Copy-Item -LiteralPath $target -Destination $saved -Force
+    $relative = 'AllyBindings.exe'
+    $packageExecutable = Join-Path $PackageRoot $relative
+    if (-not (Test-Path -LiteralPath $packageExecutable -PathType Leaf)) {
+        throw 'The verified update package does not contain AllyBindings.exe.'
+    }
+    $target = Join-Path $Destination $relative
+    $saved = Join-Path $backup $relative
+    $incoming = "$target.allybindings-$transactionId-new"
+    $displaced = "$target.allybindings-$transactionId-displaced"
+    if (Test-Path -LiteralPath $target -PathType Container) {
+        throw 'Refusing to replace an AllyBindings.exe directory with the update executable.'
+    }
+    New-Item -ItemType Directory -Force -Path $Destination | Out-Null
+    Remove-Item -LiteralPath $incoming -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath $displaced -Force -ErrorAction SilentlyContinue
+    $temporaries.Add($incoming)
+    Copy-Item -LiteralPath $packageExecutable -Destination $incoming -Force
+    if (Test-Path -LiteralPath $target -PathType Leaf) {
+        Copy-Item -LiteralPath $target -Destination $saved -Force
+    }
+    $copied.Add($relative)
+    if (Test-Path -LiteralPath $target -PathType Leaf) {
+        try {
+            [IO.File]::Replace($incoming, $target, $displaced, $true)
+        } finally {
             Remove-Item -LiteralPath $displaced -Force -ErrorAction SilentlyContinue
         }
-        $copied.Add($relative)
-        if (Test-Path -LiteralPath $target) {
-            try {
-                [IO.File]::Replace($incoming, $target, $displaced, $true)
-            } finally {
-                Remove-Item -LiteralPath $displaced -Force -ErrorAction SilentlyContinue
-            }
-        } else {
-            [IO.File]::Move($incoming, $target)
-        }
+    } else {
+        [IO.File]::Move($incoming, $target)
     }
     $marker = Join-Path $UpdateRoot 'startup-ok'
     Remove-Item -LiteralPath $marker -Force -ErrorAction SilentlyContinue
@@ -318,10 +318,10 @@ catch {
     foreach ($relative in $rollbackItems) {
         $target = Join-Path $Destination $relative
         $saved = Join-Path $backup $relative
-        $restoreIncoming = "$target.allybindings-restore"
-        $failedVersion = "$target.allybindings-failed-version"
+        $restoreIncoming = "$target.allybindings-$transactionId-restore"
+        $failedVersion = "$target.allybindings-$transactionId-failed-version"
         try {
-            Remove-Item -LiteralPath "$target.allybindings-new" -Force -ErrorAction SilentlyContinue
+            Remove-Item -LiteralPath $incoming -Force -ErrorAction SilentlyContinue
             Remove-Item -LiteralPath $restoreIncoming -Force -ErrorAction SilentlyContinue
             Remove-Item -LiteralPath $failedVersion -Force -ErrorAction SilentlyContinue
             if (Test-Path -LiteralPath $saved -PathType Leaf) {
@@ -344,8 +344,8 @@ catch {
     }
 
     if ($configSnapshotTaken) {
-        $configIncoming = "$ConfigPath.allybindings-restore"
-        $failedConfig = "$ConfigPath.allybindings-failed-version"
+        $configIncoming = "$ConfigPath.allybindings-$transactionId-restore"
+        $failedConfig = "$ConfigPath.allybindings-$transactionId-failed-version"
         try {
             Remove-Item -LiteralPath $configIncoming -Force -ErrorAction SilentlyContinue
             Remove-Item -LiteralPath $failedConfig -Force -ErrorAction SilentlyContinue
@@ -369,7 +369,7 @@ catch {
         }
     }
 
-    if ($safeToRelaunch) {
+    if ($safeToRelaunch -and $rollbackErrors.Count -eq 0) {
         try {
             Start-Process -FilePath (Join-Path $Destination 'AllyBindings.exe')
         } catch {

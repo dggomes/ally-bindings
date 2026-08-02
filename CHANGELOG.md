@@ -14,12 +14,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Thi
 
 ### Fixed
 
-- Give Windows PowerShell a real same-volume backup path for every atomic package and rollback replacement. Passing a null backup path could fail on an existing package file such as `CHANGELOG.md` on some installations.
+- Restrict in-app updates to the self-contained `AllyBindings.exe` instead of rewriting the documentation bundle. The executable is now one atomic replacement with a real same-volume backup path; passing a null backup path could fail on an existing package file such as `CHANGELOG.md` on some installations.
 - Use the same valid-backup replacement path when restoring application files and configuration, preventing the secondary incomplete-rollback errors shown after the original failure.
+- Use unpredictable transaction-scoped temporary names and never relaunch after an incomplete rollback.
 
 ### Tests
 
-- Exercise replacement of an already-existing packaged `CHANGELOG.md`, rather than validating only installation into an otherwise empty directory.
+- Exercise atomic replacement of an already-existing executable, verify its exact package hash, and assert that installed documentation is left untouched.
 
 ## [v0.3.0-preview.7] - 2026-08-02
 

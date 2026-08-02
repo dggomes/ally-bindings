@@ -14,6 +14,12 @@ $endMarker = '"""' + ';'
 $end = $source.IndexOf($endMarker, $start, [StringComparison]::Ordinal)
 if ($end -lt 0) { throw 'Installer script end marker was not found.' }
 $installer = $source.Substring($start, $end - $start).TrimStart("`r", "`n")
+if ($installer -notmatch 'if \(\$safeToRelaunch -and \$rollbackErrors\.Count -eq 0\)') {
+    throw 'Installer can relaunch after an incomplete rollback.'
+}
+if ($installer -match 'Get-ChildItem\s+-LiteralPath\s+\$PackageRoot') {
+    throw 'Installer still performs a multi-file package transaction instead of replacing only AllyBindings.exe.'
+}
 
 $testRoot = Join-Path ([IO.Path]::GetTempPath()) "ally-bindings-rollback-test-$([Guid]::NewGuid().ToString('N'))"
 $updateRoot = Join-Path $testRoot 'update'
