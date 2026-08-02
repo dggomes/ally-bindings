@@ -108,10 +108,10 @@ foreach ($required in @('SchemaVersion', 'Breadcrumbs', 'Errors', 'MaximumDiagno
     }
 }
 if ($app.IndexOf('if (copyDiagnostics', [StringComparison]::Ordinal) -lt 0 -or
-    $app.IndexOf('System.Windows.Clipboard.SetText(diagnosticText)', [StringComparison]::Ordinal) -lt 0 -or
+    $app.IndexOf('System.Windows.Clipboard.SetText(deferredDiagnosticText)', [StringComparison]::Ordinal) -lt 0 -or
     $app.IndexOf('Copy diagnostics', [StringComparison]::Ordinal) -lt 0 -or
     $app.IndexOf('Open folder', [StringComparison]::Ordinal) -lt 0 -or
-    $app.IndexOf('diagnostic.DiagnosticPath', [StringComparison]::Ordinal) -lt 0) {
+    $app.IndexOf('deferredDiagnostic.DiagnosticPath', [StringComparison]::Ordinal) -lt 0) {
     throw 'Capture failures do not expose copy/open diagnostics actions in the controller-safe app flow.'
 }
 if ($service.IndexOf('parent-completion-failed', [StringComparison]::Ordinal) -lt 0 -or
@@ -261,6 +261,7 @@ if ($service -notmatch 'helperExitVerified = helper\.HasExited \|\| helper\.Wait
     $app -notmatch 'private async Task<bool> ConfirmSafeExitForUpdateAsync\(\)[\s\S]*CaptureResetGate\.AcquireWhenCaptureStoppedAsync') {
     throw 'Capture startup or updater shutdown can still bypass verified helper teardown.'
 }
+
 if ($service -notmatch 'BoundedTextLineReader' -or $helper -notmatch 'BoundedTextLineReader' -or
     $boundedReader -notmatch 'Array\.IndexOf' -or $boundedReader -notmatch '_offset') {
     throw 'The ETW IPC protocol does not bound both command and response messages.'
@@ -279,6 +280,11 @@ if ($captureStart -lt 0 -or $captureEnd -le $captureStart) {
     throw 'Could not isolate CaptureArmouryProtocolAsync for the no-write assertion.'
 }
 $captureMethod = $app.Substring($captureStart, $captureEnd - $captureStart)
+$captureBarrierIndex = $captureMethod.IndexOf('captureCompletion?.TrySet', [StringComparison]::Ordinal)
+$deferredFailureUiIndex = $captureMethod.IndexOf('if (deferredFailureMessage is not null', [StringComparison]::Ordinal)
+if ($captureBarrierIndex -lt 0 -or $deferredFailureUiIndex -lt 0 -or $captureBarrierIndex -gt $deferredFailureUiIndex) {
+    throw 'Capture completion is still blocked behind failure-dialog interaction.'
+}
 $discoverTarget = $captureMethod.IndexOf('DiscoverTargetAsync(cancellationToken)', [StringComparison]::Ordinal)
 $confirmTarget = $captureMethod.IndexOf('No ETW session has started yet.', [StringComparison]::Ordinal)
 $startCapture = $captureMethod.IndexOf('StartAsync(target, cancellationToken)', [StringComparison]::Ordinal)

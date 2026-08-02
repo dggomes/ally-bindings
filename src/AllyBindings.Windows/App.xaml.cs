@@ -664,6 +664,9 @@ public partial class App : System.Windows.Application
         var cancellationToken = _armouryCaptureCancellation.Token;
         ArmouryCaptureSession? session = null;
         Exception? captureTeardownFailure = null;
+        string? deferredFailureMessage = null;
+        ArmouryCaptureException? deferredDiagnostic = null;
+        string? deferredDiagnosticText = null;
 
         async Task RequireCaptureStepAsync(string message, string title)
         {
@@ -757,53 +760,9 @@ public partial class App : System.Windows.Application
                     : $"Capture failed safely: {failureMessage}");
             if (ex is not OperationCanceledException)
             {
-                var diagnostic = ex as ArmouryCaptureException;
-                var diagnosticText = diagnostic?.DiagnosticText;
-                var copyDiagnostics = await _mainWindow.ShowControllerDialogAsync(
-                    "Armoury capture failed safely",
-                    $"No Ally Bindings controller write was attempted.\n\n{failureMessage}" +
-                    (diagnostic is null
-                        ? string.Empty
-                        : $"\n\nDiagnostic: {diagnostic.DiagnosticPath}\n\n" +
-                          "It contains bounded lifecycle stages, process/elevation state, product version, helper exit code, and redacted error types/codes/messages. " +
-                          "It contains no usernames, absolute paths, stack traces, USB payloads, controller reports, configuration values, or raw ETW data.\n\n" +
-                          "Choose Copy diagnostics to place that JSON on the clipboard, or Open folder to attach the file."),
-                    allowCancel: diagnostic is not null,
-                    primaryLabel: diagnostic is null ? "OK" : "Copy diagnostics",
-                    secondaryLabel: "Open folder");
-                if (diagnostic is not null)
-                {
-                    var copied = false;
-                    if (copyDiagnostics && !string.IsNullOrWhiteSpace(diagnosticText))
-                    {
-                        try
-                        {
-                            System.Windows.Clipboard.SetText(diagnosticText);
-                            copied = true;
-                        }
-                        catch
-                        {
-                            // Fall through to Explorer when another process owns the clipboard.
-                        }
-                    }
-                    if (!copied)
-                    {
-                        try
-                        {
-                            Process.Start(new ProcessStartInfo
-                            {
-                                FileName = "explorer.exe",
-                                Arguments = $"/select,\"{diagnostic.DiagnosticPath}\"",
-                                UseShellExecute = true,
-                            });
-                        }
-                        catch (Exception disclosureError)
-                        {
-                            _mainWindow.SetArmouryCaptureStatus(
-                                $"Diagnostic saved at {diagnostic.DiagnosticPath}, but Windows could not open Explorer: {disclosureError.Message}");
-                        }
-                    }
-                }
+                deferredFailureMessage = failureMessage;
+                deferredDiagnostic = ex as ArmouryCaptureException;
+                deferredDiagnosticText = deferredDiagnostic?.DiagnosticText;
             }
         }
         finally
@@ -841,6 +800,54 @@ public partial class App : System.Windows.Application
                     captureTeardownFailure));
                 _mainWindow.SetArmouryCaptureStatus(
                     "CAPTURE TEARDOWN UNCONFIRMED — native controller resets are blocked. Restart Ally Bindings before continuing.");
+            }
+        }
+        if (deferredFailureMessage is not null && !cancellationToken.IsCancellationRequested)
+        {
+            var copyDiagnostics = await _mainWindow.ShowControllerDialogAsync(
+                "Armoury capture failed safely",
+                $"No Ally Bindings controller write was attempted.\n\n{deferredFailureMessage}" +
+                (deferredDiagnostic is null
+                    ? string.Empty
+                    : $"\n\nDiagnostic: {deferredDiagnostic.DiagnosticPath}\n\n" +
+                      "It contains bounded lifecycle stages, process/elevation state, product version, helper exit code, and redacted error types/codes/messages. " +
+                      "It contains no usernames, absolute paths, stack traces, USB payloads, controller reports, configuration values, or raw ETW data.\n\n" +
+                      "Choose Copy diagnostics to place that JSON on the clipboard, or Open folder to attach the file."),
+                allowCancel: deferredDiagnostic is not null,
+                primaryLabel: deferredDiagnostic is null ? "OK" : "Copy diagnostics",
+                secondaryLabel: "Open folder");
+            if (deferredDiagnostic is not null)
+            {
+                var copied = false;
+                if (copyDiagnostics && !string.IsNullOrWhiteSpace(deferredDiagnosticText))
+                {
+                    try
+                    {
+                        System.Windows.Clipboard.SetText(deferredDiagnosticText);
+                        copied = true;
+                    }
+                    catch
+                    {
+                        // Fall through to Explorer when another process owns the clipboard.
+                    }
+                }
+                if (!copied)
+                {
+                    try
+                    {
+                        Process.Start(new ProcessStartInfo
+                        {
+                            FileName = "explorer.exe",
+                            Arguments = $"/select,\"{deferredDiagnostic.DiagnosticPath}\"",
+                            UseShellExecute = true,
+                        });
+                    }
+                    catch (Exception disclosureError)
+                    {
+                        _mainWindow.SetArmouryCaptureStatus(
+                            $"Diagnostic saved at {deferredDiagnostic.DiagnosticPath}, but Windows could not open Explorer: {disclosureError.Message}");
+                    }
+                }
             }
         }
     }
