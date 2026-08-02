@@ -28,7 +28,7 @@ try {
     Copy-Item -LiteralPath (Join-Path $PackageRoot 'AllyBindings.exe') -Destination (Join-Path $staging 'AllyBindings.exe')
     $expectedHash = (Get-FileHash (Join-Path $staging 'AllyBindings.exe') -Algorithm SHA256).Hash
     [IO.File]::WriteAllBytes((Join-Path $staging 'AllyBindings.exe'), [byte[]](1,2,3,4))
-    Copy-Item -LiteralPath "$env:SystemRoot/System32/WindowsPowerShell/v1.0/powershell.exe" -Destination (Join-Path $destination 'AllyBindings.exe')
+    Copy-Item -LiteralPath "$env:SystemRoot/System32/whoami.exe" -Destination (Join-Path $destination 'AllyBindings.exe')
     $oldHash = (Get-FileHash (Join-Path $destination 'AllyBindings.exe') -Algorithm SHA256).Hash
     [IO.File]::WriteAllText($configPath, '{"schemaVersion":1,"sentinel":"unchanged"}')
     [IO.File]::WriteAllText($installerPath, $installer)
