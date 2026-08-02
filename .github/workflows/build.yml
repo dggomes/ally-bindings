@@ -70,6 +70,9 @@ jobs:
       - name: Exercise updater download-to-verification handoff
         shell: pwsh
         run: ./scripts/test-update-download-handoff.ps1
+      - name: Reject staged executable tampering after verification
+        shell: powershell
+        run: ./scripts/test-updater-tamper.ps1 -PackageRoot artifacts/AllyBindings-win-x64 -RepositoryRoot $PWD
       - name: Exercise updater replacement and startup handshake
         shell: powershell
         run: ./scripts/test-updater-installer.ps1 -PackageRoot artifacts/AllyBindings-win-x64 -RepositoryRoot $PWD

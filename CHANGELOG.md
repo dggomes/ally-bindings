@@ -6,6 +6,24 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Thi
 
 ## [Unreleased]
 
+## [v0.3.0-preview.8] - 2026-08-02
+
+### Upgrade note
+
+- If an earlier build reports `The path is not of a legal form` while updating, close Ally Bindings and run the standalone preview.8 EXE once. That failed install stops before replacing `AllyBindings.exe`; configuration remains in `%LOCALAPPDATA%\AllyBindings`.
+
+### Fixed
+
+- Restrict in-app updates to the self-contained `AllyBindings.exe` instead of rewriting the documentation bundle. The executable is now one atomic replacement with a real same-volume backup path; passing a null backup path could fail on an existing package file such as `CHANGELOG.md` on some installations.
+- Use the same valid-backup replacement path when restoring application files and configuration, preventing the secondary incomplete-rollback errors shown after the original failure.
+- Use unpredictable transaction-scoped temporary names and never relaunch after an incomplete rollback.
+- Bind the staged executable to a SHA-256 calculated directly from the already-verified archive. The installer holds a deny-write/delete read handle, rehashes that exact handle, and copies from it so post-verification staging changes fail closed.
+
+### Tests
+
+- Exercise atomic replacement of an already-existing executable, verify its exact package hash, and assert that installed documentation is left untouched.
+- Mutate the staged executable after package verification and verify that installation is rejected before the existing executable or configuration changes.
+
 ## [v0.3.0-preview.7] - 2026-08-02
 
 ### Fixed
@@ -174,3 +192,4 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Thi
 [v0.3.0-preview.5]: https://github.com/dggomes/ally-bindings/releases/tag/v0.3.0-preview.5
 [v0.3.0-preview.6]: https://github.com/dggomes/ally-bindings/releases/tag/v0.3.0-preview.6
 [v0.3.0-preview.7]: https://github.com/dggomes/ally-bindings/releases/tag/v0.3.0-preview.7
+[v0.3.0-preview.8]: https://github.com/dggomes/ally-bindings/releases/tag/v0.3.0-preview.8

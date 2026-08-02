@@ -156,9 +156,11 @@ public sealed class GitHubReleaseUpdateTests : IDisposable
         });
         var staging = Path.Combine(_root, "staging");
 
-        var packageRoot = UpdatePackageStager.VerifyAndExtract(zip, staging, Sha256(zip));
+        var package = UpdatePackageStager.VerifyExtractAndDescribe(zip, staging, Sha256(zip));
+        var stagedExecutable = Path.Combine(package.PackageRoot, "AllyBindings.exe");
 
-        Assert.True(File.Exists(Path.Combine(packageRoot, "AllyBindings.exe")));
+        Assert.True(File.Exists(stagedExecutable));
+        Assert.Equal(Sha256(stagedExecutable), package.ExecutableSha256);
     }
 
     [Fact]

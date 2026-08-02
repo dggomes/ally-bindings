@@ -14,6 +14,12 @@ $endMarker = '"""' + ';'
 $end = $source.IndexOf($endMarker, $start, [StringComparison]::Ordinal)
 if ($end -lt 0) { throw 'Installer script end marker was not found.' }
 $installer = $source.Substring($start, $end - $start).TrimStart("`r", "`n")
+if ($installer -notmatch 'if \(\$safeToRelaunch -and \$rollbackErrors\.Count -eq 0\)') {
+    throw 'Installer can relaunch after an incomplete rollback.'
+}
+if ($installer -match 'Get-ChildItem\s+-LiteralPath\s+\$PackageRoot') {
+    throw 'Installer still performs a multi-file package transaction instead of replacing only AllyBindings.exe.'
+}
 
 $testRoot = Join-Path ([IO.Path]::GetTempPath()) "ally-bindings-rollback-test-$([Guid]::NewGuid().ToString('N'))"
 $updateRoot = Join-Path $testRoot 'update'
@@ -63,6 +69,7 @@ try {
 
     Copy-Item -LiteralPath $oldExe -Destination (Join-Path $destination 'AllyBindings.exe')
     Copy-Item -LiteralPath $newExe -Destination (Join-Path $staging 'AllyBindings.exe')
+    $newExeHash = (Get-FileHash (Join-Path $staging 'AllyBindings.exe') -Algorithm SHA256).Hash
     [IO.File]::WriteAllText((Join-Path $destination 'stable.txt'), 'old file')
     [IO.File]::WriteAllText((Join-Path $staging 'stable.txt'), 'new file')
     [IO.File]::WriteAllText($configPath, $oldConfig)
@@ -77,7 +84,7 @@ try {
     $installerProcess = Start-Process -FilePath "$env:SystemRoot/System32/WindowsPowerShell/v1.0/powershell.exe" `
         -ArgumentList @(
             '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', $installerPath,
-            '-ProcessId', $oldProcess.Id, '-PackageRoot', $staging, '-Destination', $destination,
+            '-ProcessId', $oldProcess.Id, '-PackageRoot', $staging, '-ExecutableSha256', $newExeHash, '-Destination', $destination,
             '-UpdateRoot', $updateRoot, '-ConfigPath', $configPath, '-NonInteractive'
         ) -Wait -PassThru
     Remove-Item Env:ALLY_BINDINGS_TEST_CONFIG_PATH -ErrorAction SilentlyContinue

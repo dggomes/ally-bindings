@@ -31,19 +31,31 @@ try {
     Copy-Item -Path (Join-Path $PackageRoot '*') -Destination $staging -Recurse -Force
     [IO.File]::WriteAllText($installerPath, $installer)
     [IO.File]::WriteAllText((Join-Path $destination 'preexisting.txt'), 'preserve me')
+    [IO.File]::WriteAllText((Join-Path $destination 'CHANGELOG.md'), 'installed documentation is not part of an executable update')
+    [IO.File]::WriteAllText((Join-Path $destination 'AllyBindings.exe'), 'old executable placeholder')
+    $packagedExecutableHash = (Get-FileHash (Join-Path $staging 'AllyBindings.exe') -Algorithm SHA256).Hash
     New-Item -ItemType Directory -Force -Path (Split-Path -Parent $configPath) | Out-Null
     [IO.File]::WriteAllText($configPath, '{"schemaVersion":1,"sentinel":"preserve me"}')
 
     $oldProcess = Start-Process -FilePath "$env:SystemRoot/System32/WindowsPowerShell/v1.0/powershell.exe" `
         -ArgumentList '-NoProfile', '-NonInteractive', '-Command', 'Start-Sleep -Seconds 1' -PassThru
 
-    & $installerPath -ProcessId $oldProcess.Id -PackageRoot $staging -Destination $destination -UpdateRoot $updateRoot -ConfigPath $configPath -NonInteractive
+    & $installerPath -ProcessId $oldProcess.Id -PackageRoot $staging -ExecutableSha256 $packagedExecutableHash -Destination $destination -UpdateRoot $updateRoot -ConfigPath $configPath -NonInteractive
 
     if (-not (Test-Path -LiteralPath (Join-Path $destination 'AllyBindings.exe') -PathType Leaf)) {
         throw 'Updater integration test did not install AllyBindings.exe.'
     }
     if (-not (Test-Path -LiteralPath (Join-Path $destination 'preexisting.txt') -PathType Leaf)) {
         throw 'Updater integration test removed an unrelated existing file.'
+    }
+    if ((Get-FileHash (Join-Path $destination 'AllyBindings.exe') -Algorithm SHA256).Hash -ne $packagedExecutableHash) {
+        throw 'Updater integration test did not atomically replace the existing executable.'
+    }
+    if ([IO.File]::ReadAllText((Join-Path $destination 'CHANGELOG.md')) -ne 'installed documentation is not part of an executable update') {
+        throw 'Updater integration test unexpectedly replaced a documentation file.'
+    }
+    if (Get-ChildItem -LiteralPath $destination -Recurse -Force -Filter '*.allybindings-*-displaced') {
+        throw 'Updater integration test left a displaced replacement file beside the installed package.'
     }
     if (Test-Path -LiteralPath $updateRoot) {
         throw 'Updater integration test did not remove its verified update staging directory.'
