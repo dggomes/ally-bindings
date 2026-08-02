@@ -57,15 +57,16 @@ internal sealed class ArmouryCaptureService
 
         var sessionId = Guid.NewGuid();
         ArmouryCaptureDiagnostics.Record(sessionId, "parent-capture-starting");
-        var pipe = new NamedPipeServerStream(
-            ArmouryEtwCapturePipe.GetPipeName(sessionId),
-            PipeDirection.InOut,
-            1,
-            PipeTransmissionMode.Byte,
-            PipeOptions.Asynchronous | PipeOptions.CurrentUserOnly);
+        NamedPipeServerStream? pipe = null;
         Process? helper = null;
         try
         {
+            pipe = new NamedPipeServerStream(
+                ArmouryEtwCapturePipe.GetPipeName(sessionId),
+                PipeDirection.InOut,
+                1,
+                PipeTransmissionMode.Byte,
+                PipeOptions.Asynchronous | PipeOptions.CurrentUserOnly);
             var executable = Environment.ProcessPath
                 ?? throw new InvalidOperationException("Windows did not expose the current Ally Bindings executable path.");
             var startInfo = new ProcessStartInfo
@@ -104,7 +105,7 @@ internal sealed class ArmouryCaptureService
         {
             ArmouryCaptureDiagnostics.Record(sessionId, "parent-elevation-cancelled", ex);
             helper?.Dispose();
-            pipe.Dispose();
+            pipe?.Dispose();
             throw new OperationCanceledException(
                 "Windows elevation was cancelled. The temporary ETW logger was not started and no USB data was retained.",
                 ex,
@@ -119,7 +120,7 @@ internal sealed class ArmouryCaptureService
                 StopHelper(helper);
                 helper.Dispose();
             }
-            pipe.Dispose();
+            pipe?.Dispose();
             if (ex is OperationCanceledException or ArmouryCaptureException) throw;
             throw new ArmouryCaptureException(
                 sessionId,
@@ -133,6 +134,25 @@ internal sealed class ArmouryCaptureService
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(session);
+        try
+        {
+            return await CompleteCoreAsync(session, cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException and not ArmouryCaptureException)
+        {
+            var helperExitCode = TryGetExitCode(session.HelperProcess);
+            ArmouryCaptureDiagnostics.Record(session.SessionId, "parent-completion-failed", ex, helperExitCode);
+            throw new ArmouryCaptureException(
+                session.SessionId,
+                $"The ETW capture could not be completed safely{FormatExitCode(helperExitCode)}.",
+                ex);
+        }
+    }
+
+    private async Task<ArmouryCaptureResult> CompleteCoreAsync(
+        ArmouryCaptureSession session,
+        CancellationToken cancellationToken)
+    {
         ArmouryCaptureDiagnostics.Record(session.SessionId, "parent-stop-requested");
         await session.PipeWriter.WriteLineAsync("stop").ConfigureAwait(false);
         var envelope = await ReadEnvelopeAsync(
@@ -220,6 +240,7 @@ internal sealed class ArmouryCaptureService
             ("manifest.json", manifestBytes),
             ("README.txt", readmeBytes));
         session.Dispose();
+        ArmouryCaptureDiagnostics.Delete(session.SessionId);
         return new(
             bundlePath,
             reports.Count,

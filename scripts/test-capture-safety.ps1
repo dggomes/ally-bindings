@@ -84,15 +84,22 @@ foreach ($required in @('helper-started', 'helper-pipe-connected', 'helper-provi
         throw "The ETW helper diagnostic is missing lifecycle stage $required"
     }
 }
-foreach ($required in @('SchemaVersion', 'Breadcrumbs', 'No USB payloads', 'File.Move(temporary, path, overwrite: true)')) {
+foreach ($required in @('SchemaVersion', 'Breadcrumbs', 'Errors', 'MaximumDiagnosticBytes', 'RetentionAge', 'Sanitize', 'public static void Delete', 'File.Move(temporary, path, overwrite: true)')) {
     if ($diagnostics.IndexOf($required, [StringComparison]::Ordinal) -lt 0) {
         throw "The bounded in-app diagnostic is missing requirement $required"
     }
 }
-if ($app.IndexOf('System.Windows.Clipboard.SetText(diagnosticText)', [StringComparison]::Ordinal) -lt 0 -or
-    $app.IndexOf('Open diagnostics', [StringComparison]::Ordinal) -lt 0 -or
+if ($app.IndexOf('if (copyDiagnostics', [StringComparison]::Ordinal) -lt 0 -or
+    $app.IndexOf('System.Windows.Clipboard.SetText(diagnosticText)', [StringComparison]::Ordinal) -lt 0 -or
+    $app.IndexOf('Copy diagnostics', [StringComparison]::Ordinal) -lt 0 -or
+    $app.IndexOf('Open folder', [StringComparison]::Ordinal) -lt 0 -or
     $app.IndexOf('diagnostic.DiagnosticPath', [StringComparison]::Ordinal) -lt 0) {
     throw 'Capture failures do not expose copy/open diagnostics actions in the controller-safe app flow.'
+}
+if ($service.IndexOf('parent-completion-failed', [StringComparison]::Ordinal) -lt 0 -or
+    $service.IndexOf('CompleteCoreAsync', [StringComparison]::Ordinal) -lt 0 -or
+    $service.IndexOf('ex is not OperationCanceledException and not ArmouryCaptureException', [StringComparison]::Ordinal) -lt 0) {
+    throw 'Capture completion failures are not consistently wrapped with an in-app diagnostic.'
 }
 if ($service -notmatch 'Stopwatch\.GetTimestamp\(\)' -or
     $service -notmatch 'PerformanceCounterTimestamp' -or

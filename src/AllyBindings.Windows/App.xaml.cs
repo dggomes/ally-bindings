@@ -752,39 +752,50 @@ public partial class App : System.Windows.Application
             {
                 var diagnostic = ex as ArmouryCaptureException;
                 var diagnosticText = diagnostic?.DiagnosticText;
-                var copied = false;
-                if (!string.IsNullOrWhiteSpace(diagnosticText))
-                {
-                    try
-                    {
-                        System.Windows.Clipboard.SetText(diagnosticText);
-                        copied = true;
-                    }
-                    catch
-                    {
-                        // The file remains available even if another process owns the clipboard.
-                    }
-                }
-                var openDiagnostics = await _mainWindow.ShowControllerDialogAsync(
+                var copyDiagnostics = await _mainWindow.ShowControllerDialogAsync(
                     "Armoury capture failed safely",
                     $"No Ally Bindings controller write was attempted.\n\n{failureMessage}" +
                     (diagnostic is null
                         ? string.Empty
-                        : $"\n\nDiagnostic: {diagnostic.DiagnosticPath}\n" +
-                          (copied
-                              ? "The complete diagnostic is already copied to the clipboard. Paste it into the support conversation, or open its folder to attach the JSON file."
-                              : "Open the diagnostics folder and attach the selected JSON file to the support conversation.")),
+                        : $"\n\nDiagnostic: {diagnostic.DiagnosticPath}\n\n" +
+                          "It contains bounded lifecycle stages, process/elevation state, product version, helper exit code, and redacted error types/codes/messages. " +
+                          "It contains no usernames, absolute paths, stack traces, USB payloads, controller reports, configuration values, or raw ETW data.\n\n" +
+                          "Choose Copy diagnostics to place that JSON on the clipboard, or Open folder to attach the file."),
                     allowCancel: diagnostic is not null,
-                    primaryLabel: diagnostic is null ? "OK" : "Open diagnostics",
-                    secondaryLabel: "Close");
-                if (openDiagnostics && diagnostic is not null)
+                    primaryLabel: diagnostic is null ? "OK" : "Copy diagnostics",
+                    secondaryLabel: "Open folder");
+                if (diagnostic is not null)
                 {
-                    Process.Start(new ProcessStartInfo
+                    var copied = false;
+                    if (copyDiagnostics && !string.IsNullOrWhiteSpace(diagnosticText))
                     {
-                        FileName = "explorer.exe",
-                        Arguments = $"/select,\"{diagnostic.DiagnosticPath}\"",
-                        UseShellExecute = true,
-                    });
+                        try
+                        {
+                            System.Windows.Clipboard.SetText(diagnosticText);
+                            copied = true;
+                        }
+                        catch
+                        {
+                            // Fall through to Explorer when another process owns the clipboard.
+                        }
+                    }
+                    if (!copied)
+                    {
+                        try
+                        {
+                            Process.Start(new ProcessStartInfo
+                            {
+                                FileName = "explorer.exe",
+                                Arguments = $"/select,\"{diagnostic.DiagnosticPath}\"",
+                                UseShellExecute = true,
+                            });
+                        }
+                        catch (Exception disclosureError)
+                        {
+                            _mainWindow.SetArmouryCaptureStatus(
+                                $"Diagnostic saved at {diagnostic.DiagnosticPath}, but Windows could not open Explorer: {disclosureError.Message}");
+                        }
+                    }
                 }
             }
         }
