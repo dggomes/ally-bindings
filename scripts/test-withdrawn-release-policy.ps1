@@ -1,6 +1,12 @@
 $ErrorActionPreference = 'Stop'
 $assertScript = Join-Path $PSScriptRoot 'assert-release-tag-allowed.ps1'
 $denylist = Join-Path (Split-Path -Parent $PSScriptRoot) '.github/withdrawn-release-tags.txt'
+$releaseWorkflow = Get-Content -Raw -LiteralPath (Join-Path (Split-Path -Parent $PSScriptRoot) '.github/workflows/release.yml')
+
+if ($releaseWorkflow -notmatch 'git show origin/main:\.github/withdrawn-release-tags\.txt' -or
+    $releaseWorkflow -notmatch 'DenylistPath \$authoritativeDenylist') {
+    throw 'Release automation does not enforce the authoritative current-branch withdrawal policy.'
+}
 
 foreach ($tag in @('v0.3.0-preview.5', 'v0.3.0-preview.7', 'v0.3.0-preview.11')) {
     $withdrawnRejected = $false

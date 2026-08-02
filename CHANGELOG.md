@@ -10,18 +10,19 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Thi
 
 ### Fixed
 
-- Classify every schema observation from the ETW event's own QPC timestamp against in-memory action boundaries, preventing buffered events from moving into the wrong Armoury phase.
+- Classify every schema observation from the ETW event's own QPC timestamp inside helper-generated, acknowledged and closed action windows; transition sampling and ETW classification share one lock so thread scheduling cannot move buffered events across phases.
 - Finish cancellation and teardown of an active ETW capture before any Ally Bindings native reset can begin.
 - Bound and sanitize exact-candidate source-field metadata before IPC serialization.
+- Preserve coalesced newline-delimited pipe frames with one persistent bounded reader on each side of the authenticated helper channel.
 
 ### Safety
 
-- Withdraw `v0.3.0-preview.11` permanently and remove its assets; its write gates remained locked, but its diagnostic phase attribution could be contaminated or misleading.
+- Withdraw `v0.3.0-preview.11` permanently and remove its assets; delete its obsolete release run, protect the withdrawn tags against deletion/movement with an active repository ruleset, and make future release jobs load the authoritative denylist from `origin/main`.
 - Replace lexical-only privacy assertions with an explicit metadata DTO contract that recursively rejects byte containers and payload/hash/timestamp fields.
 
 ### Tests
 
-- Cover QPC boundary/backlog classification, strict phase-command parsing, all command-marker split boundaries, intentional scalar-report-ID dual observations, reset/capture ordering, and schema serialization payload exclusion.
+- Cover closed QPC windows and idle gaps, strict transition-command parsing, coalesced pipe frames, all command-marker split boundaries, intentional scalar-report-ID dual observations, behavioral reset/capture gate ordering, and recursive schema serialization payload exclusion.
 
 ## [v0.3.0-preview.11] - 2026-08-02 — WITHDRAWN
 

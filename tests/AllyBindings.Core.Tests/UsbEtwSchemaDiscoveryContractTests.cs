@@ -49,23 +49,10 @@ public sealed class UsbEtwSchemaDiscoveryContractTests
             nameof(UsbEtwMarkerShape.BytesAfterMarkerBucket),
             nameof(UsbEtwMarkerShape.Count));
 
-        foreach (var type in new[]
-                 {
-                     typeof(UsbEtwSchemaDiscoveryReport),
-                     typeof(UsbEtwSchemaShape),
-                     typeof(UsbEtwMarkerShape),
-                 })
-        {
-            Assert.DoesNotContain(type.GetProperties(), property => IsByteContainer(property.PropertyType));
-            Assert.DoesNotContain(
-                type.GetProperties(),
-                property => property.Name.Contains("Hash", StringComparison.OrdinalIgnoreCase) ||
-                            property.Name.Contains("Digest", StringComparison.OrdinalIgnoreCase) ||
-                            property.Name.Contains("Hex", StringComparison.OrdinalIgnoreCase) ||
-                            property.Name.Contains("Base64", StringComparison.OrdinalIgnoreCase) ||
-                            property.Name.Contains("Timestamp", StringComparison.OrdinalIgnoreCase) ||
-                            property.Name.Contains("Qpc", StringComparison.OrdinalIgnoreCase));
-        }
+        AssertSerializationGraphSafe(
+            typeof(UsbEtwSchemaDiscoveryReport),
+            new HashSet<Type>(),
+            nameof(UsbEtwSchemaDiscoveryReport));
     }
 
     [Fact]
@@ -120,7 +107,46 @@ public sealed class UsbEtwSchemaDiscoveryContractTests
 
     private static bool IsByteContainer(Type type)
     {
-        if (type == typeof(byte[]) || type == typeof(Memory<byte>) || type == typeof(ReadOnlyMemory<byte>)) return true;
-        return type.IsGenericType && type.GetGenericArguments().Any(argument => argument == typeof(byte));
+        if (type == typeof(byte) || type == typeof(byte[]) ||
+            type == typeof(Memory<byte>) || type == typeof(ReadOnlyMemory<byte>)) return true;
+        if (type.IsArray) return IsByteContainer(type.GetElementType()!);
+        return type.IsGenericType && type.GetGenericArguments().Any(IsByteContainer);
+    }
+
+    private static void AssertSerializationGraphSafe(Type type, HashSet<Type> visited, string path)
+    {
+        Assert.False(IsByteContainer(type), $"Byte container reachable at {path}: {type}.");
+
+        if (type.IsGenericType)
+        {
+            foreach (var argument in type.GetGenericArguments())
+            {
+                AssertSerializationGraphSafe(argument, visited, $"{path}<{argument.Name}>");
+            }
+        }
+        if (type.IsArray)
+        {
+            AssertSerializationGraphSafe(type.GetElementType()!, visited, $"{path}[]");
+            return;
+        }
+        if (type.IsPrimitive || type.IsEnum || type == typeof(string) || type == typeof(decimal) ||
+            type.Namespace?.StartsWith("System", StringComparison.Ordinal) == true || !visited.Add(type))
+        {
+            return;
+        }
+
+        foreach (var property in type.GetProperties(BindingFlags.Instance | BindingFlags.Public))
+        {
+            var propertyPath = $"{path}.{property.Name}";
+            Assert.False(
+                property.Name.Contains("Hash", StringComparison.OrdinalIgnoreCase) ||
+                property.Name.Contains("Digest", StringComparison.OrdinalIgnoreCase) ||
+                property.Name.Contains("Hex", StringComparison.OrdinalIgnoreCase) ||
+                property.Name.Contains("Base64", StringComparison.OrdinalIgnoreCase) ||
+                property.Name.Contains("Timestamp", StringComparison.OrdinalIgnoreCase) ||
+                property.Name.Contains("Qpc", StringComparison.OrdinalIgnoreCase),
+                $"Forbidden serialization property reachable at {propertyPath}.");
+            AssertSerializationGraphSafe(property.PropertyType, visited, propertyPath);
+        }
     }
 }

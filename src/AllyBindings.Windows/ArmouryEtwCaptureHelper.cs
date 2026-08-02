@@ -72,7 +72,8 @@ internal static class ArmouryEtwCaptureHelper
             }
             VerifyParentExecutableIdentity(parentProcessId);
             ArmouryCaptureDiagnostics.Record(sessionId, "helper-parent-authenticated");
-            using var reader = new StreamReader(pipe, Encoding.UTF8, detectEncodingFromByteOrderMarks: false, leaveOpen: true);
+            using var reader = new BoundedTextLineReader(
+                new StreamReader(pipe, Encoding.UTF8, detectEncodingFromByteOrderMarks: false, leaveOpen: true));
             await using var writer = new StreamWriter(pipe, new UTF8Encoding(false), leaveOpen: true)
             {
                 AutoFlush = true,
@@ -103,7 +104,7 @@ internal static class ArmouryEtwCaptureHelper
 
     private static async Task<int> CaptureAsync(
         Guid sessionId,
-        StreamReader reader,
+        BoundedTextLineReader reader,
         StreamWriter writer,
         CancellationToken cancellationToken)
     {
@@ -121,7 +122,7 @@ internal static class ArmouryEtwCaptureHelper
         var reports = new List<UsbEtwFeatureReport>();
         var schemaShapes = new Dictionary<EtwSchemaShapeKey, long>();
         var markerShapes = new Dictionary<EtwMarkerShapeKey, long>();
-        var capturePhases = new UsbEtwCapturePhaseBoundaries();
+        var capturePhases = new UsbEtwCapturePhaseWindows();
         long observedEventCount = 0;
         long oversizedEventCount = 0;
         long payloadDecodeFailureCount = 0;
@@ -295,8 +296,7 @@ internal static class ArmouryEtwCaptureHelper
         {
             while (true)
             {
-                command = await ReadBoundedLineAsync(
-                    reader,
+                command = await reader.ReadLineAsync(
                     UsbEtwCapturePhaseCommand.MaximumCommandCharacters,
                     lifetime.Token).ConfigureAwait(false);
                 if (command is null)
@@ -309,14 +309,23 @@ internal static class ArmouryEtwCaptureHelper
                     ArmouryCaptureDiagnostics.Record(sessionId, $"helper-command-{command}");
                     break;
                 }
-                if (!UsbEtwCapturePhaseCommand.TryParse(command, out var phase, out var boundaryQpc))
+                if (!UsbEtwCapturePhaseCommand.TryParse(command, out var phase, out var transition))
                 {
-                    ArmouryCaptureDiagnostics.Record(sessionId, "helper-command-invalid");
-                    throw new InvalidDataException("The ETW helper received an invalid parent command.");
+                    throw new InvalidDataException("The ETW helper received an invalid phase command.");
                 }
-                capturePhases.Record(phase, boundaryQpc);
-                ArmouryCaptureDiagnostics.Record(sessionId, $"helper-command-stage-{phase}");
-                await WriteEnvelopeAsync(writer, new("phase-ack", Phase: phase)).ConfigureAwait(false);
+                var boundaryQpc = transition == UsbEtwCapturePhaseTransition.Start
+                    ? capturePhases.StartNow(phase)
+                    : capturePhases.EndNow(phase);
+                ArmouryCaptureDiagnostics.Record(
+                    sessionId,
+                    $"helper-command-{transition.ToString().ToLowerInvariant()}-{phase}");
+                await WriteEnvelopeAsync(
+                    writer,
+                    new(
+                        "phase-ack",
+                        Phase: phase,
+                        PhaseStarted: transition == UsbEtwCapturePhaseTransition.Start,
+                        BoundaryQpc: boundaryQpc)).ConfigureAwait(false);
             }
         }
         catch (OperationCanceledException ex) when (!cancellationToken.IsCancellationRequested)
@@ -618,26 +627,6 @@ internal static class ArmouryEtwCaptureHelper
         }
     }
 
-    private static async Task<string?> ReadBoundedLineAsync(
-        StreamReader reader,
-        int maximumCharacters,
-        CancellationToken cancellationToken)
-    {
-        var result = new StringBuilder(Math.Min(maximumCharacters, 64));
-        var buffer = new char[1];
-        while (true)
-        {
-            var read = await reader.ReadAsync(buffer.AsMemory(), cancellationToken).ConfigureAwait(false);
-            if (read == 0) return result.Length == 0 ? null : result.ToString();
-            if (buffer[0] == '\n') return result.ToString().TrimEnd('\r');
-            if (result.Length == maximumCharacters)
-            {
-                throw new InvalidDataException("The ETW helper command exceeded its maximum length.");
-            }
-            result.Append(buffer[0]);
-        }
-    }
-
     private static Task WriteEnvelopeAsync(StreamWriter writer, EtwPipeEnvelope envelope) =>
         writer.WriteLineAsync(JsonSerializer.Serialize(envelope, JsonOptions));
 
@@ -727,7 +716,9 @@ internal sealed record EtwPipeEnvelope(
     EtwCaptureReady? Ready = null,
     EtwCaptureOutput? Output = null,
     string? Error = null,
-    int? Phase = null);
+    int? Phase = null,
+    bool? PhaseStarted = null,
+    long? BoundaryQpc = null);
 internal sealed record EtwCaptureReady(IReadOnlyList<EtwProviderStatus> EnabledProviders);
 internal sealed record EtwCaptureOutput(
     IReadOnlyList<EtwProviderStatus> EnabledProviders,

@@ -142,21 +142,42 @@ internal sealed class ArmouryCaptureService
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(session);
-        var (phase, qpc) = session.RecordAction(action);
-        if (phase == 0) return;
+        var transition = action switch
+        {
+            "step-started-m1-a-m2-b" => (Phase: 1, Kind: UsbEtwCapturePhaseTransition.Start),
+            "armoury-applied-m1-a-m2-b" => (Phase: 1, Kind: UsbEtwCapturePhaseTransition.End),
+            "step-started-m1-x-m2-y" => (Phase: 2, Kind: UsbEtwCapturePhaseTransition.Start),
+            "armoury-applied-m1-x-m2-y" => (Phase: 2, Kind: UsbEtwCapturePhaseTransition.End),
+            "step-started-reset-to-default" => (Phase: 3, Kind: UsbEtwCapturePhaseTransition.Start),
+            "armoury-reset-m1-m2-to-default" => (Phase: 3, Kind: UsbEtwCapturePhaseTransition.End),
+            _ => (Phase: 0, Kind: UsbEtwCapturePhaseTransition.Start),
+        };
+        if (transition.Phase == 0)
+        {
+            session.RecordAction(action);
+            return;
+        }
 
-        await session.PipeWriter.WriteLineAsync(UsbEtwCapturePhaseCommand.Format(phase, qpc)).ConfigureAwait(false);
+        await session.PipeWriter.WriteLineAsync(
+            UsbEtwCapturePhaseCommand.Format(transition.Phase, transition.Kind)).ConfigureAwait(false);
         var acknowledgement = await ReadEnvelopeAsync(
             session.SessionId,
             session.HelperProcess,
             session.PipeReader,
             TimeSpan.FromSeconds(10),
             cancellationToken).ConfigureAwait(false);
-        if (!acknowledgement.Type.Equals("phase-ack", StringComparison.Ordinal) || acknowledgement.Phase != phase)
+        var expectedStarted = transition.Kind == UsbEtwCapturePhaseTransition.Start;
+        if (!acknowledgement.Type.Equals("phase-ack", StringComparison.Ordinal) ||
+            acknowledgement.Phase != transition.Phase ||
+            acknowledgement.PhaseStarted != expectedStarted ||
+            acknowledgement.BoundaryQpc is not > 0)
         {
-            throw new InvalidDataException("The ETW helper did not acknowledge the requested capture phase.");
+            throw new InvalidDataException("The ETW helper did not acknowledge the requested capture phase boundary.");
         }
-        ArmouryCaptureDiagnostics.Record(session.SessionId, $"parent-phase-{phase}-acknowledged");
+        session.RecordAction(action, acknowledgement.BoundaryQpc.Value);
+        ArmouryCaptureDiagnostics.Record(
+            session.SessionId,
+            $"parent-phase-{transition.Kind.ToString().ToLowerInvariant()}-{transition.Phase}-acknowledged");
     }
 
     public async Task<ArmouryCaptureResult> CompleteAsync(
@@ -334,7 +355,8 @@ internal sealed class ArmouryCaptureService
                     "The ETW named-pipe client was not the elevated Ally Bindings helper process.");
             }
 
-            var reader = new StreamReader(pipe, Encoding.UTF8, detectEncodingFromByteOrderMarks: false, leaveOpen: true);
+            var reader = new BoundedTextLineReader(
+                new StreamReader(pipe, Encoding.UTF8, detectEncodingFromByteOrderMarks: false, leaveOpen: true));
             var writer = new StreamWriter(pipe, new UTF8Encoding(false), leaveOpen: true)
             {
                 AutoFlush = true,
@@ -365,7 +387,7 @@ internal sealed class ArmouryCaptureService
     private static async Task<EtwPipeEnvelope> ReadEnvelopeAsync(
         Guid sessionId,
         Process helper,
-        StreamReader reader,
+        BoundedTextLineReader reader,
         TimeSpan timeoutDuration,
         CancellationToken cancellationToken)
     {
@@ -374,7 +396,7 @@ internal sealed class ArmouryCaptureService
         string? line;
         try
         {
-            line = await ReadBoundedLineAsync(reader, MaximumPipeEnvelopeCharacters, timeout.Token).ConfigureAwait(false);
+            line = await reader.ReadLineAsync(MaximumPipeEnvelopeCharacters, timeout.Token).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
@@ -390,29 +412,6 @@ internal sealed class ArmouryCaptureService
         }
         return JsonSerializer.Deserialize<EtwPipeEnvelope>(line, JsonOptions)
             ?? throw new InvalidDataException("The in-app USB ETW helper returned an empty message.");
-    }
-
-    private static async Task<string?> ReadBoundedLineAsync(
-        StreamReader reader,
-        int maximumCharacters,
-        CancellationToken cancellationToken)
-    {
-        var result = new StringBuilder(Math.Min(maximumCharacters, 4096));
-        var buffer = new char[1024];
-        while (true)
-        {
-            var read = await reader.ReadAsync(buffer.AsMemory(), cancellationToken).ConfigureAwait(false);
-            if (read == 0) return result.Length == 0 ? null : result.ToString();
-            for (var index = 0; index < read; index++)
-            {
-                if (buffer[index] == '\n') return result.ToString().TrimEnd('\r');
-                if (result.Length == maximumCharacters)
-                {
-                    throw new InvalidDataException("The ETW helper response exceeded its maximum length.");
-                }
-                result.Append(buffer[index]);
-            }
-        }
     }
 
     private static async Task WaitForHelperExitAsync(
@@ -661,7 +660,7 @@ internal sealed class ArmouryCaptureSession(
     Guid sessionId,
     Process helperProcess,
     NamedPipeServerStream pipe,
-    StreamReader pipeReader,
+    BoundedTextLineReader pipeReader,
     StreamWriter pipeWriter,
     string directory,
     ArmouryCaptureTarget target,
@@ -672,26 +671,19 @@ internal sealed class ArmouryCaptureSession(
     public Guid SessionId { get; } = sessionId;
     public Process HelperProcess { get; } = helperProcess;
     public NamedPipeServerStream Pipe { get; } = pipe;
-    public StreamReader PipeReader { get; } = pipeReader;
+    public BoundedTextLineReader PipeReader { get; } = pipeReader;
     public StreamWriter PipeWriter { get; } = pipeWriter;
     public string Directory { get; } = directory;
     public ArmouryCaptureTarget Target { get; } = target;
     public IReadOnlyList<string> EnabledProviders { get; } = enabledProviders;
     public List<CaptureActionMarker> Actions { get; } = [];
 
-    public (int Phase, long Qpc) RecordAction(string action)
+    public void RecordAction(string action, long? qpcOverride = null)
     {
         var occurredAtUtc = DateTimeOffset.UtcNow;
-        var qpc = Stopwatch.GetTimestamp();
+        var qpc = qpcOverride ?? Stopwatch.GetTimestamp();
+        if (qpc <= 0) throw new ArgumentOutOfRangeException(nameof(qpcOverride));
         Actions.Add(new(occurredAtUtc, qpc, action));
-        var phase = action switch
-        {
-            "step-started-m1-a-m2-b" => 1,
-            "step-started-m1-x-m2-y" => 2,
-            "step-started-reset-to-default" => 3,
-            _ => 0,
-        };
-        return (phase, qpc);
     }
 
     public void Dispose()
@@ -761,7 +753,7 @@ internal sealed class ArmouryCaptureSession(
 }
 
 internal sealed record EtwPipeConnection(
-    StreamReader Reader,
+    BoundedTextLineReader Reader,
     StreamWriter Writer,
     EtwCaptureReady Ready);
 

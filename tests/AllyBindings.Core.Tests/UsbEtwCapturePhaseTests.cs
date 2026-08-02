@@ -5,62 +5,105 @@ namespace AllyBindings.Core.Tests;
 public sealed class UsbEtwCapturePhaseTests
 {
     [Theory]
-    [InlineData(1, 123456789L)]
-    [InlineData(2, 987654321L)]
-    [InlineData(3, long.MaxValue)]
-    public void Phase_commands_round_trip(int phase, long boundaryQpc)
+    [InlineData(1, UsbEtwCapturePhaseTransition.Start, "start-1")]
+    [InlineData(1, UsbEtwCapturePhaseTransition.End, "end-1")]
+    [InlineData(2, UsbEtwCapturePhaseTransition.Start, "start-2")]
+    [InlineData(2, UsbEtwCapturePhaseTransition.End, "end-2")]
+    [InlineData(3, UsbEtwCapturePhaseTransition.Start, "start-3")]
+    [InlineData(3, UsbEtwCapturePhaseTransition.End, "end-3")]
+    public void Phase_command_round_trips(
+        int phase,
+        UsbEtwCapturePhaseTransition transition,
+        string expected)
     {
-        var command = UsbEtwCapturePhaseCommand.Format(phase, boundaryQpc);
+        var command = UsbEtwCapturePhaseCommand.Format(phase, transition);
 
-        Assert.True(UsbEtwCapturePhaseCommand.TryParse(command, out var parsedPhase, out var parsedBoundary));
+        Assert.Equal(expected, command);
+        Assert.True(UsbEtwCapturePhaseCommand.TryParse(command, out var parsedPhase, out var parsedTransition));
         Assert.Equal(phase, parsedPhase);
-        Assert.Equal(boundaryQpc, parsedBoundary);
-        Assert.InRange(command.Length, 1, UsbEtwCapturePhaseCommand.MaximumCommandCharacters);
+        Assert.Equal(transition, parsedTransition);
     }
 
     [Theory]
+    [InlineData(null)]
     [InlineData("")]
-    [InlineData("stage-0:1")]
-    [InlineData("stage-4:1")]
-    [InlineData("stage-1:0")]
-    [InlineData("stage-1:-1")]
-    [InlineData("stage-1:+1")]
-    [InlineData("stage-01:1")]
-    [InlineData("stage-1 1")]
-    [InlineData("stage-1:1:2")]
-    [InlineData("stop:1")]
-    public void Phase_command_parser_rejects_noncanonical_input(string command)
+    [InlineData("stage-1")]
+    [InlineData("start-0")]
+    [InlineData("start-4")]
+    [InlineData("start-01")]
+    [InlineData("start-1 ")]
+    [InlineData("START-1")]
+    [InlineData("end-1:123")]
+    [InlineData("start-1-extra")]
+    [InlineData("start-1111111111111111")]
+    public void Phase_command_rejects_noncanonical_input(string? command)
     {
         Assert.False(UsbEtwCapturePhaseCommand.TryParse(command, out _, out _));
     }
 
     [Fact]
-    public void Buffered_events_are_classified_by_event_qpc_not_transition_processing_time()
+    public void Closed_windows_classify_boundaries_and_idle_traffic()
     {
-        var phases = new UsbEtwCapturePhaseBoundaries();
-        phases.Record(1, 1_000);
-        phases.Record(2, 2_000);
-        phases.Record(3, 3_000);
+        var windows = new UsbEtwCapturePhaseWindows();
+        windows.StartAt(1, 100);
+        windows.EndAt(1, 200);
+        windows.StartAt(2, 300);
+        windows.EndAt(2, 400);
+        windows.StartAt(3, 500);
+        windows.EndAt(3, 600);
 
-        Assert.Equal(0, phases.Classify(999));
-        Assert.Equal(1, phases.Classify(1_000));
-        Assert.Equal(1, phases.Classify(1_999));
-        Assert.Equal(2, phases.Classify(2_000));
-        Assert.Equal(2, phases.Classify(2_999));
-        Assert.Equal(3, phases.Classify(3_000));
-        Assert.Equal(3, phases.Classify(4_000));
+        Assert.Equal(0, windows.Classify(99));
+        Assert.Equal(1, windows.Classify(100));
+        Assert.Equal(1, windows.Classify(199));
+        Assert.Equal(0, windows.Classify(200));
+        Assert.Equal(0, windows.Classify(299));
+        Assert.Equal(2, windows.Classify(300));
+        Assert.Equal(2, windows.Classify(399));
+        Assert.Equal(0, windows.Classify(400));
+        Assert.Equal(3, windows.Classify(500));
+        Assert.Equal(3, windows.Classify(599));
+        Assert.Equal(0, windows.Classify(600));
     }
 
     [Fact]
-    public void Phase_boundaries_must_be_ordered_and_monotonic()
+    public void Buffered_events_are_classified_by_occurrence_not_processing_order()
     {
-        var phases = new UsbEtwCapturePhaseBoundaries();
+        var windows = new UsbEtwCapturePhaseWindows();
+        windows.StartAt(1, 1_000);
+        windows.EndAt(1, 2_000);
+        windows.StartAt(2, 3_000);
 
-        Assert.Throws<InvalidDataException>(() => phases.Record(2, 2_000));
-        phases.Record(1, 1_000);
-        Assert.Throws<InvalidDataException>(() => phases.Record(1, 1_001));
-        Assert.Throws<InvalidDataException>(() => phases.Record(2, 999));
-        phases.Record(2, 1_000);
-        phases.Record(3, 1_000);
+        Assert.Equal(0, windows.Classify(999));
+        Assert.Equal(1, windows.Classify(1_500));
+        Assert.Equal(0, windows.Classify(2_500));
+        Assert.Equal(2, windows.Classify(3_500));
+    }
+
+    [Fact]
+    public void Windows_reject_overlap_out_of_order_and_nonmonotonic_transitions()
+    {
+        var windows = new UsbEtwCapturePhaseWindows();
+
+        Assert.Throws<InvalidOperationException>(() => windows.StartAt(2, 100));
+        windows.StartAt(1, 100);
+        Assert.Throws<InvalidOperationException>(() => windows.StartAt(2, 110));
+        Assert.Throws<InvalidOperationException>(() => windows.EndAt(2, 120));
+        Assert.Throws<InvalidOperationException>(() => windows.EndAt(1, 99));
+        windows.EndAt(1, 200);
+        Assert.Throws<InvalidOperationException>(() => windows.StartAt(2, 199));
+    }
+
+    [Fact]
+    public void Live_boundaries_are_sampled_inside_the_serialized_transition()
+    {
+        var windows = new UsbEtwCapturePhaseWindows();
+
+        var start = windows.StartNow(1);
+        Assert.Equal(1, windows.Classify(start));
+        var end = windows.EndNow(1);
+
+        Assert.True(end >= start);
+        Assert.Equal(1, windows.Classify(end - 1));
+        Assert.Equal(0, windows.Classify(end));
     }
 }

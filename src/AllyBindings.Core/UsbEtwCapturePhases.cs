@@ -1,108 +1,145 @@
+using System.Diagnostics;
 using System.Globalization;
-using System.Threading;
 
 namespace AllyBindings.Core;
 
+public enum UsbEtwCapturePhaseTransition
+{
+    Start,
+    End,
+}
+
 public static class UsbEtwCapturePhaseCommand
 {
-    public const int MaximumCommandCharacters = 32;
+    public const int MaximumCommandCharacters = 16;
 
-    public static string Format(int phase, long boundaryQpc)
+    public static string Format(int phase, UsbEtwCapturePhaseTransition transition)
     {
-        Validate(phase, boundaryQpc);
-        return $"stage-{phase}:{boundaryQpc.ToString(CultureInfo.InvariantCulture)}";
+        ValidatePhase(phase);
+        var verb = transition == UsbEtwCapturePhaseTransition.Start ? "start" : "end";
+        return string.Create(CultureInfo.InvariantCulture, $"{verb}-{phase}");
     }
 
-    public static bool TryParse(string command, out int phase, out long boundaryQpc)
+    public static bool TryParse(
+        string? command,
+        out int phase,
+        out UsbEtwCapturePhaseTransition transition)
     {
         phase = 0;
-        boundaryQpc = 0;
+        transition = default;
         if (string.IsNullOrEmpty(command) || command.Length > MaximumCommandCharacters) return false;
-        if (!command.StartsWith("stage-", StringComparison.Ordinal)) return false;
 
-        var separator = command.IndexOf(':', "stage-".Length);
-        if (separator != "stage-".Length + 1 || separator == command.Length - 1) return false;
-        if (command["stage-".Length] is < '1' or > '3') return false;
-        phase = command["stage-".Length] - '0';
-        if (!long.TryParse(
-                command.AsSpan(separator + 1),
-                NumberStyles.None,
-                CultureInfo.InvariantCulture,
-                out boundaryQpc) ||
-            boundaryQpc <= 0)
+        var separator = command.LastIndexOf('-');
+        if (separator <= 0 || separator == command.Length - 1) return false;
+        var verb = command[..separator];
+        if (verb.Equals("start", StringComparison.Ordinal))
         {
-            phase = 0;
-            boundaryQpc = 0;
+            transition = UsbEtwCapturePhaseTransition.Start;
+        }
+        else if (verb.Equals("end", StringComparison.Ordinal))
+        {
+            transition = UsbEtwCapturePhaseTransition.End;
+        }
+        else
+        {
             return false;
         }
-        return true;
+
+        if (!int.TryParse(command.AsSpan(separator + 1), NumberStyles.None, CultureInfo.InvariantCulture, out phase) ||
+            phase is < 1 or > 3)
+        {
+            return false;
+        }
+        return command.Equals(Format(phase, transition), StringComparison.Ordinal);
     }
 
-    private static void Validate(int phase, long boundaryQpc)
+    private static void ValidatePhase(int phase)
     {
         if (phase is < 1 or > 3) throw new ArgumentOutOfRangeException(nameof(phase));
-        if (boundaryQpc <= 0) throw new ArgumentOutOfRangeException(nameof(boundaryQpc));
     }
 }
 
 /// <summary>
-/// Stores capture-stage boundaries in the system QPC domain. Boundaries are
-/// process-independent on Windows and remain in memory; only phase numbers are exported.
+/// Tracks three closed action windows in the system-wide Windows QPC domain.
+/// Both transitions and classification are serialized by the same lock. A transition's
+/// QPC is sampled while holding that lock, so an ETW callback can never classify an
+/// event on the wrong side of a boundary merely because of thread scheduling.
 /// </summary>
-public sealed class UsbEtwCapturePhaseBoundaries
+public sealed class UsbEtwCapturePhaseWindows
 {
-    private readonly object _writeGate = new();
-    private long _phase1Qpc = long.MaxValue;
-    private long _phase2Qpc = long.MaxValue;
-    private long _phase3Qpc = long.MaxValue;
-    private int _highestRecordedPhase;
+    private readonly object _gate = new();
+    private readonly long[] _starts = [long.MaxValue, long.MaxValue, long.MaxValue];
+    private readonly long[] _ends = [long.MaxValue, long.MaxValue, long.MaxValue];
+    private int _activePhase;
+    private int _completedPhases;
 
-    public void Record(int phase, long boundaryQpc)
-    {
-        if (phase is < 1 or > 3) throw new ArgumentOutOfRangeException(nameof(phase));
-        if (boundaryQpc <= 0) throw new ArgumentOutOfRangeException(nameof(boundaryQpc));
+    public long StartNow(int phase) => TransitionNow(phase, UsbEtwCapturePhaseTransition.Start);
 
-        lock (_writeGate)
-        {
-            var expectedPhase = _highestRecordedPhase + 1;
-            if (phase != expectedPhase)
-            {
-                throw new InvalidDataException($"Expected capture phase {expectedPhase}, received phase {phase}.");
-            }
-            var previousBoundary = phase switch
-            {
-                1 => 0,
-                2 => _phase1Qpc,
-                3 => _phase2Qpc,
-                _ => 0,
-            };
-            if (boundaryQpc < previousBoundary)
-            {
-                throw new InvalidDataException("Capture phase QPC boundaries must be monotonic.");
-            }
+    public long EndNow(int phase) => TransitionNow(phase, UsbEtwCapturePhaseTransition.End);
 
-            switch (phase)
-            {
-                case 1:
-                    Volatile.Write(ref _phase1Qpc, boundaryQpc);
-                    break;
-                case 2:
-                    Volatile.Write(ref _phase2Qpc, boundaryQpc);
-                    break;
-                case 3:
-                    Volatile.Write(ref _phase3Qpc, boundaryQpc);
-                    break;
-            }
-            Volatile.Write(ref _highestRecordedPhase, phase);
-        }
-    }
+    public void StartAt(int phase, long qpc) => TransitionAt(phase, UsbEtwCapturePhaseTransition.Start, qpc);
+
+    public void EndAt(int phase, long qpc) => TransitionAt(phase, UsbEtwCapturePhaseTransition.End, qpc);
 
     public int Classify(long eventQpc)
     {
-        var highestPhase = Volatile.Read(ref _highestRecordedPhase);
-        if (highestPhase >= 3 && eventQpc >= Volatile.Read(ref _phase3Qpc)) return 3;
-        if (highestPhase >= 2 && eventQpc >= Volatile.Read(ref _phase2Qpc)) return 2;
-        if (highestPhase >= 1 && eventQpc >= Volatile.Read(ref _phase1Qpc)) return 1;
-        return 0;
+        lock (_gate)
+        {
+            for (var phase = 3; phase >= 1; phase--)
+            {
+                var index = phase - 1;
+                if (eventQpc >= _starts[index] && eventQpc < _ends[index]) return phase;
+            }
+            return 0;
+        }
+    }
+
+    private long TransitionNow(int phase, UsbEtwCapturePhaseTransition transition)
+    {
+        lock (_gate)
+        {
+            var qpc = Stopwatch.GetTimestamp();
+            TransitionLocked(phase, transition, qpc);
+            return qpc;
+        }
+    }
+
+    private void TransitionAt(int phase, UsbEtwCapturePhaseTransition transition, long qpc)
+    {
+        lock (_gate)
+        {
+            TransitionLocked(phase, transition, qpc);
+        }
+    }
+
+    private void TransitionLocked(int phase, UsbEtwCapturePhaseTransition transition, long qpc)
+    {
+        if (phase is < 1 or > 3) throw new ArgumentOutOfRangeException(nameof(phase));
+        if (qpc <= 0) throw new ArgumentOutOfRangeException(nameof(qpc));
+
+        if (transition == UsbEtwCapturePhaseTransition.Start)
+        {
+            if (_activePhase != 0 || phase != _completedPhases + 1)
+            {
+                throw new InvalidOperationException("Capture phases must start sequentially and cannot overlap.");
+            }
+            var previousEnd = phase == 1 ? 0 : _ends[phase - 2];
+            if (qpc < previousEnd) throw new InvalidOperationException("Capture phase boundaries must be monotonic.");
+            _starts[phase - 1] = qpc;
+            _activePhase = phase;
+            return;
+        }
+
+        if (_activePhase != phase)
+        {
+            throw new InvalidOperationException("Only the active capture phase can end.");
+        }
+        if (qpc < _starts[phase - 1])
+        {
+            throw new InvalidOperationException("Capture phase boundaries must be monotonic.");
+        }
+        _ends[phase - 1] = qpc;
+        _activePhase = 0;
+        _completedPhases = phase;
     }
 }

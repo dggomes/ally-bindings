@@ -578,63 +578,54 @@ public partial class App : System.Windows.Application
             _armouryCaptureCancellation?.Cancel();
             _mainWindow.CancelControllerDialog();
         }
-        if (captureCompletion is not null)
-        {
-            await captureCompletion;
-        }
-        await _operationGate.WaitAsync();
+        await using var resetGate = await CaptureResetGate.AcquireAfterCaptureAsync(
+            captureCompletion,
+            _operationGate);
+        _cycle.Cancel();
+        BackendApplyResult result;
         try
         {
-            _cycle.Cancel();
-            BackendApplyResult result;
-            try
-            {
-                result = await _backend.RestoreDefaultAsync();
-            }
-            catch (Exception ex)
-            {
-                _mainWindow.SetBackendStatus(_backend.GetStatus());
-                _mainWindow.SetStatus($"Native reset command failed: {ex.Message}");
-                _overlay.ShowResult("Restore failed", "Use the physical controller/keyboard recovery path and open diagnostics.");
-                return;
-            }
-
-            if (_backendNeedsRestore && !result.CommandAccepted)
-            {
-                _mainWindow.SetBackendStatus(result.Status);
-                _mainWindow.SetStatus($"{reason}: native reset command was not accepted; the previous M1/M2 mapping may still be active. {result.Message}");
-                _overlay.ShowResult("Restore failed", "Previous M1/M2 mapping may still be active");
-                return;
-            }
-
-            Configuration = Configuration with { ActiveProfileId = MappingProfile.Default.Id };
-            if (result.CommandAccepted)
-            {
-                _backendNeedsRestore = false;
-                Configuration = Configuration with { AsusRearButtonMappingActive = false };
-            }
-            string? persistenceWarning = null;
-            try
-            {
-                await _profileStore.SaveAsync(Configuration);
-            }
-            catch (Exception ex)
-            {
-                persistenceWarning = $" The reset command was accepted, but saving the Default selection failed: {ex.Message}";
-            }
-
-            _mainWindow.SetBackendStatus(result.Status);
-            _mainWindow.SetStatus($"{reason}: {result.Message}{persistenceWarning}");
-            _overlay.ShowResult(
-                "Native reset",
-                persistenceWarning is not null
-                    ? "Command accepted · live state unverified · local selection not saved"
-                    : result.CommandAccepted ? "Command accepted · live state unverified" : "Default selected · passthrough remains intact");
+            result = await _backend.RestoreDefaultAsync();
         }
-        finally
+        catch (Exception ex)
         {
-            _operationGate.Release();
+            _mainWindow.SetBackendStatus(_backend.GetStatus());
+            _mainWindow.SetStatus($"Native reset command failed: {ex.Message}");
+            _overlay.ShowResult("Restore failed", "Use the physical controller/keyboard recovery path and open diagnostics.");
+            return;
         }
+
+        if (_backendNeedsRestore && !result.CommandAccepted)
+        {
+            _mainWindow.SetBackendStatus(result.Status);
+            _mainWindow.SetStatus($"{reason}: native reset command was not accepted; the previous M1/M2 mapping may still be active. {result.Message}");
+            _overlay.ShowResult("Restore failed", "Previous M1/M2 mapping may still be active");
+            return;
+        }
+
+        Configuration = Configuration with { ActiveProfileId = MappingProfile.Default.Id };
+        if (result.CommandAccepted)
+        {
+            _backendNeedsRestore = false;
+            Configuration = Configuration with { AsusRearButtonMappingActive = false };
+        }
+        string? persistenceWarning = null;
+        try
+        {
+            await _profileStore.SaveAsync(Configuration);
+        }
+        catch (Exception ex)
+        {
+            persistenceWarning = $" The reset command was accepted, but saving the Default selection failed: {ex.Message}";
+        }
+
+        _mainWindow.SetBackendStatus(result.Status);
+        _mainWindow.SetStatus($"{reason}: {result.Message}{persistenceWarning}");
+        _overlay.ShowResult(
+            "Native reset",
+            persistenceWarning is not null
+                ? "Command accepted · live state unverified · local selection not saved"
+                : result.CommandAccepted ? "Command accepted · live state unverified" : "Default selected · passthrough remains intact");
     }
 
     public string BuildDiagnostics()
