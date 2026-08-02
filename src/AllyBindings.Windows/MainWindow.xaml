@@ -179,8 +179,9 @@
 
             <Border Grid.Row="1" Background="{StaticResource PanelBrush}" CornerRadius="18" Padding="12" Margin="0,12">
               <ScrollViewer HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto" PanningMode="Both"
-                            AutomationProperties.Name="Full controller button map">
-                <Grid x:Name="ControllerMapSurface" MinWidth="700" MinHeight="390">
+                            AutomationProperties.Name="Full controller button map"
+                            AutomationProperties.AutomationId="ControllerMapScrollViewer">
+                <Grid x:Name="ControllerMapSurface" MinWidth="700" MinHeight="350">
                   <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="150" />
                     <ColumnDefinition Width="400" />
@@ -191,7 +192,7 @@
                     <ItemsControl ItemsSource="{Binding LeftBindings}">
                       <ItemsControl.ItemTemplate>
                         <DataTemplate>
-                          <Button Tag="{Binding Row}" Click="BindingTile_Click" Height="48" Margin="0,1,6,1" Padding="6,3"
+                          <Button Tag="{Binding Row}" Click="BindingTile_Click" Height="48" Margin="0,0,6,0" Padding="6,3"
                                   HorizontalContentAlignment="Stretch"
                                   AutomationProperties.AutomationId="{Binding AutomationId}"
                                   IsEnabled="{Binding DataContext.CanEditSelected, RelativeSource={RelativeSource AncestorType=Window}}">
@@ -215,30 +216,28 @@
                         </DataTemplate>
                       </ItemsControl.ItemTemplate>
                     </ItemsControl>
-                    <Border Background="#111624" BorderBrush="#394157" BorderThickness="1" CornerRadius="10" Padding="5" Margin="0,4,6,0">
-                      <StackPanel>
-                        <TextBlock Text="D-pad" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource MutedBrush}" Margin="3,0,0,3" />
-                        <ItemsControl ItemsSource="{Binding DPadBindings}">
-                          <ItemsControl.ItemsPanel><ItemsPanelTemplate><UniformGrid Columns="2" /></ItemsPanelTemplate></ItemsControl.ItemsPanel>
-                          <ItemsControl.ItemTemplate>
-                            <DataTemplate>
-                              <Button Tag="{Binding Row}" Click="BindingTile_Click" Height="48" Margin="2" Padding="3"
-                                      AutomationProperties.AutomationId="{Binding AutomationId}" ToolTip="{Binding Row.Target}"
-                                      IsEnabled="{Binding DataContext.CanEditSelected, RelativeSource={RelativeSource AncestorType=Window}}">
-                                <AutomationProperties.Name>
-                                  <MultiBinding StringFormat="{}{0}, mapped to {1}">
-                                    <Binding Path="Label" /><Binding Path="Row.Target" />
-                                  </MultiBinding>
-                                </AutomationProperties.Name>
-                                <StackPanel Orientation="Horizontal">
-                                  <TextBlock Text="{Binding Glyph}" FontSize="17" FontWeight="Bold" Margin="0,0,4,0" />
-                                  <TextBlock Text="{Binding Row.Target}" FontSize="9" Foreground="{StaticResource AccentStrongBrush}" TextTrimming="CharacterEllipsis" />
-                                </StackPanel>
-                              </Button>
-                            </DataTemplate>
-                          </ItemsControl.ItemTemplate>
-                        </ItemsControl>
-                      </StackPanel>
+                    <Border Background="#111624" BorderBrush="#394157" BorderThickness="1" CornerRadius="10" Padding="3" Margin="0,2,6,0"
+                            AutomationProperties.Name="D-pad mappings">
+                      <ItemsControl ItemsSource="{Binding DPadBindings}">
+                        <ItemsControl.ItemsPanel><ItemsPanelTemplate><UniformGrid Columns="2" /></ItemsPanelTemplate></ItemsControl.ItemsPanel>
+                        <ItemsControl.ItemTemplate>
+                          <DataTemplate>
+                            <Button Tag="{Binding Row}" Click="BindingTile_Click" Height="48" Margin="1" Padding="3"
+                                    AutomationProperties.AutomationId="{Binding AutomationId}" ToolTip="{Binding Row.Target}"
+                                    IsEnabled="{Binding DataContext.CanEditSelected, RelativeSource={RelativeSource AncestorType=Window}}">
+                              <AutomationProperties.Name>
+                                <MultiBinding StringFormat="{}{0}, mapped to {1}">
+                                  <Binding Path="Label" /><Binding Path="Row.Target" />
+                                </MultiBinding>
+                              </AutomationProperties.Name>
+                              <StackPanel Orientation="Horizontal">
+                                <TextBlock Text="{Binding Glyph}" FontSize="17" FontWeight="Bold" Margin="0,0,4,0" />
+                                <TextBlock Text="{Binding Row.Target}" FontSize="9" Foreground="{StaticResource AccentStrongBrush}" TextTrimming="CharacterEllipsis" />
+                              </StackPanel>
+                            </Button>
+                          </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                      </ItemsControl>
                     </Border>
                   </StackPanel>
 
@@ -322,7 +321,7 @@
                     <ItemsControl ItemsSource="{Binding RightBindings}">
                       <ItemsControl.ItemTemplate>
                         <DataTemplate>
-                          <Button Tag="{Binding Row}" Click="BindingTile_Click" Height="48" Margin="6,1,0,1" Padding="6,3"
+                          <Button Tag="{Binding Row}" Click="BindingTile_Click" Height="48" Margin="6,0,0,0" Padding="6,3"
                                   HorizontalContentAlignment="Stretch"
                                   AutomationProperties.AutomationId="{Binding AutomationId}"
                                   IsEnabled="{Binding DataContext.CanEditSelected, RelativeSource={RelativeSource AncestorType=Window}}">
@@ -346,30 +345,28 @@
                         </DataTemplate>
                       </ItemsControl.ItemTemplate>
                     </ItemsControl>
-                    <Border Background="#111624" BorderBrush="#394157" BorderThickness="1" CornerRadius="10" Padding="5" Margin="6,4,0,0">
-                      <StackPanel>
-                        <TextBlock Text="ABXY buttons" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource MutedBrush}" Margin="3,0,0,3" />
-                        <ItemsControl ItemsSource="{Binding FaceBindings}">
-                          <ItemsControl.ItemsPanel><ItemsPanelTemplate><UniformGrid Columns="2" /></ItemsPanelTemplate></ItemsControl.ItemsPanel>
-                          <ItemsControl.ItemTemplate>
-                            <DataTemplate>
-                              <Button Tag="{Binding Row}" Click="BindingTile_Click" Height="48" Margin="2" Padding="3"
-                                      AutomationProperties.AutomationId="{Binding AutomationId}" ToolTip="{Binding Row.Target}"
-                                      IsEnabled="{Binding DataContext.CanEditSelected, RelativeSource={RelativeSource AncestorType=Window}}">
-                                <AutomationProperties.Name>
-                                  <MultiBinding StringFormat="{}{0}, mapped to {1}">
-                                    <Binding Path="Label" /><Binding Path="Row.Target" />
-                                  </MultiBinding>
-                                </AutomationProperties.Name>
-                                <StackPanel Orientation="Horizontal">
-                                  <TextBlock Text="{Binding Glyph}" FontSize="17" FontWeight="Bold" Margin="0,0,4,0" />
-                                  <TextBlock Text="{Binding Row.Target}" FontSize="9" Foreground="{StaticResource AccentStrongBrush}" TextTrimming="CharacterEllipsis" />
-                                </StackPanel>
-                              </Button>
-                            </DataTemplate>
-                          </ItemsControl.ItemTemplate>
-                        </ItemsControl>
-                      </StackPanel>
+                    <Border Background="#111624" BorderBrush="#394157" BorderThickness="1" CornerRadius="10" Padding="3" Margin="6,2,0,0"
+                            AutomationProperties.Name="ABXY button mappings">
+                      <ItemsControl ItemsSource="{Binding FaceBindings}">
+                        <ItemsControl.ItemsPanel><ItemsPanelTemplate><UniformGrid Columns="2" /></ItemsPanelTemplate></ItemsControl.ItemsPanel>
+                        <ItemsControl.ItemTemplate>
+                          <DataTemplate>
+                            <Button Tag="{Binding Row}" Click="BindingTile_Click" Height="48" Margin="1" Padding="3"
+                                    AutomationProperties.AutomationId="{Binding AutomationId}" ToolTip="{Binding Row.Target}"
+                                    IsEnabled="{Binding DataContext.CanEditSelected, RelativeSource={RelativeSource AncestorType=Window}}">
+                              <AutomationProperties.Name>
+                                <MultiBinding StringFormat="{}{0}, mapped to {1}">
+                                  <Binding Path="Label" /><Binding Path="Row.Target" />
+                                </MultiBinding>
+                              </AutomationProperties.Name>
+                              <StackPanel Orientation="Horizontal">
+                                <TextBlock Text="{Binding Glyph}" FontSize="17" FontWeight="Bold" Margin="0,0,4,0" />
+                                <TextBlock Text="{Binding Row.Target}" FontSize="9" Foreground="{StaticResource AccentStrongBrush}" TextTrimming="CharacterEllipsis" />
+                              </StackPanel>
+                            </Button>
+                          </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                      </ItemsControl>
                     </Border>
                   </StackPanel>
                 </Grid>

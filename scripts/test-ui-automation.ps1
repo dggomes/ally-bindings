@@ -119,6 +119,11 @@ try {
         $transform.Resize(1040, 736)
         Start-Sleep -Milliseconds 300
     }
+    $controllerMap = Wait-ElementById -Root $root -AutomationId 'ControllerMapScrollViewer'
+    $mapScroll = [System.Windows.Automation.ScrollPattern]$controllerMap.GetCurrentPattern([System.Windows.Automation.ScrollPattern]::Pattern)
+    if ($mapScroll.Current.HorizontallyScrollable -or $mapScroll.Current.VerticallyScrollable) {
+        throw 'Full controller map still requires scrolling at 1040x736.'
+    }
 
     $expectedMappingIds = @(
         'Mapping-LeftTrigger','Mapping-LeftBumper','Mapping-LeftStick','Mapping-View',
