@@ -247,6 +247,7 @@ try {
         $target = Join-Path $Destination $relative
         $saved = Join-Path $backup $relative
         $incoming = "$target.allybindings-new"
+        $displaced = "$saved.allybindings-displaced"
         if (Test-Path -LiteralPath $target -PathType Container) {
             throw "Refusing to replace directory with update file: $relative"
         }
@@ -257,10 +258,12 @@ try {
         if (Test-Path -LiteralPath $target) {
             New-Item -ItemType Directory -Force -Path (Split-Path -Parent $saved) | Out-Null
             Copy-Item -LiteralPath $target -Destination $saved -Force
+            Remove-Item -LiteralPath $displaced -Force -ErrorAction SilentlyContinue
         }
         $copied.Add($relative)
         if (Test-Path -LiteralPath $target) {
-            [IO.File]::Replace($incoming, $target, $null)
+            [IO.File]::Replace($incoming, $target, $displaced, $true)
+            Remove-Item -LiteralPath $displaced -Force -ErrorAction SilentlyContinue
         } else {
             [IO.File]::Move($incoming, $target)
         }
@@ -313,13 +316,16 @@ catch {
         $target = Join-Path $Destination $relative
         $saved = Join-Path $backup $relative
         $restoreIncoming = "$target.allybindings-restore"
+        $failedVersion = "$saved.allybindings-failed-version"
         try {
             Remove-Item -LiteralPath "$target.allybindings-new" -Force -ErrorAction SilentlyContinue
             Remove-Item -LiteralPath $restoreIncoming -Force -ErrorAction SilentlyContinue
+            Remove-Item -LiteralPath $failedVersion -Force -ErrorAction SilentlyContinue
             if (Test-Path -LiteralPath $saved -PathType Leaf) {
                 Copy-Item -LiteralPath $saved -Destination $restoreIncoming -Force
                 if (Test-Path -LiteralPath $target -PathType Leaf) {
-                    [IO.File]::Replace($restoreIncoming, $target, $null)
+                    [IO.File]::Replace($restoreIncoming, $target, $failedVersion, $true)
+                    Remove-Item -LiteralPath $failedVersion -Force -ErrorAction SilentlyContinue
                 } else {
                     [IO.File]::Move($restoreIncoming, $target)
                 }
@@ -335,13 +341,16 @@ catch {
 
     if ($configSnapshotTaken) {
         $configIncoming = "$ConfigPath.allybindings-restore"
+        $failedConfig = "$configBackup.failed-version"
         try {
             Remove-Item -LiteralPath $configIncoming -Force -ErrorAction SilentlyContinue
+            Remove-Item -LiteralPath $failedConfig -Force -ErrorAction SilentlyContinue
             if ($configExisted) {
                 New-Item -ItemType Directory -Force -Path (Split-Path -Parent $ConfigPath) | Out-Null
                 Copy-Item -LiteralPath $configBackup -Destination $configIncoming -Force
                 if (Test-Path -LiteralPath $ConfigPath -PathType Leaf) {
-                    [IO.File]::Replace($configIncoming, $ConfigPath, $null)
+                    [IO.File]::Replace($configIncoming, $ConfigPath, $failedConfig, $true)
+                    Remove-Item -LiteralPath $failedConfig -Force -ErrorAction SilentlyContinue
                 } else {
                     [IO.File]::Move($configIncoming, $ConfigPath)
                 }

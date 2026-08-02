@@ -31,6 +31,7 @@ try {
     Copy-Item -Path (Join-Path $PackageRoot '*') -Destination $staging -Recurse -Force
     [IO.File]::WriteAllText($installerPath, $installer)
     [IO.File]::WriteAllText((Join-Path $destination 'preexisting.txt'), 'preserve me')
+    [IO.File]::WriteAllText((Join-Path $destination 'CHANGELOG.md'), 'old changelog that must be atomically replaced')
     New-Item -ItemType Directory -Force -Path (Split-Path -Parent $configPath) | Out-Null
     [IO.File]::WriteAllText($configPath, '{"schemaVersion":1,"sentinel":"preserve me"}')
 
@@ -44,6 +45,9 @@ try {
     }
     if (-not (Test-Path -LiteralPath (Join-Path $destination 'preexisting.txt') -PathType Leaf)) {
         throw 'Updater integration test removed an unrelated existing file.'
+    }
+    if ([IO.File]::ReadAllText((Join-Path $destination 'CHANGELOG.md')) -eq 'old changelog that must be atomically replaced') {
+        throw 'Updater integration test did not replace an existing package file.'
     }
     if (Test-Path -LiteralPath $updateRoot) {
         throw 'Updater integration test did not remove its verified update staging directory.'
