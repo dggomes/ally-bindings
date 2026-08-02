@@ -69,17 +69,7 @@ jobs:
         run: ./scripts/capture-ui-screenshots.ps1
       - name: Refresh packaged documentation with tagged screenshots
         shell: pwsh
-        run: |
-          $packageRoot = Join-Path $PWD 'artifacts/AllyBindings-win-x64'
-          $packageImages = Join-Path $packageRoot 'docs/images'
-          Copy-Item -LiteralPath 'artifacts/ui-screenshots/ally-bindings-profiles.png' -Destination $packageImages -Force
-          Copy-Item -LiteralPath 'artifacts/ui-screenshots/ally-bindings-controller.png' -Destination $packageImages -Force
-          Copy-Item -LiteralPath 'artifacts/ui-screenshots/ally-bindings-shortcut.png' -Destination $packageImages -Force
-          Copy-Item -LiteralPath 'artifacts/ui-screenshots/ally-bindings-capture-update.png' -Destination $packageImages -Force
-          $zipPath = Join-Path $PWD 'artifacts/AllyBindings-win-x64.zip'
-          Remove-Item -LiteralPath $zipPath -Force
-          Compress-Archive -Path "$packageRoot/*" -DestinationPath $zipPath -CompressionLevel Optimal
-          ./scripts/test-release-package.ps1 -PackageRoot $packageRoot -ZipPath $zipPath
+        run: ./scripts/refresh-package-screenshots.ps1
       - name: Exercise updater replacement and startup handshake
         shell: powershell
         run: ./scripts/test-updater-installer.ps1 -PackageRoot artifacts/AllyBindings-win-x64 -RepositoryRoot $PWD

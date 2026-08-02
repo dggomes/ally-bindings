@@ -61,6 +61,9 @@ jobs:
       - name: Capture real WPF UI screenshots
         shell: pwsh
         run: ./scripts/capture-ui-screenshots.ps1
+      - name: Refresh packaged documentation with captured screenshots
+        shell: pwsh
+        run: ./scripts/refresh-package-screenshots.ps1
       - name: Exercise updater replacement and startup handshake
         shell: powershell
         run: ./scripts/test-updater-installer.ps1 -PackageRoot artifacts/AllyBindings-win-x64 -RepositoryRoot $PWD
