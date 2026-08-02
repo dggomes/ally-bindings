@@ -10,7 +10,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Thi
 
 ### Upgrade note
 
-- Every updater-enabled build before preview.6 (`v0.2.0-preview.2` through `v0.3.0-preview.5`) fails before the replacement binary starts and therefore cannot self-install this repair. Close Ally Bindings and run the standalone preview.6 EXE once; configuration remains in `%LOCALAPPDATA%\AllyBindings`. In-app updates from preview.6 onward use the repaired handoff.
+- Every updater-enabled public build before preview.6 (`v0.2.0-preview.1` through `v0.3.0-preview.5`) fails before the replacement binary starts and therefore cannot self-install this repair. Close Ally Bindings and run the standalone preview.6 EXE once; configuration remains in `%LOCALAPPDATA%\AllyBindings`. In-app updates from preview.6 onward use the repaired handoff.
 
 ### Fixed
 
