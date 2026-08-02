@@ -6,6 +6,24 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Thi
 
 ## [Unreleased]
 
+## [v0.3.0-preview.11] - 2026-08-02
+
+### Added
+
+- Record a bounded metadata-only inventory of decoded USB ETW event/property shapes after two physical Ally X captures produced clean events but no exact `5A D1 02 08 2C` candidates.
+- Detect full, command-only and adjacent-property-split ASUS rear-map markers in memory while exporting framing metadata only—never generic USB payload bytes or payload hashes.
+- Bucket schema and marker counts by the three authenticated capture phases so transport shapes can be correlated with Armoury's apply/reset actions without retaining timestamps.
+- Stamp capture manifests with the full informational version, including preview and commit metadata, instead of the compatibility-only `0.3.0.0` assembly version.
+
+### Safety
+
+- Keep schema discovery permanently ineligible for hardware unlock; exact target-scoped reports and a proven reset vector are still required.
+- Cap property count, schema/marker cardinality, metadata lengths, event count, decoded bytes, and IPC response size. Overflow makes discovery explicitly incomplete and fail-closed.
+
+### Tests
+
+- Cover full, command-only, every adjacent-field split, scalar report-ID, non-adjacent rejection, overflow and zero-authority isolation while retaining the existing no-write and no-raw-trace gates.
+
 ## [v0.3.0-preview.10] - 2026-08-02
 
 ### Fixed
@@ -219,3 +237,4 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Thi
 [v0.3.0-preview.8]: https://github.com/dggomes/ally-bindings/releases/tag/v0.3.0-preview.8
 [v0.3.0-preview.9]: https://github.com/dggomes/ally-bindings/releases/tag/v0.3.0-preview.9
 [v0.3.0-preview.10]: https://github.com/dggomes/ally-bindings/releases/tag/v0.3.0-preview.10
+[v0.3.0-preview.11]: https://github.com/dggomes/ally-bindings/releases/tag/v0.3.0-preview.11
