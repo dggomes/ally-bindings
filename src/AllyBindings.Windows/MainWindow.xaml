@@ -394,7 +394,13 @@
               <TextBlock Text="D-pad chooses · A confirms · B cancels" Foreground="{StaticResource MutedBrush}" />
             </StackPanel>
             <ListBox x:Name="BindingPickerList" Grid.Row="1" MinWidth="430" Background="#111624" BorderThickness="0"
-                     ScrollViewer.PanningMode="VerticalOnly" AutomationProperties.Name="Binding output choices" />
+                     ScrollViewer.PanningMode="VerticalOnly" AutomationProperties.Name="Binding output choices">
+              <ListBox.ItemContainerStyle>
+                <Style TargetType="ListBoxItem">
+                  <Setter Property="AutomationProperties.Name" Value="{Binding}" />
+                </Style>
+              </ListBox.ItemContainerStyle>
+            </ListBox>
             <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,14,0,0">
               <Button Content="B  Cancel" Click="CancelBindingPicker_Click" />
               <Button Content="A  Use this binding" Style="{StaticResource PrimaryButton}" Click="ConfirmBindingPicker_Click" />
