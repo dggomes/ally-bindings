@@ -77,7 +77,7 @@ The canonical path is `%LOCALAPPDATA%\AllyBindings\config.json`. The entire user
 
 ```json
 {
-  "schemaVersion": 2,
+  "schemaVersion": 3,
   "activeProfileId": "elden-ring",
   "controllerIndex": null,
   "runAtStartup": true,

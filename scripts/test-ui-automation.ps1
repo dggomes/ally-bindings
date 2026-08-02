@@ -115,6 +115,10 @@ try {
     $selection = [System.Windows.Automation.SelectionItemPattern]$controller.GetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern)
     $selection.Select()
     Start-Sleep -Milliseconds 300
+    if ($transform.Current.CanResize) {
+        $transform.Resize(1040, 736)
+        Start-Sleep -Milliseconds 300
+    }
 
     $expectedMappingIds = @(
         'Mapping-LeftTrigger','Mapping-LeftBumper','Mapping-LeftStick','Mapping-View',
@@ -124,13 +128,21 @@ try {
     )
     $mappingButtons = @($expectedMappingIds | ForEach-Object { Wait-ElementById -Root $root -AutomationId $_ })
     if ($mappingButtons.Count -ne 18) { throw "Expected 18 physical mapping controls, found $($mappingButtons.Count)." }
+    $mappingWindowBounds = $root.Current.BoundingRectangle
     foreach ($mappingButton in $mappingButtons) {
         if (-not $mappingButton.Current.IsEnabled) {
             throw "Physical mapping control '$($mappingButton.Current.AutomationId)' is unexpectedly disabled."
         }
+        if ($mappingButton.Current.IsOffscreen) {
+            throw "Physical mapping control '$($mappingButton.Current.AutomationId)' is hidden behind map scrolling at 1040x736."
+        }
         $bounds = $mappingButton.Current.BoundingRectangle
         if ($bounds.Width -lt 48 -or $bounds.Height -lt 48) {
             throw "Physical mapping control '$($mappingButton.Current.AutomationId)' is smaller than the 48-DIP touch target."
+        }
+        if ($bounds.Left -lt $mappingWindowBounds.Left -or $bounds.Top -lt $mappingWindowBounds.Top -or
+            $bounds.Right -gt $mappingWindowBounds.Right -or $bounds.Bottom -gt $mappingWindowBounds.Bottom) {
+            throw "Physical mapping control '$($mappingButton.Current.AutomationId)' is clipped at 1040x736."
         }
     }
     $leftTrigger = Wait-ElementById -Root $root -AutomationId 'Mapping-LeftTrigger'
@@ -159,6 +171,10 @@ try {
     Start-Sleep -Milliseconds 200
     $updatedLeftBumper = Wait-ElementContaining -Root $root -Name 'Left bumper, mapped to A' -ControlType ([System.Windows.Automation.ControlType]::Button)
     if ($updatedLeftBumper.Current.Name -ne 'Left bumper, mapped to A') { throw 'Mapping accessibility name did not update after changing the target.' }
+    if ($transform.Current.CanResize) {
+        $transform.Resize(900, 600)
+        Start-Sleep -Milliseconds 250
+    }
 
     $profiles = Wait-ElementById -Root $root -AutomationId 'NavigationProfiles'
     $selection = [System.Windows.Automation.SelectionItemPattern]$profiles.GetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern)

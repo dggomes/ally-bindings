@@ -8,7 +8,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Thi
 
 ### Added
 
-- Full physical-trigger source mappings with XInput-compatible trigger activation and analog trigger-to-trigger intensity preservation.
+- Full physical-trigger source mappings with XInput-compatible trigger activation and analog trigger-to-trigger intensity preservation; configuration schema 3 prevents older builds from silently stripping those mappings after rollback.
 
 ### Changed
 
