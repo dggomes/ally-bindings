@@ -515,6 +515,24 @@
               <TextBlock Text="Hardware validation and app maintenance live here—nothing buried below the editor."
                          Foreground="{StaticResource MutedBrush}" Margin="0,5,0,18" />
 
+              <Border Background="#18352F" BorderBrush="#55D6BE" BorderThickness="2" CornerRadius="18" Padding="24" Margin="0,0,0,16">
+                <Grid>
+                  <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                  <StackPanel>
+                    <TextBlock Text="Snapshot M1/M2 state · read-only" FontSize="23" FontWeight="SemiBold" />
+                    <TextBlock Text="Read target-scoped ASUS report 0x5A before and after Armoury changes. No elevation, ETW, system-wide trace, pipe, driver, or HID write."
+                               Foreground="#C8F5EA" TextWrapping="Wrap" Margin="0,7,24,8" />
+                    <TextBlock x:Name="RearButtonSnapshotStatusText" Text="Ready for the four-stage read-only discovery sequence."
+                               AutomationProperties.LiveSetting="Polite"
+                               Foreground="{StaticResource MutedBrush}" TextWrapping="Wrap" Margin="0,4,24,0" />
+                  </StackPanel>
+                  <Button x:Name="RearButtonSnapshotButton" Grid.Column="1" Style="{StaticResource PrimaryButton}"
+                          Content="Start snapshot" Click="CaptureRearButtonSnapshot_Click" VerticalAlignment="Center"
+                          AutomationProperties.AutomationId="RearButtonSnapshotButton"
+                          AutomationProperties.Name="Snapshot Armoury M1 and M2 state with read-only report 0x5A requests" />
+                </Grid>
+              </Border>
+
               <Border Background="#241F42" BorderBrush="{StaticResource AccentBrush}" BorderThickness="2" CornerRadius="18" Padding="24" Margin="0,0,0,16">
                 <Grid>
                   <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>

@@ -196,7 +196,12 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         HeaderUpdateButton.IsEnabled = _workspaceInteractive && !_updateBusy;
     }
     public void SetArmouryCaptureStatus(string message) => ArmouryCaptureStatusText.Text = message;
-    public void SetArmouryCaptureBusy(bool isBusy) => ArmouryCaptureButton.IsEnabled = !isBusy;
+    public void SetRearButtonSnapshotStatus(string message) => RearButtonSnapshotStatusText.Text = message;
+    public void SetArmouryCaptureBusy(bool isBusy)
+    {
+        ArmouryCaptureButton.IsEnabled = !isBusy;
+        RearButtonSnapshotButton.IsEnabled = !isBusy;
+    }
     public void AllowClose() => _allowClose = true;
     public void CancelControllerDialog() => CompleteControllerDialog(false);
 
@@ -690,6 +695,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private async void Panic_Click(object sender, RoutedEventArgs e) => await ((App)Application.Current).RestoreDefaultAsync("Main-window reset");
     private async void CheckForUpdates_Click(object sender, RoutedEventArgs e) => await ((App)Application.Current).CheckForUpdatesAsync(userInitiated: true);
     private async void CaptureArmouryProtocol_Click(object sender, RoutedEventArgs e) => await ((App)Application.Current).CaptureArmouryProtocolAsync();
+    private async void CaptureRearButtonSnapshot_Click(object sender, RoutedEventArgs e) => await ((App)Application.Current).CaptureRearButtonSnapshotAsync();
 
     private void OpenControllerPage_Click(object sender, RoutedEventArgs e)
     {

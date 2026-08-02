@@ -1,7 +1,9 @@
 using AllyBindings.Core;
+using System.Collections.Immutable;
 using HidSharp;
 using HidSharp.Reports;
 using Microsoft.Win32;
+using System.Security.Cryptography;
 
 namespace AllyBindings.Windows;
 
@@ -99,6 +101,52 @@ public sealed class AsusRearButtonHidDevice : IAsusRearButtonDevice
 
     public AsusRearButtonDeviceStatus GetStatus() => _status;
 
+    /// <summary>
+    /// Reads report 0x5A from every positively identified compatible interface.
+    /// This path calls GetFeature only and is structurally separate from writes.
+    /// </summary>
+    public async Task<AsusRearButtonReadResult> ReadFeatureReportAsync(
+        CancellationToken cancellationToken = default)
+    {
+        if (!_status.IsSupportedModel)
+        {
+            throw new InvalidOperationException("Refusing an ASUS HID read on an unsupported system model.");
+        }
+        if (!_status.IsAvailable)
+        {
+            return new(false, false, [], "No compatible ASUS report 0x5A interface is available.");
+        }
+
+        cancellationToken.ThrowIfCancellationRequested();
+        var lease = new HidOperationLease();
+        var operation = Task.Run(() =>
+        {
+            _hidIoGate.Wait();
+            try
+            {
+                if (lease.IsCancelled)
+                {
+                    return new AsusRearButtonReadResult(false, false, [], "Cancelled before the HID read began.");
+                }
+                return ReadFeatureReports();
+            }
+            finally
+            {
+                _hidIoGate.Release();
+            }
+        });
+
+        if (await Task.WhenAny(operation, Task.Delay(HidOperationTimeout, cancellationToken)).ConfigureAwait(false) == operation)
+        {
+            return await operation.ConfigureAwait(false);
+        }
+
+        lease.Cancel();
+        ObserveLateFailure(operation);
+        cancellationToken.ThrowIfCancellationRequested();
+        return new(true, false, [], "The read-only ASUS HID snapshot timed out after 3 seconds; no retry was attempted.");
+    }
+
     public async Task<AsusRearButtonWriteResult> WriteFeatureReportAsync(
         byte[] report,
         CancellationToken cancellationToken = default)
@@ -192,6 +240,52 @@ public sealed class AsusRearButtonHidDevice : IAsusRearButtonDevice
                 : $"No ASUS interface accepted the M1/M2 mapping: {string.Join("; ", errors)}";
 
         return (devices.Count, succeeded, ids, message);
+    }
+
+    private static AsusRearButtonReadResult ReadFeatureReports()
+    {
+        var devices = FindCompatibleDevices();
+        var reads = new List<AsusFeatureReportRead>(devices.Count);
+        foreach (var device in devices)
+        {
+            var deviceId = $"VID_{device.VendorID:X4}&PID_{device.ProductID:X4}:report_{AsusRearButtonProtocol.FeatureReportId:X2}";
+            var reportLength = device.GetMaxFeatureReportLength();
+            if (reportLength is < AsusRearButtonProtocol.ReportLength or > UsbEtwHidFeatureReportExtractor.MaximumWireReportLength)
+            {
+                reads.Add(new(deviceId, ImmutableArray<byte>.Empty, string.Empty, "Descriptor report length is outside the bounded 50-64 byte contract."));
+                continue;
+            }
+
+            try
+            {
+                using var stream = device.Open();
+                var buffer = new byte[reportLength];
+                buffer[0] = AsusRearButtonProtocol.FeatureReportId;
+                stream.GetFeature(buffer);
+                reads.Add(new(
+                    deviceId,
+                    ImmutableArray.CreateRange(buffer),
+                    Convert.ToHexString(SHA256.HashData(buffer)).ToLowerInvariant(),
+                    "Read-only GET_FEATURE completed."));
+            }
+            catch (Exception ex)
+            {
+                reads.Add(new(
+                    deviceId,
+                    ImmutableArray<byte>.Empty,
+                    string.Empty,
+                    $"Read-only GET_FEATURE failed ({ex.GetType().Name}); no retry was attempted."));
+            }
+        }
+
+        var succeeded = reads.Count(read => read.Report.Length > 0);
+        return new(
+            Attempted: devices.Count > 0,
+            Succeeded: succeeded > 0,
+            Reads: reads.AsReadOnly(),
+            Message: devices.Count == 0
+                ? "The compatible ASUS report 0x5A interface disappeared before the read."
+                : $"Read report 0x5A from {succeeded}/{devices.Count} compatible interface(s).");
     }
 
     private static (string Manufacturer, string ProductName) ReadSystemIdentity()

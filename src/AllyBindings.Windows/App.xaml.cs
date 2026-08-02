@@ -643,6 +643,138 @@ public partial class App : System.Windows.Application
         return DiagnosticsExporter.ToJson(snapshot);
     }
 
+    public async Task CaptureRearButtonSnapshotAsync()
+    {
+        await _operationGate.WaitAsync();
+        try
+        {
+            if (_exiting || _armouryCaptureInProgress) return;
+            _armouryCaptureInProgress = true;
+            _armouryCaptureCancellation = new CancellationTokenSource();
+            _armouryCaptureCompletion = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        }
+        finally
+        {
+            _operationGate.Release();
+        }
+
+        var cancellationToken = _armouryCaptureCancellation.Token;
+        string? deferredFailureMessage = null;
+        async Task RequireSnapshotStepAsync(string message, string title)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (!await _mainWindow.ShowControllerDialogAsync(title, message, primaryLabel: "Done"))
+            {
+                throw new OperationCanceledException(
+                    "The read-only snapshot was cancelled and no bundle was created.",
+                    cancellationToken);
+            }
+            cancellationToken.ThrowIfCancellationRequested();
+        }
+
+        try
+        {
+            _mainWindow.SetArmouryCaptureBusy(true);
+            var proceed = await _mainWindow.ShowControllerDialogAsync(
+                "Snapshot M1/M2 state · read-only",
+                "This discovery experiment issues four target-scoped HID GET_FEATURE requests for ASUS report 0x5A: one baseline and one after each Armoury action. GET_FEATURE is an active USB request, but it reads only.\n\n" +
+                "It uses no administrator elevation, ETW, system-wide trace, named pipe, driver, SET_FEATURE call or M1/M2 write. Successful report bytes are private controller-configuration diagnostics and can never unlock writes automatically.\n\nContinue?",
+                primaryLabel: "Continue");
+            if (!proceed) return;
+            cancellationToken.ThrowIfCancellationRequested();
+
+            _cycle.Cancel();
+            var snapshotService = new AsusFeatureReportSnapshotService();
+            _mainWindow.SetRearButtonSnapshotStatus("Confirming the supported ASUS report 0x5A interface…");
+            var target = await snapshotService.DiscoverTargetAsync(cancellationToken);
+            await RequireSnapshotStepAsync(
+                $"Confirm this is the ROG Ally controller you intend to inspect:\n\nModel: {target.Model}\nCompatible ASUS HID interfaces: {string.Join(" | ", target.DeviceIds)}\n\nNo report has been read yet. Click Cancel if this identity is unexpected.",
+                "Confirm read-only snapshot target");
+
+            var captures = new List<AsusFeatureReportSnapshotCapture>(4);
+            _mainWindow.SetRearButtonSnapshotStatus("Reading baseline report 0x5A once…");
+            captures.Add(await snapshotService.ReadStageAsync(
+                target,
+                AsusFeatureReportSnapshotStage.Baseline,
+                cancellationToken));
+
+            await RequireSnapshotStepAsync(
+                "In Armoury Crate, set M1 to A and M2 to B. Wait until Armoury shows the assignment as applied, then return here and choose Done. Ally Bindings will then perform one read-only report 0x5A request.",
+                "Snapshot step 1 of 3 · M1=A, M2=B");
+            _mainWindow.SetRearButtonSnapshotStatus("Reading the M1=A / M2=B state once…");
+            captures.Add(await snapshotService.ReadStageAsync(
+                target,
+                AsusFeatureReportSnapshotStage.M1A_M2B,
+                cancellationToken));
+
+            await RequireSnapshotStepAsync(
+                "In Armoury Crate, now set M1 to X and M2 to Y. Wait until it is applied, then return here and choose Done. Ally Bindings will perform one read-only request.",
+                "Snapshot step 2 of 3 · M1=X, M2=Y");
+            _mainWindow.SetRearButtonSnapshotStatus("Reading the M1=X / M2=Y state once…");
+            captures.Add(await snapshotService.ReadStageAsync(
+                target,
+                AsusFeatureReportSnapshotStage.M1X_M2Y,
+                cancellationToken));
+
+            await RequireSnapshotStepAsync(
+                "In Armoury Crate, use Reset to Default for M1/M2. Wait until the defaults are applied, then return here and choose Done. Ally Bindings will perform the final read-only request.",
+                "Snapshot step 3 of 3 · Armoury defaults");
+            _mainWindow.SetRearButtonSnapshotStatus("Reading the reset-to-default state once…");
+            captures.Add(await snapshotService.ReadStageAsync(
+                target,
+                AsusFeatureReportSnapshotStage.ResetToDefault,
+                cancellationToken));
+
+            var result = await snapshotService.CompleteAsync(target, captures, cancellationToken);
+            _mainWindow.SetRearButtonSnapshotStatus(
+                $"Snapshot complete — review required: {result.SuccessfulStageCount}/4 readable stage(s). Bundle SHA-256: {result.Hash}. Bundle: {result.BundlePath}");
+            _mainWindow.SetStatus(
+                $"Read-only report 0x5A snapshot captured with zero write authority: {string.Join(" ", result.Analysis.Reasons)}");
+            Process.Start(new ProcessStartInfo
+            {
+                FileName = "explorer.exe",
+                Arguments = $"/select,\"{result.BundlePath}\"",
+                UseShellExecute = true,
+            });
+        }
+        catch (Exception ex)
+        {
+            _mainWindow.SetRearButtonSnapshotStatus(
+                ex is OperationCanceledException
+                    ? $"Snapshot cancelled safely: {ex.Message}"
+                    : $"Snapshot failed safely: {ex.Message}");
+            if (ex is not OperationCanceledException) deferredFailureMessage = ex.Message;
+        }
+        finally
+        {
+            TaskCompletionSource? completion;
+            await _operationGate.WaitAsync();
+            try
+            {
+                _mainWindow.SetArmouryCaptureBusy(false);
+                _armouryCaptureCancellation?.Dispose();
+                _armouryCaptureCancellation = null;
+                completion = _armouryCaptureCompletion;
+                _armouryCaptureInProgress = false;
+                _armouryCaptureCompletion = null;
+            }
+            finally
+            {
+                _operationGate.Release();
+            }
+            completion?.TrySetResult();
+        }
+
+        if (deferredFailureMessage is not null)
+        {
+            await _mainWindow.ShowControllerDialogAsync(
+                "Read-only snapshot failed",
+                deferredFailureMessage,
+                allowCancel: false,
+                primaryLabel: "OK");
+        }
+    }
+
     public async Task CaptureArmouryProtocolAsync()
     {
         await _operationGate.WaitAsync();

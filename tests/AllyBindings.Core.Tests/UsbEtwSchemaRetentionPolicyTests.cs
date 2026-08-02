@@ -46,6 +46,10 @@ public sealed class UsbEtwSchemaRetentionPolicyTests
     [InlineData("Microsoft-Windows-USB-UCX", "URB_FUNCTION_CLASS_INTERFACE_Start", "fid_UCX_URB_CONTROL_TRANSFER.DevicePath")]
     [InlineData("Microsoft-Windows-USB-UCX", "URB_FUNCTION_CLASS_INTERFACE_Start", "fid_UCX_URB_CONTROL_TRANSFER.TransferBuffer")]
     [InlineData("Microsoft-Windows-USB-UCX", "URB_FUNCTION_CLASS_INTERFACE_Start", "fid_UCX_URB_CONTROL_TRANSFER.TransferBuffer[0]")]
+    [InlineData("Microsoft-Windows-USB-UCX", "URB_FUNCTION_CLASS_INTERFACE_Start", "fid_UCX_URB_CONTROL_TRANSFER.fid_URB_TransferBuffer")]
+    [InlineData("Microsoft-Windows-USB-UCX", "URB_FUNCTION_CLASS_INTERFACE_Start", "fid_UCX_URB_CONTROL_TRANSFER.fid_URB_TransferBufferMDL")]
+    [InlineData("Microsoft-Windows-USB-UCX", "URB_FUNCTION_CLASS_INTERFACE_Start", "fid_UCX_URB_CONTROL_TRANSFER.fid_URB_ReservedHcd_0_")]
+    [InlineData("Microsoft-Windows-USB-UCX", "URB_FUNCTION_CLASS_INTERFACE_Start", "fid_UCX_URB_CONTROL_TRANSFER.fid_URB_hca.fid_URB_ReservedHcd_7_")]
     [InlineData("Microsoft-Windows-USB-UCX", "URB_FUNCTION_CONTROL_TRANSFER_Stop", "fid_URB_TransferDataPointer")]
     public void Rejects_non_target_rundown_command_and_identity_pointer_metadata(
         string providerName,

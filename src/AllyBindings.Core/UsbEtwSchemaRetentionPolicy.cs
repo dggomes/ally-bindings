@@ -31,9 +31,12 @@ internal static class UsbEtwSchemaRetentionPolicy
         "HcdArea",
         "InstanceId",
         "Link",
+        "Mdl",
         "Pipe",
         "Pointer",
         "Ptr",
+        "ReservedHcd",
+        "TransferBuffer",
     ];
 
     public static UsbEtwSchemaRetentionClass Classify(

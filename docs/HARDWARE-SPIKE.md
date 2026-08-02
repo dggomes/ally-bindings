@@ -26,9 +26,9 @@ Implementation safety gates:
 5. The later write path must still require exact DMI manufacturer/model, known ASUS VID/PID, an openable report `0x5A`, and mapping zone `0x08`.
 6. Standard mappings remain preview-only and are labelled as such.
 
-Known limitation: there is no proven read-back path for preserving a user's custom Armoury M1/M2 assignment. The validation run deliberately changes mappings through Armoury and finishes with Armoury's own reset. Photograph/export any custom assignments first. The ETW stream is system-wide while active; the capture ZIP contains exact bounded report candidates plus metadata-only schema discovery, never a raw system trace or generic USB payload dump.
+Known limitation: feature report `0x5A` readback is now implemented as a discovery instrument but has not yet been physically validated. The run deliberately changes mappings through Armoury and finishes with Armoury's own reset. Photograph/export custom assignments first. Successful readbacks are private controller-configuration bytes; they remain review-required and cannot unlock writes.
 
-## Passive Armoury capture gate
+## Armoury protocol evidence gate
 
 ### Physical capture 1 — clean but inconclusive (2026-08-02)
 
@@ -62,15 +62,22 @@ Known limitation: there is no proven read-back path for preserving a user's cust
 - Every action phase's inventory was dominated by the same 42-field USBXHCI device-rundown schema plus eight XHCI command-TRB fields. Baseline retained a USB configuration descriptor and firmware-hash fields. No UCX action schema survived because those URB structures contained no byte-array leaf or known marker.
 - Windows USB provider manifests place full transfer bytes in dedicated FullDataBusTrace completion fields such as `fid_URB_TransferData`, while start/header events carry URB setup/framing. The next diagnostic must therefore retain bounded UCX URB body/status/transfer-data **metadata even when no binary leaf is present**, while excluding identity pointers and unrelated rundown/TRB/hash schemas.
 
-Conclusion: keep both write gates locked. The next schema-v7 capture build focuses the persisted inventory on UCX class/control-transfer body, status and transfer-data fields, with transfer/status capacity reserved independently from lower-priority framing. It still checks every decoded field for exact full and command-only markers in memory—including markers split across genuinely adjacent properties—but exports no generic payload bytes, hashes, raw timestamps, process IDs, device paths, pointers or scalar values. Discovery metadata can never become unlock evidence.
+### Physical capture 5 — v14 isolates UCX control traffic but Windows omits transfer data (2026-08-02)
 
-1. Run **Capture Armoury M1/M2 protocol (passive)**; no separate capture software is required.
-2. Confirm the displayed ROG Ally model and compatible ASUS feature-report interfaces.
-3. Accept Windows' one-time UAC prompt for the same Ally Bindings executable acting as the temporary ETW helper.
-4. Apply the three prompted Armoury states: `M1=A/M2=B`, `M1=X/M2=Y`, then Armoury Reset to Default. Wait for Armoury to show each assignment as applied before choosing Done. Pressing the physical rear buttons is unnecessary. Capture stops automatically.
-5. Retain the single ZIP, record the displayed bundle SHA-256 outside the capture directory, and verify its manifest says `rawSystemTraceWritten: false`. The user-writable ZIP is not immutable provenance; require at least two independent matching captures before proposing a protocol change.
-6. Compare mapping prefix (`5A D1 02 08 2C`), action ordering/slots, complete 50-byte vector plus any preserved zero padding, provider/event/field metadata and default modifier bytes.
-7. Keep both write gates closed on any unexplained extra command, mismatch, dropped/oversized event, ambiguous device identity, unavailable provider or absent reset packet.
+- Bundle SHA-256: `c65339c11d14653d98f6c3cc7c3ac23a009954dc8840ac5f6c81e3fff56e7bbb`; evidence SHA-256: `1f7b4c0f9354ed05e219b12b7f9dbff1d74fc2082041385828223588449aab45`.
+- The schema-v7 capture came from released commit `a2c3fad312ac86f60bf6cb1faf658bc99ca6b821`, observed 3,304 events and decoded 9,071 binary bytes with zero loss, oversize, decode failure, ambiguity or dropped candidates.
+- Mapping phases 1 and 2 each contained 22 UCX `URB_FUNCTION_CONTROL_TRANSFER_EX_Start` events (ID 23) and 22 matching header-only stop events (ID 24). Those EX events were absent from baseline and reset, proving action-correlated control traffic but not its target or payload.
+- Data-bearing completion events 22 and 25 were absent from every phase. Therefore neither `fid_URB_TransferDataLength` nor `fid_URB_TransferData` was available to the decoder. This is provider behaviour, not priority starvation.
+- Real manifest leaves `fid_URB_TransferBuffer`, `fid_URB_TransferBufferMDL` and `fid_URB_ReservedHcd_*` bypassed the intended nested deny tokens and wasted framing quota. Preview.15 rejects those exact patterns.
+
+Conclusion: keep both write gates locked. Do not spend another physical run merely reshuffling ETW quotas. The preferred next experiment is the isolated read-only feature snapshot below; use ETW only as a deeper fallback if report `0x5A` proves unreadable or unhelpful.
+
+1. Run **Snapshot M1/M2 state · read-only**; no elevation, ETW session or separate capture software is required.
+2. Read the active-request disclosure and confirm the displayed ROG Ally model plus compatible ASUS report-`0x5A` interfaces.
+3. The app reads every compatible interface once at baseline, then prompts for `M1=A/M2=B`, `M1=X/M2=Y`, and Armoury Reset to Default, reading once after each applied state.
+4. Retain the single ZIP, record its displayed SHA-256 outside the capture directory, and verify the manifest says `rawSystemTraceWritten: false`, `hardwareWriteAttempted: false`, and `hardwareUnlockEvidence: false`.
+5. Compare exact bytes, per-report hashes, changed offsets, clean-room candidate vectors and baseline-to-reset equality. Treat a constant report, failed request, wrong prefix, malformed length or inconsistent run as inconclusive rather than an error to bypass.
+6. Require at least two independent matching physical runs plus human review before proposing any protocol change. A result never changes either source-level write gate automatically.
 
 Research references:
 

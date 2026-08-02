@@ -204,6 +204,14 @@ public sealed class AsusRearButtonControllerBackendTests
 
         public AsusRearButtonDeviceStatus GetStatus() => status;
 
+        public Task<AsusRearButtonReadResult> ReadFeatureReportAsync(
+            CancellationToken cancellationToken = default) =>
+            Task.FromResult(new AsusRearButtonReadResult(
+                Attempted: status.IsAvailable,
+                Succeeded: false,
+                Reads: [],
+                Message: "No fake read configured."));
+
         public Task<AsusRearButtonWriteResult> WriteFeatureReportAsync(
             byte[] report,
             CancellationToken cancellationToken = default)

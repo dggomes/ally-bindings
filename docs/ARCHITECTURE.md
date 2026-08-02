@@ -134,7 +134,9 @@ Backend results distinguish a selected app profile from a mapping physically app
 - Both primary and secondary paddle slots receive the selected action to avoid retaining a stale Armoury secondary action.
 - `CustomWritesApproved` and `RecoveryWritesApproved` are both `false`; profile, panic, exit and stale-marker paths therefore send no ASUS report.
 - Native reset authorization depends only on `RecoveryWritesApproved`; custom mappings require both validation gates so they cannot be enabled without an approved recovery path.
-- The passive logger confirms the supported ROG Ally model plus compatible ASUS HID feature-report interfaces, obtains explicit confirmation, self-elevates the same executable, enables UCX/USBXHCI/USBHUB3 with `FullDataBusTrace`, and revalidates the identity after capture.
+- `IAsusRearButtonDevice.ReadFeatureReportAsync` is a distinct write-incapable seam. Its HidSharp implementation reads report `0x5A` from every positively identified compatible interface exactly once, uses descriptor-sized buffers bounded to 50–64 bytes, serializes access with the existing HID gate, times out after three seconds and never retries or falls back to a write.
+- `AsusFeatureReportSnapshotService` is an unelevated evidence plane with no dependency on ETW, helper IPC or the controller backend. It revalidates exact model/interface identity at all four stages, retains bounded bytes plus hashes, runs a pure diff/expected-vector analyzer, writes one three-file ZIP, and permanently labels the output diagnostic-only with zero hardware-unlock authority.
+- The USB ETW logger remains a separate deeper diagnostic fallback. It confirms the supported ROG Ally model plus compatible ASUS HID feature-report interfaces, obtains explicit confirmation, self-elevates the same executable, enables UCX/USBXHCI/USBHUB3 with `FullDataBusTrace`, and revalidates the identity after capture.
 - The system-wide ETW stream is filtered in memory. The callback retains exact bounded 50–64-byte fields beginning `5A D1 02 08 2C`, with provider/event metadata and a per-candidate SHA-256, plus bounded metadata-only UCX class/control-transfer field shapes and counts. Priority transfer-data/status shapes have capacity reserved separately from lower-priority framing; pointer/identity field metadata and generic transfer values are excluded. It never writes a broad trace.
 - Sequence matching is diagnostic only. Every capture remains review-required and cannot unlock writes or clear recovery state until physical Ally validation binds the Windows-build-specific ETW schema, selected interface, control-transfer setup packet and payload boundary.
 - Filtered report JSON is hashed and bundled locally. No raw ETL/PCAP is created. Missing providers, oversized/dropped events, device ambiguity and target-identity changes fail closed.
@@ -151,7 +153,7 @@ A real backend must additionally stream normalized input through `MappingEngine`
 4. Ctrl+Alt+F12 does not depend on the controller chord/profile.
 5. Disconnect cancels uncommitted selections.
 6. Startup registration is per-user, opt-in and removable.
-7. Launching the app installs no driver and requires no elevation; explicit passive capture requests one-time elevation for the same executable's temporary ETW helper and installs nothing.
+7. Launching the app and explicit feature snapshots install no driver and require no elevation; only explicit USB ETW capture requests one-time elevation for the same executable's temporary helper and installs nothing.
 8. Normal diagnostics contain status/config metadata, not controller input history. Capture bundles are separate private artifacts created only on explicit request.
 9. No code injection, Armoury database mutation, macros or network service.
 10. No custom or recovery M1/M2 report can be emitted while either source-level validation gate is closed.

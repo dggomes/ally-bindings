@@ -6,6 +6,29 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Thi
 
 ## [Unreleased]
 
+## [v0.3.0-preview.15] - 2026-08-02
+
+### Added
+
+- Added a separate **Snapshot M1/M2 state · read-only** workflow that performs four target-scoped ASUS report `0x5A` `GET_FEATURE` reads without elevation, ETW, helper IPC or any hardware write path.
+- Added a pure four-stage readback analyzer with per-interface hashes, expected-vector checks, changed-offset diffs and reset-to-baseline comparison; all output remains review-required and zero-authority.
+- Added a three-file private snapshot bundle (`snapshot.json`, `manifest.json`, `README.txt`) with both evidence and archive SHA-256 values.
+
+### Changed
+
+- Made read-only feature snapshots the preferred next protocol experiment after v14 proved UCX data-bearing events 22/25 were absent; USB ETW remains available as a deeper fallback.
+- Extended the ASUS HID seam with a bounded per-interface read result while preserving the existing write gates and backend behaviour.
+
+### Security
+
+- Kept feature snapshots structurally separate from writes: one `GetFeature` call site, descriptor length bounded to 50–64 bytes, existing three-second HID serialization gate, no retry/fallback, exact target revalidation at every stage and `hardwareUnlockEvidence=false` in every bundle.
+- Fixed the v14 metadata-filter gap by rejecting nested `fid_URB_TransferBuffer`, `fid_URB_TransferBufferMDL` and `fid_URB_ReservedHcd_*` manifest leaves.
+
+### Tests
+
+- Added adversarial readback coverage for matching and constant reports, malformed lengths, unreadable stages, hash mismatch, changed offsets, reset-to-baseline comparison, stage ordering and zero-authority isolation.
+- Added a Windows CI source contract proving the snapshot workflow has no elevation, ETW/helper/pipe or write-path dependency.
+
 ## [v0.3.0-preview.14] - 2026-08-02
 
 ### Fixed
