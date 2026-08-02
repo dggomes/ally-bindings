@@ -6,6 +6,15 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Thi
 
 ## [Unreleased]
 
+### Added
+
+- Full physical-trigger source mappings with XInput-compatible trigger activation and analog trigger-to-trigger intensity preservation.
+
+### Changed
+
+- Rebuilt the controller workspace around an Armoury-style oversized Ally diagram with all 18 physical controls visible as labelled, touch-sized mapping actions.
+- Every mapping action now has a stable UI Automation ID and opens the existing controller-operable binding modal.
+
 ## [v0.3.0-preview.1] - 2026-08-01
 
 ### Added

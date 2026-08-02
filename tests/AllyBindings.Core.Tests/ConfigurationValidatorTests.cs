@@ -80,6 +80,7 @@ public sealed class ConfigurationValidatorTests
             Bindings = new Dictionary<ControllerButton, ControllerButton>
             {
                 [ControllerButton.M1] = ControllerButton.RightTrigger,
+                [ControllerButton.LeftTrigger] = ControllerButton.B,
                 [ControllerButton.A] = ControllerButton.M2,
             },
         };
@@ -92,6 +93,7 @@ public sealed class ConfigurationValidatorTests
 
         var normalized = Assert.Single(result.Configuration.Profiles, profile => profile.Id == "custom");
         Assert.Equal(ControllerButton.RightTrigger, normalized.Bindings[ControllerButton.M1]);
+        Assert.Equal(ControllerButton.B, normalized.Bindings[ControllerButton.LeftTrigger]);
         Assert.False(normalized.Bindings.ContainsKey(ControllerButton.A));
         Assert.True(result.Configuration.EnableAsusRearButtonMappings);
     }

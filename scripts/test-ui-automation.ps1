@@ -116,7 +116,29 @@ try {
     $selection.Select()
     Start-Sleep -Milliseconds 300
 
-    $leftBumper = Wait-ElementContaining -Root $root -Name 'Left bumper' -ControlType ([System.Windows.Automation.ControlType]::Button)
+    $expectedMappingIds = @(
+        'Mapping-LeftTrigger','Mapping-LeftBumper','Mapping-LeftStick','Mapping-View',
+        'Mapping-DPadUp','Mapping-DPadLeft','Mapping-DPadRight','Mapping-DPadDown','Mapping-M1',
+        'Mapping-RightTrigger','Mapping-RightBumper','Mapping-Y','Mapping-X','Mapping-B','Mapping-A',
+        'Mapping-RightStick','Mapping-Menu','Mapping-M2'
+    )
+    $mappingButtons = @($expectedMappingIds | ForEach-Object { Wait-ElementById -Root $root -AutomationId $_ })
+    if ($mappingButtons.Count -ne 18) { throw "Expected 18 physical mapping controls, found $($mappingButtons.Count)." }
+    foreach ($mappingButton in $mappingButtons) {
+        if (-not $mappingButton.Current.IsEnabled) {
+            throw "Physical mapping control '$($mappingButton.Current.AutomationId)' is unexpectedly disabled."
+        }
+        $bounds = $mappingButton.Current.BoundingRectangle
+        if ($bounds.Width -lt 48 -or $bounds.Height -lt 48) {
+            throw "Physical mapping control '$($mappingButton.Current.AutomationId)' is smaller than the 48-DIP touch target."
+        }
+    }
+    $leftTrigger = Wait-ElementById -Root $root -AutomationId 'Mapping-LeftTrigger'
+    if ($leftTrigger.Current.Name -ne 'Left trigger, mapped to LeftTrigger') {
+        throw "Trigger mapping accessibility name was incomplete: $($leftTrigger.Current.Name)"
+    }
+
+    $leftBumper = Wait-ElementById -Root $root -AutomationId 'Mapping-LeftBumper'
     if (-not $leftBumper.Current.IsEnabled) { throw 'A user-profile visual mapping button is unexpectedly disabled.' }
     if ($leftBumper.Current.Name -ne 'Left bumper, mapped to LeftBumper') { throw "Mapping accessibility name was incomplete: $($leftBumper.Current.Name)" }
     $invoke = [System.Windows.Automation.InvokePattern]$leftBumper.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern)
