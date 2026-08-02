@@ -1,4 +1,6 @@
 using AllyBindings.Core;
+using System.Collections.Concurrent;
+using System.Diagnostics;
 
 namespace AllyBindings.Core.Tests;
 
@@ -105,5 +107,60 @@ public sealed class UsbEtwCapturePhaseTests
         Assert.True(end >= start);
         Assert.Equal(1, windows.Classify(end - 1));
         Assert.Equal(0, windows.Classify(end));
+    }
+
+    [Fact]
+    public async Task Concurrent_callbacks_never_cross_a_scheduled_boundary()
+    {
+        var windows = new UsbEtwCapturePhaseWindows();
+        var observations = new ConcurrentBag<(long Qpc, int Phase)>();
+        using var begin = new ManualResetEventSlim();
+        var callbacks = Enumerable.Range(0, 8).Select(_ => Task.Run(() =>
+        {
+            begin.Wait();
+            for (var index = 0; index < 1_000; index++)
+            {
+                var qpc = Stopwatch.GetTimestamp();
+                observations.Add((qpc, windows.Classify(qpc)));
+            }
+        })).ToArray();
+        var transition = Task.Run(() =>
+        {
+            begin.Wait();
+            return windows.StartNow(1);
+        });
+
+        begin.Set();
+        await Task.WhenAll(callbacks);
+        var start = await transition;
+
+        Assert.All(
+            observations.Where(observation => observation.Qpc != start),
+            observation => Assert.Equal(observation.Qpc > start ? 1 : 0, observation.Phase));
+
+        observations.Clear();
+        using var finish = new ManualResetEventSlim();
+        callbacks = Enumerable.Range(0, 8).Select(_ => Task.Run(() =>
+        {
+            finish.Wait();
+            for (var index = 0; index < 1_000; index++)
+            {
+                var qpc = Stopwatch.GetTimestamp();
+                observations.Add((qpc, windows.Classify(qpc)));
+            }
+        })).ToArray();
+        transition = Task.Run(() =>
+        {
+            finish.Wait();
+            return windows.EndNow(1);
+        });
+
+        finish.Set();
+        await Task.WhenAll(callbacks);
+        var end = await transition;
+
+        Assert.All(
+            observations.Where(observation => observation.Qpc != end),
+            observation => Assert.Equal(observation.Qpc < end ? 1 : 0, observation.Phase));
     }
 }
