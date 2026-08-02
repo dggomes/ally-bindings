@@ -6,6 +6,7 @@ $backendPath = Join-Path $root 'src/AllyBindings.Core/ControllerBackend.cs'
 $extractorPath = Join-Path $root 'src/AllyBindings.Core/UsbEtwHidFeatureReportExtractor.cs'
 $servicePath = Join-Path $root 'src/AllyBindings.Windows/ArmouryCaptureService.cs'
 $helperPath = Join-Path $root 'src/AllyBindings.Windows/ArmouryEtwCaptureHelper.cs'
+$diagnosticsPath = Join-Path $root 'src/AllyBindings.Windows/ArmouryCaptureDiagnostics.cs'
 $appPath = Join-Path $root 'src/AllyBindings.Windows/App.xaml.cs'
 $xamlPath = Join-Path $root 'src/AllyBindings.Windows/MainWindow.xaml'
 $projectPath = Join-Path $root 'src/AllyBindings.Windows/AllyBindings.Windows.csproj'
@@ -17,6 +18,7 @@ $backend = Get-Content -Raw -LiteralPath $backendPath
 $extractor = Get-Content -Raw -LiteralPath $extractorPath
 $service = Get-Content -Raw -LiteralPath $servicePath
 $helper = Get-Content -Raw -LiteralPath $helperPath
+$diagnostics = Get-Content -Raw -LiteralPath $diagnosticsPath
 $app = Get-Content -Raw -LiteralPath $appPath
 $xaml = Get-Content -Raw -LiteralPath $xamlPath
 $project = Get-Content -Raw -LiteralPath $projectPath
@@ -76,6 +78,21 @@ foreach ($required in @(
 if ($helper.IndexOf('eventsLost = session.EventsLost', [StringComparison]::Ordinal) -gt
     $helper.IndexOf('session.Stop()', [StringComparison]::Ordinal)) {
     throw 'ETW loss is queried after destroying the live trace session.'
+}
+foreach ($required in @('helper-started', 'helper-pipe-connected', 'helper-providers-verified', 'helper-session-created', 'helper-ready-sent', 'helper-failed')) {
+    if ($helper.IndexOf($required, [StringComparison]::Ordinal) -lt 0) {
+        throw "The ETW helper diagnostic is missing lifecycle stage $required"
+    }
+}
+foreach ($required in @('SchemaVersion', 'Breadcrumbs', 'No USB payloads', 'File.Move(temporary, path, overwrite: true)')) {
+    if ($diagnostics.IndexOf($required, [StringComparison]::Ordinal) -lt 0) {
+        throw "The bounded in-app diagnostic is missing requirement $required"
+    }
+}
+if ($app.IndexOf('System.Windows.Clipboard.SetText(diagnosticText)', [StringComparison]::Ordinal) -lt 0 -or
+    $app.IndexOf('Open diagnostics', [StringComparison]::Ordinal) -lt 0 -or
+    $app.IndexOf('diagnostic.DiagnosticPath', [StringComparison]::Ordinal) -lt 0) {
+    throw 'Capture failures do not expose copy/open diagnostics actions in the controller-safe app flow.'
 }
 if ($service -notmatch 'Stopwatch\.GetTimestamp\(\)' -or
     $service -notmatch 'PerformanceCounterTimestamp' -or

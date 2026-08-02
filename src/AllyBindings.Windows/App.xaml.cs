@@ -750,11 +750,42 @@ public partial class App : System.Windows.Application
                     : $"Capture failed safely: {failureMessage}");
             if (ex is not OperationCanceledException)
             {
-                await _mainWindow.ShowControllerDialogAsync(
+                var diagnostic = ex as ArmouryCaptureException;
+                var diagnosticText = diagnostic?.DiagnosticText;
+                var copied = false;
+                if (!string.IsNullOrWhiteSpace(diagnosticText))
+                {
+                    try
+                    {
+                        System.Windows.Clipboard.SetText(diagnosticText);
+                        copied = true;
+                    }
+                    catch
+                    {
+                        // The file remains available even if another process owns the clipboard.
+                    }
+                }
+                var openDiagnostics = await _mainWindow.ShowControllerDialogAsync(
                     "Armoury capture failed safely",
-                    $"No Ally Bindings controller write was attempted.\n\n{failureMessage}",
-                    allowCancel: false,
-                    primaryLabel: "OK");
+                    $"No Ally Bindings controller write was attempted.\n\n{failureMessage}" +
+                    (diagnostic is null
+                        ? string.Empty
+                        : $"\n\nDiagnostic: {diagnostic.DiagnosticPath}\n" +
+                          (copied
+                              ? "The complete diagnostic is already copied to the clipboard. Paste it into the support conversation, or open its folder to attach the JSON file."
+                              : "Open the diagnostics folder and attach the selected JSON file to the support conversation.")),
+                    allowCancel: diagnostic is not null,
+                    primaryLabel: diagnostic is null ? "OK" : "Open diagnostics",
+                    secondaryLabel: "Close");
+                if (openDiagnostics && diagnostic is not null)
+                {
+                    Process.Start(new ProcessStartInfo
+                    {
+                        FileName = "explorer.exe",
+                        Arguments = $"/select,\"{diagnostic.DiagnosticPath}\"",
+                        UseShellExecute = true,
+                    });
+                }
             }
         }
         finally

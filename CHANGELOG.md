@@ -6,6 +6,19 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Thi
 
 ## [Unreleased]
 
+## [v0.3.0-preview.9] - 2026-08-02
+
+### Added
+
+- Persist a bounded, privacy-safe lifecycle diagnostic when the elevated USB ETW helper starts, authenticates, verifies providers, creates its session, enables providers, becomes ready, receives a command, stops, or fails.
+- Capture the helper exit code and full managed exception without storing USB payloads, controller reports, configuration values, or raw ETW data.
+- Copy the diagnostic JSON to the clipboard automatically after a capture failure and offer an `Open diagnostics` action that selects the file in Explorer, removing the need to run PowerShell on the handheld.
+
+### Tests
+
+- Require rejected helper peers to persist a valid schema-1 diagnostic with the expected failure and privacy declaration.
+- Keep diagnostic lifecycle, atomic writes, clipboard handoff, and Explorer disclosure in the capture safety gate.
+
 ## [v0.3.0-preview.8] - 2026-08-02
 
 ### Upgrade note

@@ -61,6 +61,20 @@ function Invoke-RejectedHelperPeer {
         if ($response.IndexOf($ExpectedErrorFragment, [StringComparison]::OrdinalIgnoreCase) -lt 0) {
             throw "Unexpected helper rejection: $response"
         }
+        $diagnosticPath = Join-Path $env:LOCALAPPDATA "AllyBindings/diagnostics/armoury-etw-$($sessionId.ToString('D')).json"
+        if (-not (Test-Path -LiteralPath $diagnosticPath -PathType Leaf)) {
+            throw 'The rejected helper did not persist an in-app diagnostic.'
+        }
+        $diagnostic = Get-Content -Raw -LiteralPath $diagnosticPath | ConvertFrom-Json
+        if ($diagnostic.SchemaVersion -ne 1 -or $diagnostic.SessionId -ne $sessionId.ToString('D') -or
+            $diagnostic.Stage -ne 'helper-failed' -or
+            $diagnostic.ErrorMessage.IndexOf($ExpectedErrorFragment, [StringComparison]::OrdinalIgnoreCase) -lt 0) {
+            throw "The helper diagnostic did not preserve the authenticated failure: $($diagnostic | ConvertTo-Json -Compress)"
+        }
+        if ($diagnostic.Privacy.IndexOf('No USB payloads', [StringComparison]::Ordinal) -lt 0) {
+            throw 'The helper diagnostic does not declare its payload privacy boundary.'
+        }
+        Remove-Item -LiteralPath $diagnosticPath -Force
     }
     finally {
         if ($process) {
