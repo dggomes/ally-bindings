@@ -252,7 +252,8 @@ if ($service -notmatch 'helperExitVerified = HelperProcess\.HasExited \|\| Helpe
     $service -notmatch '!HelperProcess\.WaitForExit\(5_000\) \|\| !HelperProcess\.HasExited' -or
     $service -notmatch 'Native controller resets remain blocked' -or
     $app -notmatch 'captureCompletion\?\.TrySetException' -or
-    $app -notmatch 'if \(captureTeardownFailure is null\)') {
+    $app -notmatch 'if \(captureTeardownFailure is null\)' -or
+    $app -notmatch 'if \(_armouryCaptureInProgress \|\| _armouryCaptureTeardownUnconfirmed\)') {
     throw 'Capture completion can still authorize a native reset without positively verified ETW helper exit.'
 }
 if ($service -notmatch 'BoundedTextLineReader' -or $helper -notmatch 'BoundedTextLineReader' -or

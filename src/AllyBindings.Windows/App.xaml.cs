@@ -32,7 +32,8 @@ public partial class App : System.Windows.Application
     private bool _mutexReleased;
     private bool _exiting;
     private bool _updateCheckInProgress;
-    private bool _armouryCaptureInProgress;
+    private volatile bool _armouryCaptureInProgress;
+    private volatile bool _armouryCaptureTeardownUnconfirmed;
     private CancellationTokenSource? _armouryCaptureCancellation;
     private TaskCompletionSource? _armouryCaptureCompletion;
     private bool _allowExitWithPendingRearMapping;
@@ -816,6 +817,10 @@ public partial class App : System.Windows.Application
                     _armouryCaptureInProgress = false;
                     _armouryCaptureCompletion = null;
                 }
+                else
+                {
+                    _armouryCaptureTeardownUnconfirmed = true;
+                }
             }
             finally
             {
@@ -1014,7 +1019,28 @@ public partial class App : System.Windows.Application
         {
             _armouryCaptureCancellation?.Cancel();
             _mainWindow.CancelControllerDialog();
-            await captureCompletion;
+            try
+            {
+                await captureCompletion;
+            }
+            catch (Exception ex) when (_armouryCaptureTeardownUnconfirmed)
+            {
+                var exitWithoutReset = await _mainWindow.ShowControllerDialogAsync(
+                    "ETW capture teardown unconfirmed",
+                    "The elevated capture helper did not confirm exit, so Ally Bindings will not issue any controller reset or backend shutdown write. Exiting now severs the capture pipe so Windows can tear the helper down.\n\n" +
+                    $"Details: {ex.Message}\n\nExit Ally Bindings now?",
+                    primaryLabel: "Exit without reset",
+                    secondaryLabel: "Stay open");
+                if (!exitWithoutReset)
+                {
+                    _exiting = false;
+                    OpenMainWindow();
+                    return;
+                }
+                _backendDisposed = true;
+                Shutdown();
+                return;
+            }
         }
         await _operationGate.WaitAsync();
         var shouldShutdown = false;
@@ -1127,6 +1153,13 @@ public partial class App : System.Windows.Application
 
     private void RestoreAndDisposeForTermination()
     {
+        if (_armouryCaptureInProgress || _armouryCaptureTeardownUnconfirmed)
+        {
+            // Never overlap a possibly-live elevated ETW session with backend writes.
+            // Process exit closes the authenticated pipe; the helper then tears down.
+            _backendDisposed = true;
+            return;
+        }
         if (_backend is null || _backendDisposed) return;
         var backend = _backend;
         try
