@@ -62,7 +62,7 @@
               <StackPanel><TextBlock Text="Shortcut" FontSize="18" FontWeight="SemiBold" /><TextBlock Text="Profile rotation chord" Foreground="{StaticResource MutedBrush}" /></StackPanel>
             </ListBoxItem>
             <ListBoxItem AutomationProperties.Name="Capture &amp; update" AutomationProperties.AutomationId="NavigationCaptureUpdate">
-              <StackPanel><TextBlock Text="Capture &amp; update" FontSize="18" FontWeight="SemiBold" /><TextBlock Text="Armoury ETW and app care" Foreground="{StaticResource MutedBrush}" /></StackPanel>
+              <StackPanel><TextBlock Text="Capture + update" FontSize="18" FontWeight="SemiBold" /><TextBlock Text="ETW capture + app care" Foreground="{StaticResource MutedBrush}" /></StackPanel>
             </ListBoxItem>
           </ListBox>
           <StackPanel Grid.Row="1" Margin="4,12,4,2">
