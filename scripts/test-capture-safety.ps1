@@ -132,14 +132,18 @@ if ($service -notmatch 'Environment\.ProcessPath' -or
     $service -notmatch 'ArmouryEtwCaptureHelper\.HelperArgument') {
     throw 'Capture does not self-elevate the same Ally Bindings executable as its ETW helper.'
 }
-if ($service -notmatch 'PipeOptions\.Asynchronous\s*\|\s*PipeOptions\.CurrentUserOnly' -or
+if ($service -notmatch 'ArmouryEtwCapturePipe\.CreateServer\(sessionId\)' -or
     $service -notmatch 'GetNamedPipeClientProcessId' -or
     $service -notmatch 'clientProcessId\s*!=\s*\(uint\)helper\.Id' -or
     $helper -notmatch 'NamedPipeClientStream' -or
-    $helper -notmatch 'PipeOptions\.Asynchronous\s*\|\s*PipeOptions\.CurrentUserOnly' -or
+    $helper -notmatch 'NamedPipeServerStreamAcl\.Create' -or
+    $helper -notmatch 'WellKnownSidType\.NetworkSid' -or
+    $helper -notmatch 'AccessControlType\.Deny' -or
+    $helper -notmatch 'AccessControlType\.Allow' -or
+    $helper -notmatch 'SetOwner\(userSid\)' -or
     $helper -notmatch 'GetNamedPipeServerProcessId' -or
     $helper -notmatch 'serverProcessId\s*!=\s*\(uint\)parentProcessId') {
-    throw 'The parent and elevated helper do not mutually authenticate over a current-user-only named pipe.'
+    throw 'The cross-elevation ETW pipe is not current-user/local-only with mutual PID authentication.'
 }
 foreach ($workflow in @($buildWorkflow, $releaseWorkflow)) {
     if ($workflow.IndexOf('test-etw-helper-auth.ps1', [StringComparison]::Ordinal) -lt 0) {

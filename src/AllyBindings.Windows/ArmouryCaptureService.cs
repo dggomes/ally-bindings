@@ -61,12 +61,7 @@ internal sealed class ArmouryCaptureService
                     "The confirmed ASUS HID identity changed before ETW capture began. No capture was started.");
             }
 
-            pipe = new NamedPipeServerStream(
-                ArmouryEtwCapturePipe.GetPipeName(sessionId),
-                PipeDirection.InOut,
-                1,
-                PipeTransmissionMode.Byte,
-                PipeOptions.Asynchronous | PipeOptions.CurrentUserOnly);
+            pipe = ArmouryEtwCapturePipe.CreateServer(sessionId);
             var executable = Environment.ProcessPath
                 ?? throw new InvalidOperationException("Windows did not expose the current Ally Bindings executable path.");
             var startInfo = new ProcessStartInfo
