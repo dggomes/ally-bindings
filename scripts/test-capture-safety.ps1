@@ -261,6 +261,11 @@ if ($service -notmatch 'helperExitVerified = helper\.HasExited \|\| helper\.Wait
     $app -notmatch 'private async Task<bool> ConfirmSafeExitForUpdateAsync\(\)[\s\S]*CaptureResetGate\.AcquireWhenCaptureStoppedAsync') {
     throw 'Capture startup or updater shutdown can still bypass verified helper teardown.'
 }
+if ($app -notmatch 'private async Task ExitAsync\(\)[\s\S]*CaptureResetGate\.AcquireWhenCaptureStoppedAsync' -or
+    $app -notmatch 'if \(_exiting \|\| _armouryCaptureInProgress\) return;' -or
+    $app -notmatch 'OnSessionEnding\(SessionEndingCancelEventArgs e\)[\s\S]*_exiting = true;') {
+    throw 'Exit or session-ending can still race queued capture startup.'
+}
 
 if ($service -notmatch 'BoundedTextLineReader' -or $helper -notmatch 'BoundedTextLineReader' -or
     $boundedReader -notmatch 'Array\.IndexOf' -or $boundedReader -notmatch '_offset') {

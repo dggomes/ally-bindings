@@ -652,7 +652,7 @@ public partial class App : System.Windows.Application
         await _operationGate.WaitAsync();
         try
         {
-            if (_armouryCaptureInProgress) return;
+            if (_exiting || _armouryCaptureInProgress) return;
             _armouryCaptureInProgress = true;
             _armouryCaptureCancellation = new CancellationTokenSource();
             _armouryCaptureCompletion = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -1025,35 +1025,36 @@ public partial class App : System.Windows.Application
     {
         if (_exiting) return;
         _exiting = true;
-        var captureCompletion = _armouryCaptureCompletion?.Task;
-        if (captureCompletion is not null)
+        IAsyncDisposable? exitLease = null;
+        try
         {
-            _armouryCaptureCancellation?.Cancel();
-            _mainWindow.CancelControllerDialog();
-            try
-            {
-                await captureCompletion;
-            }
-            catch (Exception ex) when (_armouryCaptureTeardownUnconfirmed)
-            {
-                var exitWithoutReset = await _mainWindow.ShowControllerDialogAsync(
-                    "ETW capture teardown unconfirmed",
-                    "The elevated capture helper did not confirm exit, so Ally Bindings will not issue any controller reset or backend shutdown write. Exiting now severs the capture pipe so Windows can tear the helper down.\n\n" +
-                    $"Details: {ex.Message}\n\nExit Ally Bindings now?",
-                    primaryLabel: "Exit without reset",
-                    secondaryLabel: "Stay open");
-                if (!exitWithoutReset)
+            exitLease = await CaptureResetGate.AcquireWhenCaptureStoppedAsync(
+                _operationGate,
+                () => _armouryCaptureInProgress ? _armouryCaptureCompletion?.Task : null,
+                () =>
                 {
-                    _exiting = false;
-                    OpenMainWindow();
-                    return;
-                }
-                _backendDisposed = true;
-                Shutdown();
+                    _armouryCaptureCancellation?.Cancel();
+                    _mainWindow.CancelControllerDialog();
+                });
+        }
+        catch (Exception ex) when (_armouryCaptureTeardownUnconfirmed)
+        {
+            var exitWithoutReset = await _mainWindow.ShowControllerDialogAsync(
+                "ETW capture teardown unconfirmed",
+                "The elevated capture helper did not confirm exit, so Ally Bindings will not issue any controller reset or backend shutdown write. Exiting now severs the capture pipe so Windows can tear the helper down.\n\n" +
+                $"Details: {ex.Message}\n\nExit Ally Bindings now?",
+                primaryLabel: "Exit without reset",
+                secondaryLabel: "Stay open");
+            if (!exitWithoutReset)
+            {
+                _exiting = false;
+                OpenMainWindow();
                 return;
             }
+            _backendDisposed = true;
+            Shutdown();
+            return;
         }
-        await _operationGate.WaitAsync();
         var shouldShutdown = false;
 
         try
@@ -1134,13 +1135,14 @@ public partial class App : System.Windows.Application
         }
         finally
         {
-            _operationGate.Release();
+            if (exitLease is not null) await exitLease.DisposeAsync();
             if (shouldShutdown) Shutdown();
         }
     }
 
     protected override void OnSessionEnding(SessionEndingCancelEventArgs e)
     {
+        _exiting = true;
         RestoreAndDisposeForTermination();
         base.OnSessionEnding(e);
     }
