@@ -9,6 +9,7 @@ public sealed record UsbEtwSchemaDiscoveryReport(
     bool DiagnosticOnly,
     bool ContainsPayloadBytes,
     bool Complete,
+    string SelectionPolicy,
     IReadOnlyList<UsbEtwSchemaShape> SchemaShapes,
     IReadOnlyList<UsbEtwMarkerShape> MarkerShapes);
 

@@ -6,6 +6,7 @@ $backendPath = Join-Path $root 'src/AllyBindings.Core/ControllerBackend.cs'
 $extractorPath = Join-Path $root 'src/AllyBindings.Core/UsbEtwHidFeatureReportExtractor.cs'
 $discoveryPath = Join-Path $root 'src/AllyBindings.Core/UsbEtwSchemaDiscovery.cs'
 $payloadFlattenerPath = Join-Path $root 'src/AllyBindings.Core/UsbEtwPayloadFlattener.cs'
+$schemaRetentionPolicyPath = Join-Path $root 'src/AllyBindings.Core/UsbEtwSchemaRetentionPolicy.cs'
 $phasePath = Join-Path $root 'src/AllyBindings.Core/UsbEtwCapturePhases.cs'
 $boundedReaderPath = Join-Path $root 'src/AllyBindings.Core/BoundedTextLineReader.cs'
 $resetGatePath = Join-Path $root 'src/AllyBindings.Core/CaptureResetGate.cs'
@@ -24,6 +25,7 @@ $backend = Get-Content -Raw -LiteralPath $backendPath
 $extractor = Get-Content -Raw -LiteralPath $extractorPath
 $discovery = Get-Content -Raw -LiteralPath $discoveryPath
 $payloadFlattener = Get-Content -Raw -LiteralPath $payloadFlattenerPath
+$schemaRetentionPolicy = Get-Content -Raw -LiteralPath $schemaRetentionPolicyPath
 $phase = Get-Content -Raw $phasePath
 $boundedReader = Get-Content -Raw $boundedReaderPath
 $resetGate = Get-Content -Raw $resetGatePath
@@ -82,6 +84,10 @@ foreach ($required in @(
     'MaximumRetainedReports',
     'MaximumSchemaShapes',
     'MaximumSchemaShapesPerPhase',
+    'MaximumPrioritySchemaShapes',
+    'MaximumPrioritySchemaShapesPerPhase',
+    'MaximumFramingSchemaShapes',
+    'MaximumFramingSchemaShapesPerPhase',
     'MaximumMarkerShapes',
     'MaximumMarkerShapesPerPhase',
     'MaximumPayloadProperties',
@@ -98,11 +104,20 @@ foreach ($required in @(
     }
 }
 if ($helper -notmatch 'UsbEtwPayloadFlattener\.Flatten' -or
-    $helper -notmatch 'fields\.DecodedBytes\s*==\s*0' -or
+    $helper -notmatch 'UsbEtwSchemaRetentionPolicy\.Classify' -or
+    $helper -notmatch 'UsbEtwPrioritizedSchemaCounter' -or
+    $helper -notmatch 'MaximumPrioritySchemaShapes' -or
+    $helper -notmatch 'MaximumFramingSchemaShapes' -or
+    $helper -notmatch 'UsbEtwSchemaDiscovery\.Inspect\(\s*fields\.DiscoveryFields' -or
     $payloadFlattener -notmatch 'IEnumerable<KeyValuePair<string, object>>' -or
     $payloadFlattener -notmatch 'ReferenceEqualityComparer\.Instance' -or
-    $payloadFlattener -match 'JsonSerializer|WriteAll|FileStream|ToString\(') {
-    throw 'Nested ETW payload inspection is not bounded, transient and binary-schema-prioritized.'
+    $payloadFlattener -match 'JsonSerializer|WriteAll|FileStream|ToString\(' -or
+    $schemaRetentionPolicy -notmatch 'Microsoft-Windows-USB-UCX' -or
+    $schemaRetentionPolicy -notmatch 'URB_FUNCTION_' -or
+    $schemaRetentionPolicy -notmatch 'fid_UCX_URB_' -or
+    $schemaRetentionPolicy -notmatch 'fid_URB_TransferData' -or
+    $schemaRetentionPolicy -match 'PayloadValue|MarkerComparableBytes|byte\[\]') {
+    throw 'Nested ETW payload inspection is not bounded, transient and focused on metadata-only UCX URB framing.'
 }
 if ($helper.IndexOf('eventsLost = session.EventsLost', [StringComparison]::Ordinal) -gt
     $helper.IndexOf('session.Stop()', [StringComparison]::Ordinal)) {
@@ -151,8 +166,8 @@ if ($service -notmatch 'Stopwatch\.GetTimestamp\(\)' -or
     $extractor -notmatch 'PerformanceCounterTimestamp') {
     throw 'Action markers and ETW reports are not correlated on the shared QPC clock.'
 }
-if (($service | Select-String -Pattern 'schemaVersion\s*=\s*6' -AllMatches).Matches.Count -ne 2) {
-    throw 'Capture report and manifest are not both stamped with nested-payload schema version 6.'
+if (($service | Select-String -Pattern 'schemaVersion\s*=\s*7' -AllMatches).Matches.Count -ne 2) {
+    throw 'Capture report and manifest are not both stamped with focused UCX URB schema version 7.'
 }
 if ($extractor -notmatch '0x5A,\s*0xD1,\s*0x02,\s*0x08,\s*0x2C' -or
     $extractor -notmatch 'AsusRearButtonProtocol\.ReportLength' -or

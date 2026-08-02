@@ -22,5 +22,5 @@ foreach ($tag in @('v0.3.0-preview.5', 'v0.3.0-preview.7', 'v0.3.0-preview.11'))
     }
 }
 
-& $assertScript -Tag 'v0.3.0-preview.13' -DenylistPath $denylist
-Write-Output 'Withdrawn-release policy passed: preview.5, preview.7, and preview.11 rejected; preview.13 accepted.'
+& $assertScript -Tag 'v0.3.0-preview.14' -DenylistPath $denylist
+Write-Output 'Withdrawn-release policy passed: preview.5, preview.7, and preview.11 rejected; preview.14 accepted.'
