@@ -94,7 +94,7 @@ internal sealed class ArmouryCaptureService
                 directory,
                 confirmedTarget,
                 connection.Ready.EnabledProviders.Select(provider => provider.Name).ToArray());
-            session.MarkAction("capture-started");
+            session.RecordAction("capture-started");
             return session;
         }
         catch (Win32Exception ex) when (ex.NativeErrorCode == 1223)
@@ -110,30 +110,94 @@ internal sealed class ArmouryCaptureService
         catch (OperationCanceledException)
         {
             ArmouryCaptureDiagnostics.Delete(sessionId);
+            Exception? terminationFailure = null;
             if (helper is not null)
             {
-                StopHelper(helper);
-                helper.Dispose();
+                try { StopHelper(helper); }
+                catch (Exception ex) { terminationFailure = ex; }
+                try { helper.Dispose(); }
+                catch (Exception ex) { terminationFailure = CombineFailures(terminationFailure, ex); }
             }
-            pipe?.Dispose();
+            try { pipe?.Dispose(); }
+            catch (Exception ex) { terminationFailure = CombineFailures(terminationFailure, ex); }
+            if (terminationFailure is not null)
+            {
+                throw new ArmouryCaptureTeardownException(
+                    "Capture startup was cancelled, but the elevated ETW helper exit could not be confirmed.",
+                    terminationFailure);
+            }
             throw;
         }
         catch (Exception ex)
         {
             var helperExitCode = TryGetExitCode(helper);
             ArmouryCaptureDiagnostics.Record(sessionId, "parent-start-failed", ex, helperExitCode);
+            Exception? terminationFailure = null;
             if (helper is not null)
             {
-                StopHelper(helper);
-                helper.Dispose();
+                try { StopHelper(helper); }
+                catch (Exception stopFailure) { terminationFailure = stopFailure; }
+                try { helper.Dispose(); }
+                catch (Exception disposeFailure) { terminationFailure = CombineFailures(terminationFailure, disposeFailure); }
             }
-            pipe?.Dispose();
+            try { pipe?.Dispose(); }
+            catch (Exception disposeFailure) { terminationFailure = CombineFailures(terminationFailure, disposeFailure); }
+            if (terminationFailure is not null)
+            {
+                throw new ArmouryCaptureTeardownException(
+                    "Capture startup failed, and the elevated ETW helper exit could not be confirmed.",
+                    new AggregateException(ex, terminationFailure));
+            }
             if (ex is ArmouryCaptureException) throw;
             throw new ArmouryCaptureException(
                 sessionId,
                 $"The elevated ETW helper failed before capture became ready{FormatExitCode(helperExitCode)}.",
                 ex);
         }
+    }
+
+    public async Task MarkActionAsync(
+        ArmouryCaptureSession session,
+        string action,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(session);
+        var transition = action switch
+        {
+            "step-started-m1-a-m2-b" => (Phase: 1, Kind: UsbEtwCapturePhaseTransition.Start),
+            "armoury-applied-m1-a-m2-b" => (Phase: 1, Kind: UsbEtwCapturePhaseTransition.End),
+            "step-started-m1-x-m2-y" => (Phase: 2, Kind: UsbEtwCapturePhaseTransition.Start),
+            "armoury-applied-m1-x-m2-y" => (Phase: 2, Kind: UsbEtwCapturePhaseTransition.End),
+            "step-started-reset-to-default" => (Phase: 3, Kind: UsbEtwCapturePhaseTransition.Start),
+            "armoury-reset-m1-m2-to-default" => (Phase: 3, Kind: UsbEtwCapturePhaseTransition.End),
+            _ => (Phase: 0, Kind: UsbEtwCapturePhaseTransition.Start),
+        };
+        if (transition.Phase == 0)
+        {
+            session.RecordAction(action);
+            return;
+        }
+
+        await session.PipeWriter.WriteLineAsync(
+            UsbEtwCapturePhaseCommand.Format(transition.Phase, transition.Kind)).ConfigureAwait(false);
+        var acknowledgement = await ReadEnvelopeAsync(
+            session.SessionId,
+            session.HelperProcess,
+            session.PipeReader,
+            TimeSpan.FromSeconds(10),
+            cancellationToken).ConfigureAwait(false);
+        var expectedStarted = transition.Kind == UsbEtwCapturePhaseTransition.Start;
+        if (!acknowledgement.Type.Equals("phase-ack", StringComparison.Ordinal) ||
+            acknowledgement.Phase != transition.Phase ||
+            acknowledgement.PhaseStarted != expectedStarted ||
+            acknowledgement.BoundaryQpc is not > 0)
+        {
+            throw new InvalidDataException("The ETW helper did not acknowledge the requested capture phase boundary.");
+        }
+        session.RecordAction(action, acknowledgement.BoundaryQpc.Value);
+        ArmouryCaptureDiagnostics.Record(
+            session.SessionId,
+            $"parent-phase-{transition.Kind.ToString().ToLowerInvariant()}-{transition.Phase}-acknowledged");
     }
 
     public async Task<ArmouryCaptureResult> CompleteAsync(
@@ -176,7 +240,7 @@ internal sealed class ArmouryCaptureService
         }
         await WaitForHelperExitAsync(session.HelperProcess, cancellationToken).ConfigureAwait(false);
         var output = envelope.Output;
-        session.MarkAction("capture-stopped");
+        session.RecordAction("capture-stopped");
 
         var reports = output.Reports
             .Select((report, index) => AnalyseReport(index + 1, report))
@@ -187,18 +251,16 @@ internal sealed class ArmouryCaptureService
         var evidenceHash = Convert.ToHexString(SHA256.HashData(outputBytes)).ToLowerInvariant();
         var reportBytes = SerializeJson(new
         {
-            schemaVersion = 4,
+            schemaVersion = 5,
             actions = session.Actions,
             assessment,
             reports,
-            schemaDiscovery = new
-            {
-                diagnosticOnly = true,
-                containsPayloadBytes = false,
-                complete = !output.SchemaDiscoveryLimitExceeded,
-                schemaShapes = output.SchemaShapes,
-                markerShapes = output.MarkerShapes,
-            },
+            schemaDiscovery = new UsbEtwSchemaDiscoveryReport(
+                DiagnosticOnly: true,
+                ContainsPayloadBytes: false,
+                Complete: !output.SchemaDiscoveryLimitExceeded,
+                output.SchemaShapes,
+                output.MarkerShapes),
             etw = new
             {
                 output.EnabledProviders,
@@ -220,7 +282,7 @@ internal sealed class ArmouryCaptureService
         });
         var manifestBytes = SerializeJson(new
         {
-            schemaVersion = 4,
+            schemaVersion = 5,
             capturedAtUtc = DateTimeOffset.UtcNow,
             applicationVersion = GetApplicationVersion(),
             source = "Windows built-in USB ETW real-time FullDataBusTrace session",
@@ -313,7 +375,8 @@ internal sealed class ArmouryCaptureService
                     "The ETW named-pipe client was not the elevated Ally Bindings helper process.");
             }
 
-            var reader = new StreamReader(pipe, Encoding.UTF8, detectEncodingFromByteOrderMarks: false, leaveOpen: true);
+            var reader = new BoundedTextLineReader(
+                new StreamReader(pipe, Encoding.UTF8, detectEncodingFromByteOrderMarks: false, leaveOpen: true));
             var writer = new StreamWriter(pipe, new UTF8Encoding(false), leaveOpen: true)
             {
                 AutoFlush = true,
@@ -344,7 +407,7 @@ internal sealed class ArmouryCaptureService
     private static async Task<EtwPipeEnvelope> ReadEnvelopeAsync(
         Guid sessionId,
         Process helper,
-        StreamReader reader,
+        BoundedTextLineReader reader,
         TimeSpan timeoutDuration,
         CancellationToken cancellationToken)
     {
@@ -353,7 +416,7 @@ internal sealed class ArmouryCaptureService
         string? line;
         try
         {
-            line = await ReadBoundedLineAsync(reader, MaximumPipeEnvelopeCharacters, timeout.Token).ConfigureAwait(false);
+            line = await reader.ReadLineAsync(MaximumPipeEnvelopeCharacters, timeout.Token).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
@@ -369,29 +432,6 @@ internal sealed class ArmouryCaptureService
         }
         return JsonSerializer.Deserialize<EtwPipeEnvelope>(line, JsonOptions)
             ?? throw new InvalidDataException("The in-app USB ETW helper returned an empty message.");
-    }
-
-    private static async Task<string?> ReadBoundedLineAsync(
-        StreamReader reader,
-        int maximumCharacters,
-        CancellationToken cancellationToken)
-    {
-        var result = new StringBuilder(Math.Min(maximumCharacters, 4096));
-        var buffer = new char[1024];
-        while (true)
-        {
-            var read = await reader.ReadAsync(buffer.AsMemory(), cancellationToken).ConfigureAwait(false);
-            if (read == 0) return result.Length == 0 ? null : result.ToString();
-            for (var index = 0; index < read; index++)
-            {
-                if (buffer[index] == '\n') return result.ToString().TrimEnd('\r');
-                if (result.Length == maximumCharacters)
-                {
-                    throw new InvalidDataException("The ETW helper response exceeded its maximum length.");
-                }
-                result.Append(buffer[index]);
-            }
-        }
     }
 
     private static async Task WaitForHelperExitAsync(
@@ -535,25 +575,38 @@ internal sealed class ArmouryCaptureService
     private static string FormatExitCode(int? exitCode) =>
         exitCode.HasValue ? $" (exit code {exitCode.Value})" : string.Empty;
 
+    private static Exception CombineFailures(Exception? first, Exception second) =>
+        first is null ? second : new AggregateException(first, second);
+
     private static void StopHelper(Process helper)
     {
+        Exception? gracefulFailure = null;
+        var helperExitVerified = false;
         try
         {
-            if (!helper.HasExited && !helper.WaitForExit(5_000))
-            {
-                helper.Kill(entireProcessTree: true);
-                helper.WaitForExit(5_000);
-            }
+            helperExitVerified = helper.HasExited || helper.WaitForExit(5_000);
         }
-        catch
+        catch (Exception ex)
+        {
+            gracefulFailure = ex;
+        }
+        if (!helperExitVerified)
         {
             try
             {
                 if (!helper.HasExited) helper.Kill(entireProcessTree: true);
+                if (!helper.WaitForExit(5_000) || !helper.HasExited)
+                {
+                    throw new TimeoutException("The elevated ETW helper did not exit after forced process-tree termination.");
+                }
             }
-            catch
+            catch (Exception forcedFailure)
             {
-                // Best effort; TraceEventSession also stops its session on helper disposal/process exit.
+                throw new ArmouryCaptureTeardownException(
+                    "The elevated ETW helper exit could not be confirmed.",
+                    gracefulFailure is null
+                        ? forcedFailure
+                        : new AggregateException(gracefulFailure, forcedFailure));
             }
         }
     }
@@ -640,7 +693,7 @@ internal sealed class ArmouryCaptureSession(
     Guid sessionId,
     Process helperProcess,
     NamedPipeServerStream pipe,
-    StreamReader pipeReader,
+    BoundedTextLineReader pipeReader,
     StreamWriter pipeWriter,
     string directory,
     ArmouryCaptureTarget target,
@@ -651,27 +704,19 @@ internal sealed class ArmouryCaptureSession(
     public Guid SessionId { get; } = sessionId;
     public Process HelperProcess { get; } = helperProcess;
     public NamedPipeServerStream Pipe { get; } = pipe;
-    public StreamReader PipeReader { get; } = pipeReader;
+    public BoundedTextLineReader PipeReader { get; } = pipeReader;
     public StreamWriter PipeWriter { get; } = pipeWriter;
     public string Directory { get; } = directory;
     public ArmouryCaptureTarget Target { get; } = target;
     public IReadOnlyList<string> EnabledProviders { get; } = enabledProviders;
     public List<CaptureActionMarker> Actions { get; } = [];
 
-    public void MarkAction(string action)
+    public void RecordAction(string action, long? qpcOverride = null)
     {
-        Actions.Add(new(DateTimeOffset.UtcNow, Stopwatch.GetTimestamp(), action));
-        var phaseCommand = action switch
-        {
-            "step-started-m1-a-m2-b" => "stage-1",
-            "step-started-m1-x-m2-y" => "stage-2",
-            "step-started-reset-to-default" => "stage-3",
-            _ => null,
-        };
-        if (phaseCommand is not null)
-        {
-            PipeWriter.WriteLine(phaseCommand);
-        }
+        var occurredAtUtc = DateTimeOffset.UtcNow;
+        var qpc = qpcOverride ?? Stopwatch.GetTimestamp();
+        if (qpc <= 0) throw new ArgumentOutOfRangeException(nameof(qpcOverride));
+        Actions.Add(new(occurredAtUtc, qpc, action));
     }
 
     public void Dispose()
@@ -685,45 +730,66 @@ internal sealed class ArmouryCaptureSession(
 
     public void CancelAndDelete()
     {
+        Exception? terminationFailure = null;
         Exception? cleanupFailure = null;
+        var helperExitVerified = false;
         try
         {
-            PipeWriter.WriteLine("cancel");
-            if (!HelperProcess.HasExited && !HelperProcess.WaitForExit(5_000))
+            try
             {
-                HelperProcess.Kill(entireProcessTree: true);
-                HelperProcess.WaitForExit(5_000);
+                PipeWriter.WriteLine("cancel");
             }
+            catch
+            {
+                // Continue to the mandatory process-termination check.
+            }
+
+            helperExitVerified = HelperProcess.HasExited || HelperProcess.WaitForExit(5_000);
         }
-        catch
+        catch (Exception ex)
+        {
+            terminationFailure = ex;
+        }
+
+        if (!helperExitVerified)
         {
             try
             {
                 if (!HelperProcess.HasExited) HelperProcess.Kill(entireProcessTree: true);
-            }
-            catch
-            {
-                // Best effort; cancelled evidence is never accepted.
-            }
-        }
-        finally
-        {
-            Dispose();
-            ArmouryCaptureDiagnostics.Delete(SessionId);
-            try
-            {
-                System.IO.Directory.Delete(Directory, recursive: true);
+                if (!HelperProcess.WaitForExit(5_000) || !HelperProcess.HasExited)
+                {
+                    throw new TimeoutException("The elevated ETW helper did not exit after cancellation and forced termination.");
+                }
+                helperExitVerified = true;
             }
             catch (Exception ex)
             {
-                cleanupFailure = ex;
+                terminationFailure = terminationFailure is null
+                    ? ex
+                    : new AggregateException(terminationFailure, ex);
             }
         }
-        if (cleanupFailure is not null)
+
+        if (!helperExitVerified && terminationFailure is null)
         {
-            throw new IOException(
-                $"Cancelled capture data could not be removed and remains at: {Directory}",
-                cleanupFailure);
+            terminationFailure = new InvalidOperationException("The elevated ETW helper exit could not be verified.");
+        }
+        try
+        {
+            Dispose();
+            ArmouryCaptureDiagnostics.Delete(SessionId);
+            System.IO.Directory.Delete(Directory, recursive: true);
+        }
+        catch (Exception ex)
+        {
+            cleanupFailure = ex;
+        }
+        if (terminationFailure is not null || cleanupFailure is not null)
+        {
+            var failures = new[] { terminationFailure, cleanupFailure }.OfType<Exception>().ToArray();
+            throw new AggregateException(
+                $"Cancelled capture teardown could not be verified. Native controller resets remain blocked; restart Ally Bindings. Evidence directory: {Directory}",
+                failures);
         }
     }
 
@@ -741,7 +807,7 @@ internal sealed class ArmouryCaptureSession(
 }
 
 internal sealed record EtwPipeConnection(
-    StreamReader Reader,
+    BoundedTextLineReader Reader,
     StreamWriter Writer,
     EtwCaptureReady Ready);
 

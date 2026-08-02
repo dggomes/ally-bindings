@@ -23,11 +23,12 @@ internal static class ArmouryEtwCaptureHelper
     private const int MaximumMarkerShapes = 64;
     private const int MaximumMarkerShapesPerPhase = 16;
     private const int MaximumPayloadProperties = 32;
+    private const int MaximumDecodedPayloadProperties = 256;
     private const int MaximumMetadataCharacters = 64;
     private const int MaximumSchemaDiscoveryBytes = 128 * 1024;
     private const long MaximumObservedEvents = 2_000_000;
     private const long MaximumDecodedBinaryBytes = 512L * 1024 * 1024;
-    private const int MaximumCommandCharacters = 16;
+
     private const int ProviderEnableTimeoutMilliseconds = 10_000;
     private const string CaptureSessionName = "AllyBindings-Armoury-Capture";
     private static readonly TimeSpan MaximumCaptureDuration = TimeSpan.FromMinutes(10);
@@ -71,7 +72,8 @@ internal static class ArmouryEtwCaptureHelper
             }
             VerifyParentExecutableIdentity(parentProcessId);
             ArmouryCaptureDiagnostics.Record(sessionId, "helper-parent-authenticated");
-            using var reader = new StreamReader(pipe, Encoding.UTF8, detectEncodingFromByteOrderMarks: false, leaveOpen: true);
+            using var reader = new BoundedTextLineReader(
+                new StreamReader(pipe, Encoding.UTF8, detectEncodingFromByteOrderMarks: false, leaveOpen: true));
             await using var writer = new StreamWriter(pipe, new UTF8Encoding(false), leaveOpen: true)
             {
                 AutoFlush = true,
@@ -102,7 +104,7 @@ internal static class ArmouryEtwCaptureHelper
 
     private static async Task<int> CaptureAsync(
         Guid sessionId,
-        StreamReader reader,
+        BoundedTextLineReader reader,
         StreamWriter writer,
         CancellationToken cancellationToken)
     {
@@ -120,7 +122,7 @@ internal static class ArmouryEtwCaptureHelper
         var reports = new List<UsbEtwFeatureReport>();
         var schemaShapes = new Dictionary<EtwSchemaShapeKey, long>();
         var markerShapes = new Dictionary<EtwMarkerShapeKey, long>();
-        var capturePhase = 0;
+        var capturePhases = new UsbEtwCapturePhaseWindows();
         long observedEventCount = 0;
         long oversizedEventCount = 0;
         long payloadDecodeFailureCount = 0;
@@ -171,7 +173,10 @@ internal static class ArmouryEtwCaptureHelper
                     data.ProviderName ?? data.ProviderGuid.ToString("D"),
                     "unknown-provider");
                 var eventName = NormalizeMetadata(data.EventName, $"event-{data.ID}");
-                var phase = Volatile.Read(ref capturePhase);
+#pragma warning disable CS0618 // Raw ETW QPC is required to classify buffered events against parent QPC boundaries.
+                var eventQpc = data.TimeStampQPC;
+#pragma warning restore CS0618
+                var phase = capturePhases.Classify(eventQpc);
                 foreach (var field in fields.PropertyShapes)
                 {
                     var key = new EtwSchemaShapeKey(
@@ -237,9 +242,6 @@ internal static class ArmouryEtwCaptureHelper
                 }
 
                 var remaining = Math.Max(1, MaximumRetainedReports - reports.Count);
-#pragma warning disable CS0618 // Raw ETW QPC intentionally shares the Windows performance-counter clock with parent markers.
-                var eventQpc = data.TimeStampQPC;
-#pragma warning restore CS0618
                 var extraction = UsbEtwHidFeatureReportExtractor.Extract(
                     new DateTimeOffset(session.Source.SessionStartTime)
                         .AddMilliseconds(data.TimeStampRelativeMSec)
@@ -294,27 +296,36 @@ internal static class ArmouryEtwCaptureHelper
         {
             while (true)
             {
-                command = await ReadBoundedLineAsync(reader, MaximumCommandCharacters, lifetime.Token).ConfigureAwait(false);
-                ArmouryCaptureDiagnostics.Record(sessionId, $"helper-command-{command ?? "disconnected"}");
-                switch (command)
+                command = await reader.ReadLineAsync(
+                    UsbEtwCapturePhaseCommand.MaximumCommandCharacters,
+                    lifetime.Token).ConfigureAwait(false);
+                if (command is null)
                 {
-                    case "stage-1":
-                        Volatile.Write(ref capturePhase, 1);
-                        continue;
-                    case "stage-2":
-                        Volatile.Write(ref capturePhase, 2);
-                        continue;
-                    case "stage-3":
-                        Volatile.Write(ref capturePhase, 3);
-                        continue;
-                    case "stop":
-                    case "cancel":
-                    case null:
-                        break;
-                    default:
-                        throw new InvalidDataException("The ETW helper received an invalid parent command.");
+                    ArmouryCaptureDiagnostics.Record(sessionId, "helper-command-disconnected");
+                    break;
                 }
-                break;
+                if (command is "stop" or "cancel")
+                {
+                    ArmouryCaptureDiagnostics.Record(sessionId, $"helper-command-{command}");
+                    break;
+                }
+                if (!UsbEtwCapturePhaseCommand.TryParse(command, out var phase, out var transition))
+                {
+                    throw new InvalidDataException("The ETW helper received an invalid phase command.");
+                }
+                var boundaryQpc = transition == UsbEtwCapturePhaseTransition.Start
+                    ? capturePhases.StartNow(phase)
+                    : capturePhases.EndNow(phase);
+                ArmouryCaptureDiagnostics.Record(
+                    sessionId,
+                    $"helper-command-{transition.ToString().ToLowerInvariant()}-{phase}");
+                await WriteEnvelopeAsync(
+                    writer,
+                    new(
+                        "phase-ack",
+                        Phase: phase,
+                        PhaseStarted: transition == UsbEtwCapturePhaseTransition.Start,
+                        BoundaryQpc: boundaryQpc)).ConfigureAwait(false);
             }
         }
         catch (OperationCanceledException ex) when (!cancellationToken.IsCancellationRequested)
@@ -358,7 +369,7 @@ internal static class ArmouryEtwCaptureHelper
             .ThenBy(pair => pair.Key.EventName, StringComparer.Ordinal)
             .ThenBy(pair => pair.Key.EventId)
             .ThenBy(pair => pair.Key.FieldOrdinal)
-            .Select(pair => new EtwSchemaShape(
+            .Select(pair => new UsbEtwSchemaShape(
                 pair.Key.Phase,
                 pair.Key.ProviderName,
                 pair.Key.EventName,
@@ -378,7 +389,7 @@ internal static class ArmouryEtwCaptureHelper
             .ThenBy(pair => pair.Key.ProviderName, StringComparer.Ordinal)
             .ThenBy(pair => pair.Key.EventId)
             .ThenBy(pair => pair.Key.Kind, StringComparer.Ordinal)
-            .Select(pair => new EtwMarkerShape(
+            .Select(pair => new UsbEtwMarkerShape(
                 pair.Key.Phase,
                 pair.Key.ProviderName,
                 pair.Key.EventName,
@@ -437,10 +448,23 @@ internal static class ArmouryEtwCaptureHelper
         long totalBinaryLength = 0;
         var names = data.PayloadNames;
         var discoveryLimitExceeded = names.Length > MaximumPayloadProperties;
+        if (names.Length > MaximumDecodedPayloadProperties)
+        {
+            return new(
+                binaryFields,
+                discoveryFields,
+                propertyShapes,
+                decodedBytes,
+                BucketLength(names.Length),
+                BucketLength(totalBinaryLength),
+                AggregateLimitExceeded: true,
+                DiscoveryLimitExceeded: true);
+        }
 
         for (var index = 0; index < names.Length; index++)
         {
             var value = data.PayloadValue(index);
+            var propertyName = NormalizeMetadata(names[index], $"field-{index}");
             var binary = ToBinaryBytes(value);
             if (binary is not null)
             {
@@ -456,7 +480,7 @@ internal static class ArmouryEtwCaptureHelper
                         AggregateLimitExceeded: true,
                         DiscoveryLimitExceeded: discoveryLimitExceeded);
                 }
-                binaryFields.Add(new(names[index], binary));
+                binaryFields.Add(new(propertyName, binary));
                 decodedBytes += binary.LongLength;
                 totalBinaryLength += binary.LongLength;
             }
@@ -464,7 +488,6 @@ internal static class ArmouryEtwCaptureHelper
             if (index >= MaximumPayloadProperties) continue;
             var runtimeType = GetRuntimeType(value);
             var observedLength = GetObservedLength(value, binary);
-            var propertyName = NormalizeMetadata(names[index], $"field-{index}");
             propertyShapes.Add(new(
                 index,
                 propertyName,
@@ -604,26 +627,6 @@ internal static class ArmouryEtwCaptureHelper
         }
     }
 
-    private static async Task<string?> ReadBoundedLineAsync(
-        StreamReader reader,
-        int maximumCharacters,
-        CancellationToken cancellationToken)
-    {
-        var result = new StringBuilder(Math.Min(maximumCharacters, 64));
-        var buffer = new char[1];
-        while (true)
-        {
-            var read = await reader.ReadAsync(buffer.AsMemory(), cancellationToken).ConfigureAwait(false);
-            if (read == 0) return result.Length == 0 ? null : result.ToString();
-            if (buffer[0] == '\n') return result.ToString().TrimEnd('\r');
-            if (result.Length == maximumCharacters)
-            {
-                throw new InvalidDataException("The ETW helper command exceeded its maximum length.");
-            }
-            result.Append(buffer[0]);
-        }
-    }
-
     private static Task WriteEnvelopeAsync(StreamWriter writer, EtwPipeEnvelope envelope) =>
         writer.WriteLineAsync(JsonSerializer.Serialize(envelope, JsonOptions));
 
@@ -712,7 +715,10 @@ internal sealed record EtwPipeEnvelope(
     string Type,
     EtwCaptureReady? Ready = null,
     EtwCaptureOutput? Output = null,
-    string? Error = null);
+    string? Error = null,
+    int? Phase = null,
+    bool? PhaseStarted = null,
+    long? BoundaryQpc = null);
 internal sealed record EtwCaptureReady(IReadOnlyList<EtwProviderStatus> EnabledProviders);
 internal sealed record EtwCaptureOutput(
     IReadOnlyList<EtwProviderStatus> EnabledProviders,
@@ -726,8 +732,8 @@ internal sealed record EtwCaptureOutput(
     bool AggregateLimitExceeded,
     bool SchemaDiscoveryLimitExceeded,
     IReadOnlyList<UsbEtwFeatureReport> Reports,
-    IReadOnlyList<EtwSchemaShape> SchemaShapes,
-    IReadOnlyList<EtwMarkerShape> MarkerShapes);
+    IReadOnlyList<UsbEtwSchemaShape> SchemaShapes,
+    IReadOnlyList<UsbEtwMarkerShape> MarkerShapes);
 internal sealed record EtwSchemaShapeKey(
     int Phase,
     string ProviderName,
@@ -741,20 +747,7 @@ internal sealed record EtwSchemaShapeKey(
     string RuntimeType,
     string FieldLengthBucket,
     string TotalBinaryLengthBucket);
-internal sealed record EtwSchemaShape(
-    int Phase,
-    string ProviderName,
-    string EventName,
-    int EventId,
-    int EventVersion,
-    int Opcode,
-    string PayloadPropertyCountBucket,
-    int FieldOrdinal,
-    string FieldName,
-    string RuntimeType,
-    string FieldLengthBucket,
-    string TotalBinaryLengthBucket,
-    long Count);
+
 internal sealed record EtwMarkerShapeKey(
     int Phase,
     string ProviderName,
@@ -773,22 +766,3 @@ internal sealed record EtwMarkerShapeKey(
     string EndLengthBucket,
     string StartOffsetBucket,
     string BytesAfterMarkerBucket);
-internal sealed record EtwMarkerShape(
-    int Phase,
-    string ProviderName,
-    string EventName,
-    int EventId,
-    int EventVersion,
-    int Opcode,
-    string Kind,
-    int StartFieldOrdinal,
-    int EndFieldOrdinal,
-    string StartFieldName,
-    string EndFieldName,
-    string StartRuntimeType,
-    string EndRuntimeType,
-    string StartLengthBucket,
-    string EndLengthBucket,
-    string StartOffsetBucket,
-    string BytesAfterMarkerBucket,
-    long Count);

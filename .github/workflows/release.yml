@@ -18,7 +18,14 @@ jobs:
           fetch-depth: 0
       - name: Refuse withdrawn release tags
         shell: pwsh
-        run: ./scripts/assert-release-tag-allowed.ps1 -Tag $env:GITHUB_REF_NAME
+        run: |
+          git fetch --no-tags origin main
+          $authoritativeDenylist = Join-Path $env:RUNNER_TEMP 'withdrawn-release-tags.txt'
+          git show origin/main:.github/withdrawn-release-tags.txt | Set-Content -LiteralPath $authoritativeDenylist -Encoding utf8
+          if ($LASTEXITCODE -ne 0) {
+            throw 'Could not load the authoritative withdrawn-tag policy from origin/main.'
+          }
+          ./scripts/assert-release-tag-allowed.ps1 -Tag $env:GITHUB_REF_NAME -DenylistPath $authoritativeDenylist
       - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6
         with:
           dotnet-version: 8.0.x

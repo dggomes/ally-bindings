@@ -32,7 +32,8 @@ public partial class App : System.Windows.Application
     private bool _mutexReleased;
     private bool _exiting;
     private bool _updateCheckInProgress;
-    private bool _armouryCaptureInProgress;
+    private volatile bool _armouryCaptureInProgress;
+    private volatile bool _armouryCaptureTeardownUnconfirmed;
     private CancellationTokenSource? _armouryCaptureCancellation;
     private TaskCompletionSource? _armouryCaptureCompletion;
     private bool _allowExitWithPendingRearMapping;
@@ -571,64 +572,60 @@ public partial class App : System.Windows.Application
 
     public async Task RestoreDefaultAsync(string reason)
     {
-        if (_armouryCaptureInProgress)
-        {
-            _armouryCaptureCancellation?.Cancel();
-            _mainWindow.CancelControllerDialog();
-        }
-        await _operationGate.WaitAsync();
+        await using var resetGate = await CaptureResetGate.AcquireWhenCaptureStoppedAsync(
+            _operationGate,
+            () =>
+            {
+                if (!_armouryCaptureInProgress) return null;
+                return _armouryCaptureCompletion?.Task
+                    ?? throw new InvalidOperationException("Capture teardown tracking is unavailable while capture is active.");
+            },
+            RequestArmouryCaptureCancellation);
+        _cycle.Cancel();
+        BackendApplyResult result;
         try
         {
-            _cycle.Cancel();
-            BackendApplyResult result;
-            try
-            {
-                result = await _backend.RestoreDefaultAsync();
-            }
-            catch (Exception ex)
-            {
-                _mainWindow.SetBackendStatus(_backend.GetStatus());
-                _mainWindow.SetStatus($"Native reset command failed: {ex.Message}");
-                _overlay.ShowResult("Restore failed", "Use the physical controller/keyboard recovery path and open diagnostics.");
-                return;
-            }
-
-            if (_backendNeedsRestore && !result.CommandAccepted)
-            {
-                _mainWindow.SetBackendStatus(result.Status);
-                _mainWindow.SetStatus($"{reason}: native reset command was not accepted; the previous M1/M2 mapping may still be active. {result.Message}");
-                _overlay.ShowResult("Restore failed", "Previous M1/M2 mapping may still be active");
-                return;
-            }
-
-            Configuration = Configuration with { ActiveProfileId = MappingProfile.Default.Id };
-            if (result.CommandAccepted)
-            {
-                _backendNeedsRestore = false;
-                Configuration = Configuration with { AsusRearButtonMappingActive = false };
-            }
-            string? persistenceWarning = null;
-            try
-            {
-                await _profileStore.SaveAsync(Configuration);
-            }
-            catch (Exception ex)
-            {
-                persistenceWarning = $" The reset command was accepted, but saving the Default selection failed: {ex.Message}";
-            }
-
-            _mainWindow.SetBackendStatus(result.Status);
-            _mainWindow.SetStatus($"{reason}: {result.Message}{persistenceWarning}");
-            _overlay.ShowResult(
-                "Native reset",
-                persistenceWarning is not null
-                    ? "Command accepted · live state unverified · local selection not saved"
-                    : result.CommandAccepted ? "Command accepted · live state unverified" : "Default selected · passthrough remains intact");
+            result = await _backend.RestoreDefaultAsync();
         }
-        finally
+        catch (Exception ex)
         {
-            _operationGate.Release();
+            _mainWindow.SetBackendStatus(_backend.GetStatus());
+            _mainWindow.SetStatus($"Native reset command failed: {ex.Message}");
+            _overlay.ShowResult("Restore failed", "Use the physical controller/keyboard recovery path and open diagnostics.");
+            return;
         }
+
+        if (_backendNeedsRestore && !result.CommandAccepted)
+        {
+            _mainWindow.SetBackendStatus(result.Status);
+            _mainWindow.SetStatus($"{reason}: native reset command was not accepted; the previous M1/M2 mapping may still be active. {result.Message}");
+            _overlay.ShowResult("Restore failed", "Previous M1/M2 mapping may still be active");
+            return;
+        }
+
+        Configuration = Configuration with { ActiveProfileId = MappingProfile.Default.Id };
+        if (result.CommandAccepted)
+        {
+            _backendNeedsRestore = false;
+            Configuration = Configuration with { AsusRearButtonMappingActive = false };
+        }
+        string? persistenceWarning = null;
+        try
+        {
+            await _profileStore.SaveAsync(Configuration);
+        }
+        catch (Exception ex)
+        {
+            persistenceWarning = $" The reset command was accepted, but saving the Default selection failed: {ex.Message}";
+        }
+
+        _mainWindow.SetBackendStatus(result.Status);
+        _mainWindow.SetStatus($"{reason}: {result.Message}{persistenceWarning}");
+        _overlay.ShowResult(
+            "Native reset",
+            persistenceWarning is not null
+                ? "Command accepted · live state unverified · local selection not saved"
+                : result.CommandAccepted ? "Command accepted · live state unverified" : "Default selected · passthrough remains intact");
     }
 
     public string BuildDiagnostics()
@@ -651,7 +648,7 @@ public partial class App : System.Windows.Application
         await _operationGate.WaitAsync();
         try
         {
-            if (_armouryCaptureInProgress) return;
+            if (_exiting || _armouryCaptureInProgress) return;
             _armouryCaptureInProgress = true;
             _armouryCaptureCancellation = new CancellationTokenSource();
             _armouryCaptureCompletion = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -662,6 +659,10 @@ public partial class App : System.Windows.Application
         }
         var cancellationToken = _armouryCaptureCancellation.Token;
         ArmouryCaptureSession? session = null;
+        Exception? captureTeardownFailure = null;
+        string? deferredFailureMessage = null;
+        ArmouryCaptureException? deferredDiagnostic = null;
+        string? deferredDiagnosticText = null;
 
         async Task RequireCaptureStepAsync(string message, string title)
         {
@@ -697,23 +698,23 @@ public partial class App : System.Windows.Application
             _mainWindow.SetArmouryCaptureStatus(
                 $"Integrated ETW capture running through {string.Join(" + ", session.EnabledProviders)}. Follow the Armoury prompts; this app remains write-locked.");
 
-            session.MarkAction("step-started-m1-a-m2-b");
+            await captureService.MarkActionAsync(session, "step-started-m1-a-m2-b", cancellationToken);
             await RequireCaptureStepAsync(
                 "In Armoury Crate, set M1 to A and M2 to B. Wait until Armoury shows the assignment as applied, then return here and choose Done.",
                 "Capture step 1 of 3 · M1=A, M2=B");
-            session.MarkAction("armoury-applied-m1-a-m2-b");
+            await captureService.MarkActionAsync(session, "armoury-applied-m1-a-m2-b", cancellationToken);
 
-            session.MarkAction("step-started-m1-x-m2-y");
+            await captureService.MarkActionAsync(session, "step-started-m1-x-m2-y", cancellationToken);
             await RequireCaptureStepAsync(
                 "In Armoury Crate, now set M1 to X and M2 to Y. Wait until it is applied, then return here and choose Done.",
                 "Capture step 2 of 3 · M1=X, M2=Y");
-            session.MarkAction("armoury-applied-m1-x-m2-y");
+            await captureService.MarkActionAsync(session, "armoury-applied-m1-x-m2-y", cancellationToken);
 
-            session.MarkAction("step-started-reset-to-default");
+            await captureService.MarkActionAsync(session, "step-started-reset-to-default", cancellationToken);
             await RequireCaptureStepAsync(
                 "In Armoury Crate, use its Reset to Default action for M1/M2. Wait until the defaults are applied, then return here and choose Done. This captures Armoury's real recovery bytes.",
                 "Capture step 3 of 3 · Armoury defaults");
-            session.MarkAction("armoury-reset-m1-m2-to-default");
+            await captureService.MarkActionAsync(session, "armoury-reset-m1-m2-to-default", cancellationToken);
 
             cancellationToken.ThrowIfCancellationRequested();
             var result = await captureService.CompleteAsync(session, cancellationToken);
@@ -732,6 +733,10 @@ public partial class App : System.Windows.Application
         }
         catch (Exception ex)
         {
+            if (ex is ArmouryCaptureTeardownException)
+            {
+                captureTeardownFailure = ex;
+            }
             var failureMessage = ex.Message;
             if (session is not null)
             {
@@ -741,6 +746,7 @@ public partial class App : System.Windows.Application
                 }
                 catch (Exception cleanupFailure)
                 {
+                    captureTeardownFailure = cleanupFailure;
                     failureMessage = $"{failureMessage}\n\nPRIVACY WARNING: {cleanupFailure.Message}";
                 }
             }
@@ -750,63 +756,95 @@ public partial class App : System.Windows.Application
                     : $"Capture failed safely: {failureMessage}");
             if (ex is not OperationCanceledException)
             {
-                var diagnostic = ex as ArmouryCaptureException;
-                var diagnosticText = diagnostic?.DiagnosticText;
-                var copyDiagnostics = await _mainWindow.ShowControllerDialogAsync(
-                    "Armoury capture failed safely",
-                    $"No Ally Bindings controller write was attempted.\n\n{failureMessage}" +
-                    (diagnostic is null
-                        ? string.Empty
-                        : $"\n\nDiagnostic: {diagnostic.DiagnosticPath}\n\n" +
-                          "It contains bounded lifecycle stages, process/elevation state, product version, helper exit code, and redacted error types/codes/messages. " +
-                          "It contains no usernames, absolute paths, stack traces, USB payloads, controller reports, configuration values, or raw ETW data.\n\n" +
-                          "Choose Copy diagnostics to place that JSON on the clipboard, or Open folder to attach the file."),
-                    allowCancel: diagnostic is not null,
-                    primaryLabel: diagnostic is null ? "OK" : "Copy diagnostics",
-                    secondaryLabel: "Open folder");
-                if (diagnostic is not null)
-                {
-                    var copied = false;
-                    if (copyDiagnostics && !string.IsNullOrWhiteSpace(diagnosticText))
-                    {
-                        try
-                        {
-                            System.Windows.Clipboard.SetText(diagnosticText);
-                            copied = true;
-                        }
-                        catch
-                        {
-                            // Fall through to Explorer when another process owns the clipboard.
-                        }
-                    }
-                    if (!copied)
-                    {
-                        try
-                        {
-                            Process.Start(new ProcessStartInfo
-                            {
-                                FileName = "explorer.exe",
-                                Arguments = $"/select,\"{diagnostic.DiagnosticPath}\"",
-                                UseShellExecute = true,
-                            });
-                        }
-                        catch (Exception disclosureError)
-                        {
-                            _mainWindow.SetArmouryCaptureStatus(
-                                $"Diagnostic saved at {diagnostic.DiagnosticPath}, but Windows could not open Explorer: {disclosureError.Message}");
-                        }
-                    }
-                }
+                deferredFailureMessage = failureMessage;
+                deferredDiagnostic = ex as ArmouryCaptureException;
+                deferredDiagnosticText = deferredDiagnostic?.DiagnosticText;
             }
         }
         finally
         {
-            _mainWindow.SetArmouryCaptureBusy(false);
-            _armouryCaptureCancellation?.Dispose();
-            _armouryCaptureCancellation = null;
-            _armouryCaptureInProgress = false;
-            _armouryCaptureCompletion?.TrySetResult();
-            _armouryCaptureCompletion = null;
+            TaskCompletionSource? captureCompletion;
+            await _operationGate.WaitAsync();
+            try
+            {
+                _mainWindow.SetArmouryCaptureBusy(false);
+                _armouryCaptureCancellation?.Dispose();
+                _armouryCaptureCancellation = null;
+                captureCompletion = _armouryCaptureCompletion;
+                if (captureTeardownFailure is null)
+                {
+                    _armouryCaptureInProgress = false;
+                    _armouryCaptureCompletion = null;
+                }
+                else
+                {
+                    _armouryCaptureTeardownUnconfirmed = true;
+                }
+            }
+            finally
+            {
+                _operationGate.Release();
+            }
+            if (captureTeardownFailure is null)
+            {
+                captureCompletion?.TrySetResult();
+            }
+            else
+            {
+                captureCompletion?.TrySetException(new InvalidOperationException(
+                    "The elevated ETW helper exit could not be confirmed. Native controller resets remain blocked until Ally Bindings restarts.",
+                    captureTeardownFailure));
+                _mainWindow.SetArmouryCaptureStatus(
+                    "CAPTURE TEARDOWN UNCONFIRMED — native controller resets are blocked. Restart Ally Bindings before continuing.");
+            }
+        }
+        if (deferredFailureMessage is not null && !cancellationToken.IsCancellationRequested)
+        {
+            var copyDiagnostics = await _mainWindow.ShowControllerDialogAsync(
+                "Armoury capture failed safely",
+                $"No Ally Bindings controller write was attempted.\n\n{deferredFailureMessage}" +
+                (deferredDiagnostic is null
+                    ? string.Empty
+                    : $"\n\nDiagnostic: {deferredDiagnostic.DiagnosticPath}\n\n" +
+                      "It contains bounded lifecycle stages, process/elevation state, product version, helper exit code, and redacted error types/codes/messages. " +
+                      "It contains no usernames, absolute paths, stack traces, USB payloads, controller reports, configuration values, or raw ETW data.\n\n" +
+                      "Choose Copy diagnostics to place that JSON on the clipboard, or Open folder to attach the file."),
+                allowCancel: deferredDiagnostic is not null,
+                primaryLabel: deferredDiagnostic is null ? "OK" : "Copy diagnostics",
+                secondaryLabel: "Open folder");
+            if (deferredDiagnostic is not null)
+            {
+                var copied = false;
+                if (copyDiagnostics && !string.IsNullOrWhiteSpace(deferredDiagnosticText))
+                {
+                    try
+                    {
+                        System.Windows.Clipboard.SetText(deferredDiagnosticText);
+                        copied = true;
+                    }
+                    catch
+                    {
+                        // Fall through to Explorer when another process owns the clipboard.
+                    }
+                }
+                if (!copied)
+                {
+                    try
+                    {
+                        Process.Start(new ProcessStartInfo
+                        {
+                            FileName = "explorer.exe",
+                            Arguments = $"/select,\"{deferredDiagnostic.DiagnosticPath}\"",
+                            UseShellExecute = true,
+                        });
+                    }
+                    catch (Exception disclosureError)
+                    {
+                        _mainWindow.SetArmouryCaptureStatus(
+                            $"Diagnostic saved at {deferredDiagnostic.DiagnosticPath}, but Windows could not open Explorer: {disclosureError.Message}");
+                    }
+                }
+            }
         }
     }
 
@@ -892,42 +930,38 @@ public partial class App : System.Windows.Application
 
     private async Task<bool> ConfirmSafeExitForUpdateAsync()
     {
-        await _operationGate.WaitAsync();
+        await using var resetLease = await CaptureResetGate.AcquireWhenCaptureStoppedAsync(
+            _operationGate,
+            () => _armouryCaptureInProgress ? _armouryCaptureCompletion?.Task : null,
+            RequestArmouryCaptureCancellation);
+        if (!_backendNeedsRestore) return true;
         try
         {
-            if (!_backendNeedsRestore) return true;
-            try
+            var restored = await _backend.RestoreDefaultAsync();
+            if (restored.CommandAccepted)
             {
-                var restored = await _backend.RestoreDefaultAsync();
-                if (restored.CommandAccepted)
+                _backendNeedsRestore = false;
+                Configuration = Configuration with
                 {
-                    _backendNeedsRestore = false;
-                    Configuration = Configuration with
-                    {
-                        ActiveProfileId = MappingProfile.Default.Id,
-                        AsusRearButtonMappingActive = false,
-                    };
-                    await _profileStore.SaveAsync(Configuration);
-                    return true;
-                }
+                    ActiveProfileId = MappingProfile.Default.Id,
+                    AsusRearButtonMappingActive = false,
+                };
+                await _profileStore.SaveAsync(Configuration);
+                return true;
             }
-            catch
-            {
-                // The explicit warning below is the recovery gate.
-            }
-
-            var continueWithoutReset = await _mainWindow.ShowControllerDialogAsync(
-                "Controller recovery not confirmed",
-                "The best-known native M1/M2 reset could not be written. Updating now may leave the last paddle mapping active until Armoury Crate or another recovery path overwrites it.\n\nUpdate anyway?",
-                primaryLabel: "Update anyway",
-                secondaryLabel: "Cancel update");
-            _allowExitWithPendingRearMapping = continueWithoutReset;
-            return continueWithoutReset;
         }
-        finally
+        catch
         {
-            _operationGate.Release();
+            // The explicit warning below is the recovery gate.
         }
+
+        var continueWithoutReset = await _mainWindow.ShowControllerDialogAsync(
+            "Controller recovery not confirmed",
+            "The best-known native M1/M2 reset could not be written. Updating now may leave the last paddle mapping active until Armoury Crate or another recovery path overwrites it.\n\nUpdate anyway?",
+            primaryLabel: "Update anyway",
+            secondaryLabel: "Cancel update");
+        _allowExitWithPendingRearMapping = continueWithoutReset;
+        return continueWithoutReset;
     }
 
     private async Task<BackendStatus> ReplaceBackendAsync(
@@ -983,14 +1017,32 @@ public partial class App : System.Windows.Application
     {
         if (_exiting) return;
         _exiting = true;
-        var captureCompletion = _armouryCaptureCompletion?.Task;
-        if (captureCompletion is not null)
+        IAsyncDisposable? exitLease = null;
+        try
         {
-            _armouryCaptureCancellation?.Cancel();
-            _mainWindow.CancelControllerDialog();
-            await captureCompletion;
+            exitLease = await CaptureResetGate.AcquireWhenCaptureStoppedAsync(
+                _operationGate,
+                () => _armouryCaptureInProgress ? _armouryCaptureCompletion?.Task : null,
+                RequestArmouryCaptureCancellation);
         }
-        await _operationGate.WaitAsync();
+        catch (Exception ex) when (_armouryCaptureTeardownUnconfirmed)
+        {
+            var exitWithoutReset = await _mainWindow.ShowControllerDialogAsync(
+                "ETW capture teardown unconfirmed",
+                "The elevated capture helper did not confirm exit, so Ally Bindings will not issue any controller reset or backend shutdown write. Exiting now severs the capture pipe so Windows can tear the helper down.\n\n" +
+                $"Details: {ex.Message}\n\nExit Ally Bindings now?",
+                primaryLabel: "Exit without reset",
+                secondaryLabel: "Stay open");
+            if (!exitWithoutReset)
+            {
+                _exiting = false;
+                OpenMainWindow();
+                return;
+            }
+            _backendDisposed = true;
+            Shutdown();
+            return;
+        }
         var shouldShutdown = false;
 
         try
@@ -1071,15 +1123,27 @@ public partial class App : System.Windows.Application
         }
         finally
         {
-            _operationGate.Release();
+            if (exitLease is not null) await exitLease.DisposeAsync();
             if (shouldShutdown) Shutdown();
         }
     }
 
     protected override void OnSessionEnding(SessionEndingCancelEventArgs e)
     {
+        _exiting = true;
         RestoreAndDisposeForTermination();
         base.OnSessionEnding(e);
+    }
+
+    private void RequestArmouryCaptureCancellation()
+    {
+        _armouryCaptureCancellation?.Cancel();
+        if (_mainWindow.Dispatcher.CheckAccess())
+        {
+            _mainWindow.CancelControllerDialog();
+            return;
+        }
+        _mainWindow.Dispatcher.Invoke(_mainWindow.CancelControllerDialog);
     }
 
     protected override void OnExit(ExitEventArgs e)
@@ -1101,6 +1165,13 @@ public partial class App : System.Windows.Application
 
     private void RestoreAndDisposeForTermination()
     {
+        if (_armouryCaptureInProgress || _armouryCaptureTeardownUnconfirmed)
+        {
+            // Never overlap a possibly-live elevated ETW session with backend writes.
+            // Process exit closes the authenticated pipe; the helper then tears down.
+            _backendDisposed = true;
+            return;
+        }
         if (_backend is null || _backendDisposed) return;
         var backend = _backend;
         try
