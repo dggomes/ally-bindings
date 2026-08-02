@@ -36,6 +36,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private BindingRow? _bindingPickerRow;
     private Button? _bindingPickerOrigin;
     private string _editingProfileName = string.Empty;
+    private bool _workspaceInteractive = true;
+    private bool _updateBusy;
     private readonly SemaphoreSlim _dialogGate = new(1, 1);
     private TaskCompletionSource<bool>? _dialogCompletion;
 
@@ -148,7 +150,11 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
     public void SetStatus(string message) => StatusText.Text = message;
     public void SetUpdateStatus(string message) => UpdateStatusText.Text = message;
-    public void SetUpdateBusy(bool isBusy) => HeaderUpdateButton.IsEnabled = !isBusy;
+    public void SetUpdateBusy(bool isBusy)
+    {
+        _updateBusy = isBusy;
+        HeaderUpdateButton.IsEnabled = _workspaceInteractive && !_updateBusy;
+    }
     public void SetArmouryCaptureStatus(string message) => ArmouryCaptureStatusText.Text = message;
     public void SetArmouryCaptureBusy(bool isBusy) => ArmouryCaptureButton.IsEnabled = !isBusy;
     public void AllowClose() => _allowClose = true;
@@ -699,8 +705,10 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
     private void SetWorkspaceInteractive(bool isInteractive)
     {
+        _workspaceInteractive = isInteractive;
         NavigationList.IsEnabled = isInteractive;
         WorkspaceTabs.IsEnabled = isInteractive;
+        HeaderUpdateButton.IsEnabled = isInteractive && !_updateBusy;
     }
 
     private void CopyDiagnostics_Click(object sender, RoutedEventArgs e)

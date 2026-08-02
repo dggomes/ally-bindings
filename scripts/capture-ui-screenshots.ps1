@@ -140,6 +140,12 @@ try {
     Select-Section -Root $root -AutomationId 'NavigationCaptureUpdate'
     Save-WindowScreenshot -Handle $handle -Path (Join-Path $OutputDirectory 'ally-bindings-capture-update.png')
 
+    $screenshots = @(Get-ChildItem $OutputDirectory -Filter '*.png')
+    $hashes = @($screenshots | ForEach-Object { (Get-FileHash -Algorithm SHA256 -LiteralPath $_.FullName).Hash })
+    if ($screenshots.Count -ne 4 -or @($hashes | Sort-Object -Unique).Count -ne 4) {
+        throw 'Workspace screenshot validation failed: expected four pairwise-distinct HWND captures.'
+    }
+
     Write-Host "Captured Ally Bindings UI screenshots in $OutputDirectory"
 }
 finally {

@@ -15,6 +15,7 @@ public partial class App : System.Windows.Application
 {
     private const string ActivationPipeName = "AllyBindings.Activation.v1";
     private readonly SemaphoreSlim _operationGate = new(1, 1);
+    private readonly ControllerInputArbitration _controllerInputArbitration = new();
     private Mutex? _singleInstance;
     private JsonProfileStore _profileStore = null!;
     private IControllerBackend _backend = null!;
@@ -33,6 +34,7 @@ public partial class App : System.Windows.Application
     private bool _updateCheckInProgress;
     private bool _armouryCaptureInProgress;
     private CancellationTokenSource? _armouryCaptureCancellation;
+    private TaskCompletionSource? _armouryCaptureCompletion;
     private bool _allowExitWithPendingRearMapping;
     private System.IO.FileStream? _executableIntegrityLock;
     private CancellationTokenSource? _activationListenerCancellation;
@@ -361,8 +363,15 @@ public partial class App : System.Windows.Application
     private void ControllerSnapshotReceived(object? sender, ControllerSnapshot snapshot)
     {
         var consumedByEditor = _mainWindow.HandleControllerInput(snapshot);
-        var cycleSnapshot = ControllerInputArbitration.ForProfileCycle(snapshot, consumedByEditor);
-        var events = _cycle.Process(cycleSnapshot, DateTimeOffset.UtcNow, BuildCycleItems(), Configuration.ActiveProfileId);
+        var routing = _controllerInputArbitration.Route(snapshot, consumedByEditor);
+        if (routing.CancelCycle)
+        {
+            _cycle.Cancel();
+            _overlay.Dismiss();
+        }
+        if (!routing.ShouldProcess) return;
+
+        var events = _cycle.Process(routing.Snapshot, DateTimeOffset.UtcNow, BuildCycleItems(), Configuration.ActiveProfileId);
         foreach (var cycleEvent in events)
         {
             switch (cycleEvent.Kind)
@@ -645,6 +654,7 @@ public partial class App : System.Windows.Application
             if (_armouryCaptureInProgress) return;
             _armouryCaptureInProgress = true;
             _armouryCaptureCancellation = new CancellationTokenSource();
+            _armouryCaptureCompletion = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         }
         finally
         {
@@ -665,6 +675,7 @@ public partial class App : System.Windows.Application
         try
         {
             _mainWindow.SetArmouryCaptureBusy(true);
+            cancellationToken.ThrowIfCancellationRequested();
             var proceed = await _mainWindow.ShowControllerDialogAsync(
                 "Capture Armoury M1/M2 protocol",
                 "This starts a temporary Windows USB ETW session inside Ally Bindings. Windows will request administrator approval for the capture helper. No driver, Wireshark or USBPcap is installed, and no raw system-wide trace is written.\n\n" +
@@ -676,12 +687,12 @@ public partial class App : System.Windows.Application
             _cycle.Cancel();
             _mainWindow.SetArmouryCaptureStatus("Confirming the ASUS feature-report interface…");
             var captureService = new ArmouryCaptureService();
-            var target = await captureService.DiscoverTargetAsync();
+            var target = await captureService.DiscoverTargetAsync(cancellationToken);
             cancellationToken.ThrowIfCancellationRequested();
             await RequireCaptureStepAsync(
                 $"Confirm this is the ROG Ally controller you intend to inspect:\n\nModel: {target.Model}\nCompatible ASUS HID interfaces: {string.Join(" | ", target.DeviceIds)}\n\nNo ETW session has started yet. Click Cancel if this identity is unexpected.",
                 "Confirm integrated Windows capture");
-            session = await captureService.StartAsync(target);
+            session = await captureService.StartAsync(target, cancellationToken);
             cancellationToken.ThrowIfCancellationRequested();
             _mainWindow.SetArmouryCaptureStatus(
                 $"Integrated ETW capture running through {string.Join(" + ", session.EnabledProviders)}. Follow the Armoury prompts; this app remains write-locked.");
@@ -705,7 +716,8 @@ public partial class App : System.Windows.Application
             session.MarkAction("armoury-reset-m1-m2-to-default");
 
             cancellationToken.ThrowIfCancellationRequested();
-            var result = await captureService.CompleteAsync(session);
+            var result = await captureService.CompleteAsync(session, cancellationToken);
+            cancellationToken.ThrowIfCancellationRequested();
             session = null;
             _mainWindow.SetArmouryCaptureStatus(
                 $"Capture complete — review required: {result.FeatureReportCount} report 0x5A candidate(s), {result.RearMappingReportCount} structurally valid candidate(s). Bundle SHA-256: {result.BundleSha256}. Bundle: {result.BundlePath}");
@@ -751,6 +763,8 @@ public partial class App : System.Windows.Application
             _armouryCaptureCancellation?.Dispose();
             _armouryCaptureCancellation = null;
             _armouryCaptureInProgress = false;
+            _armouryCaptureCompletion?.TrySetResult();
+            _armouryCaptureCompletion = null;
         }
     }
 
@@ -927,6 +941,13 @@ public partial class App : System.Windows.Application
     {
         if (_exiting) return;
         _exiting = true;
+        var captureCompletion = _armouryCaptureCompletion?.Task;
+        if (captureCompletion is not null)
+        {
+            _armouryCaptureCancellation?.Cancel();
+            _mainWindow.CancelControllerDialog();
+            await captureCompletion;
+        }
         await _operationGate.WaitAsync();
         var shouldShutdown = false;
 

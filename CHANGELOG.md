@@ -33,9 +33,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Thi
 
 - Fixed the published capture feature appearing absent at Ally-scale display heights because it was buried below the initial viewport.
 - Fixed a normal second launch reporting “already running” without opening the existing tray instance.
-- Prevented active-window controller actions and configured shortcut chords from firing simultaneously.
+- Prevented active-window controller actions and configured shortcut chords from firing simultaneously; entering the editor now cancels any pending cycle and requires a full button release before rearming.
 - Serialized controller dialogs and made failed recovery confirmation fail closed instead of allowing shutdown.
-- Kept panic/default restoration available during passive Armoury capture; restore cancels capture while save/apply stay blocked.
+- Kept panic/default restoration available during passive Armoury capture; restore propagates cancellation through discovery/start/completion, exit awaits privacy cleanup, and save/apply stay blocked.
 - Confined modal focus, made long controller dialogs scrollable, and made the profile keyboard fit the supported minimum window.
 - Fixed initial no-controller status, dark-workspace contrast, mapping accessibility names and live status announcements.
 

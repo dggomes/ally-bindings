@@ -40,6 +40,9 @@ jobs:
       - name: Publish self-contained x64 app
         shell: pwsh
         run: ./scripts/package.ps1 -SkipTests
+      - name: Verify built Windows version metadata
+        shell: pwsh
+        run: ./scripts/test-version-metadata.ps1
       - name: Enforce release package contents and size budget
         shell: pwsh
         run: ./scripts/test-release-package.ps1

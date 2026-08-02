@@ -22,8 +22,8 @@ jobs:
       - name: Verify tag matches application version
         shell: pwsh
         run: |
-          [xml]$buildProps = Get-Content Directory.Build.props
-          $appVersion = [string]$buildProps.Project.PropertyGroup.Version
+          $evaluated = dotnet msbuild src/AllyBindings.Windows/AllyBindings.Windows.csproj -getProperty:Version -getProperty:FileVersion -getProperty:AssemblyVersion | ConvertFrom-Json
+          $appVersion = [string]$evaluated.Properties.Version
           $previewSemVer = '^v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)-((?:0|[1-9]\d*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9]\d*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*))*)$'
           if ($env:GITHUB_REF_NAME -notmatch $previewSemVer) {
             throw "Tag $env:GITHUB_REF_NAME is not a strict semantic-version preview tag"
@@ -46,6 +46,9 @@ jobs:
       - name: Package
         shell: pwsh
         run: ./scripts/package.ps1
+      - name: Verify built Windows version metadata
+        shell: pwsh
+        run: ./scripts/test-version-metadata.ps1
       - name: Enforce release package contents and size budget
         shell: pwsh
         run: ./scripts/test-release-package.ps1

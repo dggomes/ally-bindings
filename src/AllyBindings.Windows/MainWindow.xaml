@@ -404,9 +404,9 @@
       </Border>
 
       <Border x:Name="NameKeyboardOverlay" Grid.ColumnSpan="2" Panel.ZIndex="40" Visibility="Collapsed"
-              Background="#F20A0D15" Padding="34">
+              Background="#F20A0D15" Padding="18">
         <Border Background="{StaticResource PanelRaisedBrush}" BorderBrush="{StaticResource AccentBrush}" BorderThickness="2"
-                CornerRadius="20" Padding="24" MaxWidth="760" MaxHeight="560" HorizontalAlignment="Center" VerticalAlignment="Center"
+                CornerRadius="20" Padding="18" MaxWidth="760" MaxHeight="560" HorizontalAlignment="Center" VerticalAlignment="Center"
                 FocusManager.IsFocusScope="True" KeyboardNavigation.TabNavigation="Cycle" KeyboardNavigation.DirectionalNavigation="Cycle">
           <Grid>
             <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
@@ -414,23 +414,24 @@
               <TextBlock Text="Rename profile" FontSize="27" FontWeight="SemiBold" />
               <TextBlock Text="D-pad chooses · A types · X deletes · B cancels" Foreground="{StaticResource MutedBrush}" />
             </StackPanel>
-            <Border Grid.Row="1" Background="#111624" BorderBrush="#394157" BorderThickness="1" CornerRadius="12" Padding="16,11" Margin="0,14">
+            <Border Grid.Row="1" Background="#111624" BorderBrush="#394157" BorderThickness="1" CornerRadius="12" Padding="12,8" Margin="0,10">
               <TextBlock x:Name="NameKeyboardPreview" FontSize="24" MinHeight="32" />
             </Border>
             <ItemsControl x:Name="NameKeyboardKeys" Grid.Row="2" ItemsSource="{Binding OnScreenKeys}">
-              <ItemsControl.ItemsPanel><ItemsPanelTemplate><UniformGrid Columns="9" /></ItemsPanelTemplate></ItemsControl.ItemsPanel>
+              <ItemsControl.ItemsPanel><ItemsPanelTemplate><UniformGrid Columns="12" /></ItemsPanelTemplate></ItemsControl.ItemsPanel>
               <ItemsControl.ItemTemplate>
                 <DataTemplate>
-                  <Button Content="{Binding}" Tag="{Binding}" Click="NameKeyboardKey_Click" MinWidth="44" Height="50" Margin="3" />
+                  <Button Content="{Binding}" Tag="{Binding}" Click="NameKeyboardKey_Click" MinWidth="48" Height="48" Margin="2"
+                          AutomationProperties.AutomationId="{Binding StringFormat=NameKey-{0}}" />
                 </DataTemplate>
               </ItemsControl.ItemTemplate>
             </ItemsControl>
-            <StackPanel Grid.Row="3" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,15,0,0">
-              <Button Content="Clear" Click="NameKeyboardClear_Click" />
-              <Button Content="Space" Click="NameKeyboardSpace_Click" />
-              <Button Content="X  Delete" Click="NameKeyboardDelete_Click" />
-              <Button Content="B  Cancel" Click="NameKeyboardCancel_Click" />
-              <Button Content="A  Done" Style="{StaticResource PrimaryButton}" Click="NameKeyboardDone_Click" />
+            <StackPanel Grid.Row="3" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,10,0,0">
+              <Button Content="Clear" Click="NameKeyboardClear_Click" AutomationProperties.AutomationId="NameKey-Clear" />
+              <Button Content="Space" Click="NameKeyboardSpace_Click" AutomationProperties.AutomationId="NameKey-Space" />
+              <Button Content="X  Delete" Click="NameKeyboardDelete_Click" AutomationProperties.AutomationId="NameKey-Delete" />
+              <Button Content="B  Cancel" Click="NameKeyboardCancel_Click" AutomationProperties.AutomationId="NameKey-Cancel" />
+              <Button Content="A  Done" Style="{StaticResource PrimaryButton}" Click="NameKeyboardDone_Click" AutomationProperties.AutomationId="NameKey-Done" />
             </StackPanel>
           </Grid>
         </Border>

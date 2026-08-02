@@ -105,6 +105,8 @@ try {
     $invoke.Invoke()
     $cancelDialog = Wait-ElementContaining -Root $root -Name 'B  Cancel' -ControlType ([System.Windows.Automation.ControlType]::Button)
     if ($maintenance.Current.IsEnabled) { throw 'Workspace navigation remained enabled behind a controller dialog.' }
+    $headerUpdate = Wait-ElementContaining -Root $root -Name 'Check for and install Ally Bindings updates' -ControlType ([System.Windows.Automation.ControlType]::Button)
+    if ($headerUpdate.Current.IsEnabled) { throw 'Header update remained enabled behind a controller dialog.' }
     $invoke = [System.Windows.Automation.InvokePattern]$cancelDialog.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern)
     $invoke.Invoke()
     Start-Sleep -Milliseconds 250
@@ -116,13 +118,25 @@ try {
 
     $leftBumper = Wait-ElementContaining -Root $root -Name 'Left bumper' -ControlType ([System.Windows.Automation.ControlType]::Button)
     if (-not $leftBumper.Current.IsEnabled) { throw 'A user-profile visual mapping button is unexpectedly disabled.' }
+    if ($leftBumper.Current.Name -ne 'Left bumper, mapped to LeftBumper') { throw "Mapping accessibility name was incomplete: $($leftBumper.Current.Name)" }
     $invoke = [System.Windows.Automation.InvokePattern]$leftBumper.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern)
     $invoke.Invoke()
     Wait-ElementContaining -Root $root -Name 'Binding output choices' -ControlType ([System.Windows.Automation.ControlType]::List) | Out-Null
     if ($controller.Current.IsEnabled) { throw 'Workspace navigation remained enabled behind the binding picker.' }
-    $cancelPicker = Wait-ElementContaining -Root $root -Name 'B  Cancel' -ControlType ([System.Windows.Automation.ControlType]::Button)
-    $invoke = [System.Windows.Automation.InvokePattern]$cancelPicker.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern)
+    if ($headerUpdate.Current.IsEnabled) { throw 'Header update remained enabled behind the binding picker.' }
+    $choiceCondition = New-Object System.Windows.Automation.AndCondition(
+        (New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::ControlTypeProperty, [System.Windows.Automation.ControlType]::ListItem)),
+        (New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::NameProperty, 'A')))
+    $aChoice = $root.FindFirst([System.Windows.Automation.TreeScope]::Descendants, $choiceCondition)
+    if (-not $aChoice) { throw 'Binding picker did not expose the A output choice.' }
+    $choiceSelection = [System.Windows.Automation.SelectionItemPattern]$aChoice.GetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern)
+    $choiceSelection.Select()
+    $confirmPicker = Wait-ElementContaining -Root $root -Name 'A  Use this binding' -ControlType ([System.Windows.Automation.ControlType]::Button)
+    $invoke = [System.Windows.Automation.InvokePattern]$confirmPicker.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern)
     $invoke.Invoke()
+    Start-Sleep -Milliseconds 200
+    $updatedLeftBumper = Wait-ElementContaining -Root $root -Name 'Left bumper, mapped to A' -ControlType ([System.Windows.Automation.ControlType]::Button)
+    if ($updatedLeftBumper.Current.Name -ne 'Left bumper, mapped to A') { throw 'Mapping accessibility name did not update after changing the target.' }
 
     $profiles = Wait-ElementById -Root $root -AutomationId 'NavigationProfiles'
     $selection = [System.Windows.Automation.SelectionItemPattern]$profiles.GetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern)
@@ -132,20 +146,30 @@ try {
     $invoke = [System.Windows.Automation.InvokePattern]$rename.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern)
     $invoke.Invoke()
     Wait-ElementContaining -Root $root -Name 'A  Done' -ControlType ([System.Windows.Automation.ControlType]::Button) | Out-Null
+    if ($headerUpdate.Current.IsEnabled) { throw 'Header update remained enabled behind the controller keyboard.' }
     $windowBounds = $root.Current.BoundingRectangle
-    $visibleEnabledButtons = @($root.FindAll(
-        [System.Windows.Automation.TreeScope]::Descendants,
-        (New-Object System.Windows.Automation.PropertyCondition(
-            [System.Windows.Automation.AutomationElement]::ControlTypeProperty,
-            [System.Windows.Automation.ControlType]::Button))) | Where-Object {
-            $_.Current.IsEnabled -and -not $_.Current.IsOffscreen
-        })
-    if ($visibleEnabledButtons.Count -lt 30) { throw "Controller keyboard exposed only $($visibleEnabledButtons.Count) usable buttons at 900x600." }
-    foreach ($button in $visibleEnabledButtons) {
+    $expectedKeyIds = @('Q','W','E','R','T','Y','U','I','O','P','A','S','D','F','G','H','J','K','L','Z','X','C','V','B','N','M','0','1','2','3','4','5','6','7','8','9') |
+        ForEach-Object { "NameKey-$_" }
+    $expectedKeyIds += @('NameKey-Clear','NameKey-Space','NameKey-Delete','NameKey-Cancel','NameKey-Done')
+    $keyboardButtons = @($expectedKeyIds | ForEach-Object { Wait-ElementById -Root $root -AutomationId $_ })
+    if ($keyboardButtons.Count -ne 41) { throw "Expected 41 controller-keyboard controls, found $($keyboardButtons.Count)." }
+    foreach ($button in $keyboardButtons) {
+        if (-not $button.Current.IsEnabled -or $button.Current.IsOffscreen) { throw "Controller keyboard button '$($button.Current.AutomationId)' is not usable at 900x600." }
         $bounds = $button.Current.BoundingRectangle
         if ($bounds.Left -lt $windowBounds.Left - 1 -or $bounds.Top -lt $windowBounds.Top - 1 -or
             $bounds.Right -gt $windowBounds.Right + 1 -or $bounds.Bottom -gt $windowBounds.Bottom + 1) {
             throw "Controller keyboard button '$($button.Current.Name)' overflows the 900x600 window."
+        }
+    }
+    for ($i = 0; $i -lt $keyboardButtons.Count; $i++) {
+        for ($j = $i + 1; $j -lt $keyboardButtons.Count; $j++) {
+            $a = $keyboardButtons[$i].Current.BoundingRectangle
+            $b = $keyboardButtons[$j].Current.BoundingRectangle
+            $overlapWidth = [Math]::Min($a.Right, $b.Right) - [Math]::Max($a.Left, $b.Left)
+            $overlapHeight = [Math]::Min($a.Bottom, $b.Bottom) - [Math]::Max($a.Top, $b.Top)
+            if ($overlapWidth -gt 1 -and $overlapHeight -gt 1) {
+                throw "Controller keyboard controls '$($keyboardButtons[$i].Current.AutomationId)' and '$($keyboardButtons[$j].Current.AutomationId)' overlap."
+            }
         }
     }
 }
