@@ -46,7 +46,15 @@ Known limitation: there is no proven read-back path for preserving a user's cust
 - The session observed 4,140 events and decoded 13,359 binary bytes with zero losses, decode failures, oversized events, ambiguity, drops or aggregate-limit failures.
 - It again retained zero exact reports. Physical rear-button presses generate input traffic; they are not required to make Armoury send its configuration write.
 
-Conclusion: keep both write gates locked. The next capture exports only bounded provider/event/property/framing metadata grouped into the three action phases. It checks the exact full and command-only markers in memory—including markers split across adjacent decoded properties—but exports no generic payload bytes, hashes, raw timestamps, process IDs, device paths, pointers or scalar values. Discovery metadata can never become unlock evidence.
+### Physical capture 3 — v12 identifies the nested ETW payload boundary (2026-08-02)
+
+- Bundle SHA-256: `b25997e8cc5439e6f2686a02a62f6c4202c698313049243844808a39d06d92c9`.
+- The schema-v5 capture observed 3,396 events and decoded 10,735 top-level binary bytes with zero event loss, oversized events, decode failures, ambiguity, candidate drops or aggregate-limit failures.
+- All three QPC-attributed action phases were present. UCX recorded repeated class-interface and control-transfer traffic in each phase, including 104/53/53 `URB_FUNCTION_CLASS_INTERFACE_Start` events and 382/161/161 `URB_FUNCTION_CONTROL_TRANSFER_Stop` events.
+- TraceEvent exposed each UCX transfer body as a dictionary-backed nested structure (`Other` at the top level), while v12 inspected only top-level byte arrays. Consequently the capture retained only 16-byte USBXHCI command TRBs, found no ASUS marker, and exhausted the metadata-shape quota on scalar rundown/control fields.
+- The result remains non-conclusive and cannot unlock either write gate, but it gives a specific instrumentation fix: recursively inspect bounded nested ETW structures in memory, serialize only property framing for binary-bearing events, and continue to exclude generic payload bytes from the ZIP.
+
+Conclusion: keep both write gates locked. The next schema-v6 capture build must inspect TraceEvent's bounded nested structure values and export only bounded provider/event/property/framing metadata grouped into the three action phases. It checks the exact full and command-only markers in memory—including markers split across adjacent decoded properties—but exports no generic payload bytes, hashes, raw timestamps, process IDs, device paths, pointers or scalar values. Discovery metadata can never become unlock evidence.
 
 1. Run **Capture Armoury M1/M2 protocol (passive)**; no separate capture software is required.
 2. Confirm the displayed ROG Ally model and compatible ASUS feature-report interfaces.

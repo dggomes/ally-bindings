@@ -6,6 +6,24 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Thi
 
 ## [Unreleased]
 
+## [v0.3.0-preview.13] - 2026-08-02
+
+### Fixed
+
+- Recursively inspect TraceEvent's bounded dictionary-backed nested USB payload structures in memory so UCX control-transfer byte-array leaves can participate in exact ASUS marker detection.
+- Retain schema framing only for events that expose binary leaves, preventing scalar rundown/control metadata from exhausting the per-phase inventory before useful transfer schemas arrive.
+- Report schema-inventory truncation accurately instead of describing it as a dropped, oversized or undecodable ETW event.
+- Stamp nested-field capture bundles as schema version 6 so their flattened property ordinals cannot be confused with v12's top-level-only schema version 5.
+
+### Safety
+
+- Keep nested values transient and outside every serialized schema-discovery DTO; exported bundles still contain metadata framing only and cannot authorize hardware writes.
+- Bound nested traversal by depth, visited-node and leaf counts, array rank and metadata path length, detect cycles, and fail closed on any traversal limit.
+
+### Tests
+
+- Cover nested structures, byte-array leaves, arrays of structures, cycles, depth/field limits, metadata path bounds and the separate schema-inventory validation reason.
+
 ## [v0.3.0-preview.12] - 2026-08-02
 
 ### Fixed

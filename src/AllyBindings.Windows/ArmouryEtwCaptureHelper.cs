@@ -22,8 +22,10 @@ internal static class ArmouryEtwCaptureHelper
     private const int MaximumSchemaShapesPerPhase = 64;
     private const int MaximumMarkerShapes = 64;
     private const int MaximumMarkerShapesPerPhase = 16;
-    private const int MaximumPayloadProperties = 32;
+    private const int MaximumPayloadProperties = 256;
     private const int MaximumDecodedPayloadProperties = 256;
+    private const int MaximumPayloadNestingDepth = 8;
+    private const int MaximumVisitedPayloadNodes = 1_024;
     private const int MaximumMetadataCharacters = 64;
     private const int MaximumSchemaDiscoveryBytes = 128 * 1024;
     private const long MaximumObservedEvents = 2_000_000;
@@ -177,7 +179,13 @@ internal static class ArmouryEtwCaptureHelper
                 var eventQpc = data.TimeStampQPC;
 #pragma warning restore CS0618
                 var phase = capturePhases.Classify(eventQpc);
-                foreach (var field in fields.PropertyShapes)
+                // Scalar-only rundown/control metadata exhausted the v12 shape
+                // quota before useful transfer schemas arrived. Retain full
+                // property framing only for events that actually expose binary
+                // leaves; marker inspection below still considers every field.
+                foreach (var field in fields.DecodedBytes == 0
+                    ? []
+                    : fields.PropertyShapes)
                 {
                     var key = new EtwSchemaShapeKey(
                         phase,
@@ -447,7 +455,6 @@ internal static class ArmouryEtwCaptureHelper
         long decodedBytes = 0;
         long totalBinaryLength = 0;
         var names = data.PayloadNames;
-        var discoveryLimitExceeded = names.Length > MaximumPayloadProperties;
         if (names.Length > MaximumDecodedPayloadProperties)
         {
             return new(
@@ -461,10 +468,24 @@ internal static class ArmouryEtwCaptureHelper
                 DiscoveryLimitExceeded: true);
         }
 
+        var topLevelFields = new List<KeyValuePair<string, object?>>(names.Length);
         for (var index = 0; index < names.Length; index++)
         {
-            var value = data.PayloadValue(index);
-            var propertyName = NormalizeMetadata(names[index], $"field-{index}");
+            topLevelFields.Add(new(names[index], data.PayloadValue(index)));
+        }
+        var flattened = UsbEtwPayloadFlattener.Flatten(
+            topLevelFields,
+            MaximumDecodedPayloadProperties,
+            MaximumPayloadNestingDepth,
+            MaximumVisitedPayloadNodes);
+        var discoveryLimitExceeded =
+            flattened.LimitExceeded ||
+            flattened.Fields.Count > MaximumPayloadProperties;
+
+        for (var index = 0; index < flattened.Fields.Count; index++)
+        {
+            var value = flattened.Fields[index].Value;
+            var propertyName = NormalizeMetadata(flattened.Fields[index].Name, $"field-{index}");
             var binary = ToBinaryBytes(value);
             if (binary is not null)
             {

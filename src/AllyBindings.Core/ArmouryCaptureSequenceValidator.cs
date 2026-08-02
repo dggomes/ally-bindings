@@ -34,7 +34,8 @@ internal static class ArmouryCaptureSequenceValidator
         IReadOnlyList<ArmouryCaptureStepWindow> windows,
         int captureFailureCount,
         bool captureScopeVerified,
-        bool targetIdentityStable)
+        bool targetIdentityStable,
+        bool schemaDiscoveryIncomplete = false)
     {
         ArgumentNullException.ThrowIfNull(reports);
         ArgumentNullException.ThrowIfNull(windows);
@@ -102,6 +103,10 @@ internal static class ArmouryCaptureSequenceValidator
         if (captureFailureCount != 0)
         {
             reasons.Add($"The ETW collector recorded {captureFailureCount} dropped, oversized or undecodable event(s).");
+        }
+        if (schemaDiscoveryIncomplete)
+        {
+            reasons.Add("The metadata-only ETW schema inventory reached its retention limit and is incomplete.");
         }
         if (!captureScopeVerified)
         {

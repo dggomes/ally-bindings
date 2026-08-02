@@ -9,7 +9,7 @@ A lightweight, local-first Windows controller-profile selector for Xbox Remote P
 
 Ally Bindings lets you save named mappings, rotate them from the controller, and see the pending choice in a small overlay. It is intentionally conservative: the current public build exercises the complete profile-selection experience without hiding the physical controller, creating a virtual controller, or writing unvalidated ASUS controller settings.
 
-> **Project status: preview.** This source tree targets `v0.3.0-preview.12`. Standard-button remapping is preview-only. Two physical Armoury captures were clean but contained no exact rear-mapping packets, so M1/M2 writes remain locked while the bounded metadata-only capture records the Windows ETW field schema needed for the next diagnostic run. See [Current capabilities](#current-capabilities) before installing.
+> **Project status: preview.** This source tree targets `v0.3.0-preview.13`. Standard-button remapping is preview-only. Three physical Armoury captures were clean but contained no exact rear-mapping packets; the v12 run identified nested UCX ETW structures that the top-level decoder could not inspect. M1/M2 writes remain locked while the bounded metadata-only capture follows those nested fields in memory. See [Current capabilities](#current-capabilities) before installing.
 
 Ally Bindings is an independent project and is not affiliated with ASUS, ROG, Microsoft or Xbox.
 
@@ -62,7 +62,7 @@ The chord and timings are configurable. The app can remain in the notification a
 | Panic/default shortcut (`Ctrl+Alt+F12`) | **Working** |
 | Automatic and manual update checks | **Working** |
 | Verified GitHub Releases updater with rollback | **Working** |
-| Passive Armoury M1/M2 protocol capture | **Working; schema-discovery run required and write-locked** |
+| Passive Armoury M1/M2 protocol capture | **Working; nested-schema validation run required and write-locked** |
 | Standard XInput remapping | **Preview only** |
 | ASUS M1/M2 controller-setting writes | **Disabled pending physical validation** |
 | Physical-device hiding / virtual controller output | **Not enabled** |
