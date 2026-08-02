@@ -101,6 +101,15 @@ if ($service.IndexOf('parent-completion-failed', [StringComparison]::Ordinal) -l
     $service.IndexOf('ex is not OperationCanceledException and not ArmouryCaptureException', [StringComparison]::Ordinal) -lt 0) {
     throw 'Capture completion failures are not consistently wrapped with an in-app diagnostic.'
 }
+$startMethod = $service.Substring(
+    $service.IndexOf('public async Task<ArmouryCaptureSession> StartAsync', [StringComparison]::Ordinal),
+    $service.IndexOf('public async Task<ArmouryCaptureResult> CompleteAsync', [StringComparison]::Ordinal) -
+    $service.IndexOf('public async Task<ArmouryCaptureSession> StartAsync', [StringComparison]::Ordinal))
+if ($startMethod.IndexOf('try', [StringComparison]::Ordinal) -gt
+    $startMethod.IndexOf('DiscoverTargetAsync(cancellationToken)', [StringComparison]::Ordinal) -or
+    $startMethod.IndexOf('catch (OperationCanceledException)', [StringComparison]::Ordinal) -lt 0) {
+    throw 'Pre-capture target rediscovery is outside the diagnostic boundary or cancellation is retained as a failure.'
+}
 if ($service -notmatch 'Stopwatch\.GetTimestamp\(\)' -or
     $service -notmatch 'PerformanceCounterTimestamp' -or
     $extractor -notmatch 'PerformanceCounterTimestamp') {

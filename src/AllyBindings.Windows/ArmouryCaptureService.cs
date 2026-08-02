@@ -48,19 +48,19 @@ internal sealed class ArmouryCaptureService
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(confirmedTarget);
-        var currentTarget = await DiscoverTargetAsync(cancellationToken).ConfigureAwait(false);
-        if (!IsSameTarget(confirmedTarget, currentTarget))
-        {
-            throw new InvalidOperationException(
-                "The confirmed ASUS HID identity changed before ETW capture began. No capture was started.");
-        }
-
         var sessionId = Guid.NewGuid();
         ArmouryCaptureDiagnostics.Record(sessionId, "parent-capture-starting");
         NamedPipeServerStream? pipe = null;
         Process? helper = null;
         try
         {
+            var currentTarget = await DiscoverTargetAsync(cancellationToken).ConfigureAwait(false);
+            if (!IsSameTarget(confirmedTarget, currentTarget))
+            {
+                throw new InvalidOperationException(
+                    "The confirmed ASUS HID identity changed before ETW capture began. No capture was started.");
+            }
+
             pipe = new NamedPipeServerStream(
                 ArmouryEtwCapturePipe.GetPipeName(sessionId),
                 PipeDirection.InOut,
@@ -103,13 +103,24 @@ internal sealed class ArmouryCaptureService
         }
         catch (Win32Exception ex) when (ex.NativeErrorCode == 1223)
         {
-            ArmouryCaptureDiagnostics.Record(sessionId, "parent-elevation-cancelled", ex);
+            ArmouryCaptureDiagnostics.Delete(sessionId);
             helper?.Dispose();
             pipe?.Dispose();
             throw new OperationCanceledException(
                 "Windows elevation was cancelled. The temporary ETW logger was not started and no USB data was retained.",
                 ex,
                 cancellationToken);
+        }
+        catch (OperationCanceledException)
+        {
+            ArmouryCaptureDiagnostics.Delete(sessionId);
+            if (helper is not null)
+            {
+                StopHelper(helper);
+                helper.Dispose();
+            }
+            pipe?.Dispose();
+            throw;
         }
         catch (Exception ex)
         {
@@ -121,7 +132,7 @@ internal sealed class ArmouryCaptureService
                 helper.Dispose();
             }
             pipe?.Dispose();
-            if (ex is OperationCanceledException or ArmouryCaptureException) throw;
+            if (ex is ArmouryCaptureException) throw;
             throw new ArmouryCaptureException(
                 sessionId,
                 $"The elevated ETW helper failed before capture became ready{FormatExitCode(helperExitCode)}.",
