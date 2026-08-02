@@ -48,6 +48,27 @@ internal sealed class ArmouryCaptureService
         ArmouryCaptureTarget confirmedTarget,
         CancellationToken cancellationToken = default)
     {
+        try
+        {
+            return await StartWithHelperAsync(
+                confirmedTarget,
+                ArmouryTapCaptureHelper.HelperArgument,
+                cancellationToken).ConfigureAwait(false);
+        }
+        catch (ArmouryCaptureException) when (!cancellationToken.IsCancellationRequested)
+        {
+            return await StartWithHelperAsync(
+                confirmedTarget,
+                ArmouryEtwCaptureHelper.HelperArgument,
+                cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    private async Task<ArmouryCaptureSession> StartWithHelperAsync(
+        ArmouryCaptureTarget confirmedTarget,
+        string helperArgument,
+        CancellationToken cancellationToken = default)
+    {
         ArgumentNullException.ThrowIfNull(confirmedTarget);
         var sessionId = Guid.NewGuid();
         ArmouryCaptureDiagnostics.Record(sessionId, "parent-capture-starting");
@@ -72,7 +93,7 @@ internal sealed class ArmouryCaptureService
                 Verb = "runas",
                 WindowStyle = ProcessWindowStyle.Hidden,
             };
-            startInfo.ArgumentList.Add(ArmouryEtwCaptureHelper.HelperArgument);
+            startInfo.ArgumentList.Add(helperArgument);
             startInfo.ArgumentList.Add(sessionId.ToString("D"));
             startInfo.ArgumentList.Add(Environment.ProcessId.ToString(System.Globalization.CultureInfo.InvariantCulture));
             helper = Process.Start(startInfo)
@@ -278,7 +299,10 @@ internal sealed class ArmouryCaptureService
                 retainedSchemaShapeCount = output.SchemaShapes.Count,
                 retainedMarkerShapeCount = output.MarkerShapes.Count,
                 fullDataBusTraceKeyword = $"0x{ArmouryEtwCaptureHelper.FullDataTraceKeywords:X}",
-                privacy = "A system-wide USB ETW stream was inspected in memory. Schema discovery contains only bounded event/property/framing metadata grouped by action phase; it contains no generic payload bytes, payload hashes, raw ETL, timestamps, process IDs, device paths, pointers or scalar values.",
+                tapRecords = output.TapRecords,
+                privacy = output.TapRecords is null
+                    ? "A system-wide USB ETW stream was inspected in memory. Schema discovery contains only bounded event/property/framing metadata grouped by action phase; it contains no generic payload bytes, payload hashes, raw ETL, timestamps, process IDs, device paths, pointers or scalar values."
+                    : "Only exact 50-64 byte report 0x5A writes to VID 0B05 PID 1B4C handles were copied after the original ASUS API call. Return values and GetLastError are evidence only; no call or buffer was altered.",
             },
         });
         var manifestBytes = SerializeJson(new
@@ -286,7 +310,9 @@ internal sealed class ArmouryCaptureService
             schemaVersion = 7,
             capturedAtUtc = DateTimeOffset.UtcNow,
             applicationVersion = GetApplicationVersion(),
-            source = "Windows built-in USB ETW real-time FullDataBusTrace session",
+            source = output.TapRecords is null
+                ? "Windows built-in USB ETW real-time FullDataBusTrace session"
+                : "Self-contained ASUS-signed-process user-mode HID write tap",
             selectedAsusHid = session.Target,
             evidence = new
             {

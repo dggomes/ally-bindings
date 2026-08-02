@@ -538,7 +538,7 @@
                   <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                   <StackPanel>
                     <TextBlock Text="Capture Armoury M1/M2" FontSize="23" FontWeight="SemiBold" />
-                    <TextBlock Text="Record filtered candidate mapping reports with Windows USB ETW. No USBPcap, driver, or raw system trace. Windows asks for temporary elevation."
+                    <TextBlock Text="Record Armoury's M1/M2 HID writes with a built-in user-mode tap. No USBPcap, Wireshark, driver, WinDbg, Frida or separate capture tool. Windows asks for temporary elevation to inject a capture-only DLL into the confirmed ASUS process. Ally Bindings sends no HID reports and remains write-locked."
                                Foreground="#CEC7F7" TextWrapping="Wrap" Margin="0,7,24,8" />
                     <TextBlock x:Name="ArmouryCaptureStatusText" Text="Ready to capture the three-step Armoury mapping sequence."
                                AutomationProperties.LiveSetting="Polite"
@@ -547,7 +547,7 @@
                   <Button x:Name="ArmouryCaptureButton" Grid.Column="1" Style="{StaticResource PrimaryButton}"
                           Content="Start capture" Click="CaptureArmouryProtocol_Click" VerticalAlignment="Center"
                           AutomationProperties.AutomationId="ArmouryCaptureButton"
-                          AutomationProperties.Name="Capture Armoury M1 and M2 protocol with Windows ETW" />
+                          AutomationProperties.Name="Capture Armoury M1 and M2 HID writes with the built-in user-mode tap" />
                 </Grid>
               </Border>
 

@@ -769,7 +769,8 @@ internal sealed record EtwCaptureOutput(
     bool SchemaDiscoveryLimitExceeded,
     IReadOnlyList<UsbEtwFeatureReport> Reports,
     IReadOnlyList<UsbEtwSchemaShape> SchemaShapes,
-    IReadOnlyList<UsbEtwMarkerShape> MarkerShapes);
+    IReadOnlyList<UsbEtwMarkerShape> MarkerShapes,
+    IReadOnlyList<ArmouryTapRecord>? TapRecords = null);
 internal sealed record EtwSchemaShapeKey(
     int Phase,
     string ProviderName,

@@ -35,6 +35,11 @@ jobs:
           dotnet-version: 8.0.x
       - name: Restore
         run: dotnet restore AllyBindings.sln
+      - name: Build native Armoury tap DLL (x64)
+        shell: pwsh
+        run: |
+          cmake -S native/ArmouryTap -B native/ArmouryTap/build -G "Visual Studio 17 2022" -A x64
+          cmake --build native/ArmouryTap/build --config Release
       - name: Test
         run: dotnet test AllyBindings.sln --no-restore --configuration Release --logger "trx;LogFileName=windows.trx"
       - name: Publish self-contained x64 app

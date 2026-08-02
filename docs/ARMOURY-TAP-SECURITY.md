@@ -1,0 +1,134 @@
+# Self-contained Armoury write-tap security contract
+
+## Purpose
+
+The Armoury write tap is a temporary, capture-only research instrument embedded in Ally Bindings. It observes the exact HID report buffers that an explicitly confirmed ASUS Armoury process attempts to send to the embedded ROG Ally controller. It replaces the need to install ProcMon, WinDbg, Frida, Wireshark, USBPcap or a kernel filter.
+
+The tap is not part of normal profile operation. It grants no M1/M2 write authority, does not modify Armoury configuration, does not send a HID report and cannot unlock either source-level ASUS write gate.
+
+## Shipped shape
+
+- The public package remains one self-contained `AllyBindings.exe` plus documentation.
+- A small x64 native DLL is compiled in CI and embedded as an application resource.
+- The DLL is extracted only after explicit capture consent and Windows UAC approval.
+- Extraction uses a random per-session directory with an ACL restricted to the initiating user, Local System and Administrators.
+- The DLL is unloaded and the session directory is deleted before capture completion is accepted.
+- No driver, Windows service, scheduled task, startup item, debugger, package manager or third-party application is installed.
+
+## Preconditions
+
+Every condition must pass or capture stops before injection:
+
+1. Windows x64 process and x64 target.
+2. Exact supported DMI model and ASUS manufacturer checks already used by the HID capture service.
+3. An openable ASUS HID feature-report interface with VID `0x0B05`, PID `0x1B4C`, report ID `0x5A` and descriptor length between 50 and 64 bytes.
+4. One or more running processes with an exact allowlisted executable name:
+   - `ArmouryCrateSE.Service.exe`
+   - `ArmouryCrate.Service.exe`
+   - `ArmouryCrateSE.exe`
+   - `AsusOptimization.exe`
+5. Every selected executable has a valid embedded Authenticode signature whose signer is ASUS/ASUSTeK.
+6. No selected process path is writable by the unelevated current user.
+7. The user confirms the displayed model, HID interface and exact candidate process names before UAC.
+8. The UI warns the user to close games and anti-cheat software before continuing.
+
+PID `0x1B6E` is not an Ally controller identifier and must not pass the rear-button gate.
+
+## Injection boundary
+
+- Injection uses Windows `OpenProcess`, `VirtualAllocEx`, `WriteProcessMemory` and `CreateRemoteThread` with `LoadLibraryW`; there is no persistent service or driver.
+- The elevated same-executable helper revalidates process ID, executable name, signature, architecture and creation time immediately before injection.
+- A process restart, identity change, failed signature check, unknown architecture, partial remote write or uncertain module load fails closed.
+- The hook DLL may hook only:
+  - `hid.dll!HidD_SetFeature`
+  - the effective `WriteFile` implementation used by the target process.
+- Hook installation failure is reported; it never falls back to broader API hooks or arbitrary process memory scanning.
+- Original API arguments are never modified.
+- The original API is called exactly once.
+- The original return value and thread `LastError` are restored exactly.
+- Hook callbacks must not retry, cancel, suppress or synthesize hardware operations.
+
+## Report filter
+
+A record may leave the target process only when all conditions pass:
+
+- `HidD_GetAttributes(handle)` succeeds.
+- Vendor ID is exactly `0x0B05`.
+- Product ID is exactly `0x1B4C`.
+- Buffer length is between 50 and 64 bytes inclusive.
+- First byte is report ID `0x5A`.
+- Captured bytes are copied before the original call returns.
+
+No device path, arbitrary process memory, keyboard input, XInput history or non-target HID payload may be retained. `WriteFile` calls used by the tap's own named-pipe transport must be excluded with a recursion guard.
+
+## Bounds
+
+- Maximum candidate processes: 4.
+- Maximum reports per process: 256.
+- Maximum report bytes: 64.
+- Maximum capture duration: 15 minutes.
+- Maximum control-message length: 4 KiB.
+- Maximum evidence JSON and ZIP sizes are explicitly bounded.
+- Overflow, malformed records, version mismatch, sequence gaps, pipe impersonation or dropped reports mark the run inconclusive.
+
+## IPC authentication
+
+- Parent ↔ elevated-helper communication reuses the current-user/local-only same-executable pipe and mutual process-ID authentication.
+- Each injected process gets a random per-session pipe capability derived from its random DLL filename.
+- The elevated helper creates each pipe with Local System, Administrators and initiating-user access only, plus a network SID deny rule.
+- `GetNamedPipeClientProcessId` must equal the process ID revalidated for that tap instance.
+- The native hello record includes protocol version, process ID, architecture and helper capability.
+- A mismatched client is disconnected and invalidates the run.
+
+## Staged evidence
+
+The helper assigns reports to helper-acknowledged QPC phases:
+
+1. Baseline.
+2. Armoury applies M1=A / M2=B.
+3. Armoury applies M1=X / M2=Y.
+4. Armoury Reset to Default.
+
+The bundle contains only:
+
+- redacted target identity;
+- allowlisted process name, PID and executable SHA-256;
+- API kind, report length, bounded report bytes, return status and error code;
+- helper-side phase and monotonic sequence/QPC values;
+- manifest, evidence JSON and hashes.
+
+Every manifest permanently states:
+
+- `hardwareWriteAttemptedByAllyBindings: false`
+- `hardwareUnlockEvidence: false`
+- `reviewRequired: true`
+- `driverInstalled: false`
+- `externalCaptureToolRequired: false`
+- `rawSystemTraceWritten: false`
+
+A capture can inform a later source change but cannot mutate `ArmouryProtocolValidation` at runtime.
+
+## Teardown
+
+- Completion and cancellation send an authenticated stop request to every tap.
+- Each DLL disables hooks, waits for active callbacks to drain, closes IPC and unloads itself.
+- The helper positively verifies target-module unload and its own exit.
+- The helper overwrites no target or application file and deletes the random extraction directory.
+- Failure to confirm hook unload, helper exit or temporary-file deletion is prominently reported as `TEARDOWN UNCONFIRMED`; the run is rejected and no native reset/write may start until Ally Bindings restarts.
+- A target-process exit is safe: the DLL and hooks disappear with the process and the capture records that termination.
+
+## Release gates
+
+CI must prove:
+
+- the native DLL builds only for x64 with mitigations enabled (`/guard:cf`, `/DYNAMICBASE`, `/NXCOMPAT`, `/HIGHENTROPYVA`, `/CETCOMPAT` where supported);
+- imports and exports match the narrow contract;
+- no capture DLL exists as a loose release-package file;
+- the resource exists inside the published executable;
+- MinHook licence and version are bundled;
+- source-level custom and recovery write gates remain false;
+- no PID `1B6E` remains in the ASUS rear-button allowlist;
+- synthetic target tests preserve buffers, return values and `LastError`, reject wrong VID/PID/report ID/length and unload cleanly;
+- cancellation, spoofed-pipe and helper-crash tests fail closed.
+
+Physical RC73XA validation is still required before treating captured packets as protocol authority.

@@ -47,6 +47,12 @@ public partial class App : System.Windows.Application
     protected override void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);
+        if (ArmouryTapCaptureHelper.TryParseArguments(e.Args, out var tapSessionId, out var tapParentProcessId))
+        {
+            ShutdownMode = ShutdownMode.OnExplicitShutdown;
+            _ = RunTapCaptureHelperAsync(tapSessionId, tapParentProcessId);
+            return;
+        }
         if (ArmouryEtwCaptureHelper.TryParseArguments(e.Args, out var etwSessionId, out var parentProcessId))
         {
             ShutdownMode = ShutdownMode.OnExplicitShutdown;
@@ -94,6 +100,12 @@ public partial class App : System.Windows.Application
     private async Task RunEtwCaptureHelperAsync(Guid sessionId, int parentProcessId)
     {
         var exitCode = await ArmouryEtwCaptureHelper.RunAsync(sessionId, parentProcessId);
+        Shutdown(exitCode);
+    }
+
+    private async Task RunTapCaptureHelperAsync(Guid sessionId, int parentProcessId)
+    {
+        var exitCode = await ArmouryTapCaptureHelper.RunAsync(sessionId, parentProcessId);
         Shutdown(exitCode);
     }
 
@@ -811,8 +823,8 @@ public partial class App : System.Windows.Application
             cancellationToken.ThrowIfCancellationRequested();
             var proceed = await _mainWindow.ShowControllerDialogAsync(
                 "Capture Armoury M1/M2 protocol",
-                "This starts a temporary Windows USB ETW session inside Ally Bindings. Windows will request administrator approval for the capture helper. No driver, Wireshark or USBPcap is installed, and no raw system-wide trace is written.\n\n" +
-                "You will deliberately change M1/M2 three times through Armoury Crate so we can collect candidate bus payloads for hardware review. Ally Bindings will send no HID reports, cannot clear recovery state from this capture, and its ASUS write backend remains source locked.\n\nContinue?",
+                "This starts a temporary user-mode capture inside Ally Bindings. Windows will request administrator approval to inject a capture-only DLL into the confirmed ASUS Armoury process. No driver, Wireshark, USBPcap, WinDbg, Frida or separate tool is installed. The tap observes Armoury's HID writes without altering them.\n\n" +
+                "You will deliberately change M1/M2 three times through Armoury Crate so we can collect exact wire payloads for hardware review. Ally Bindings will send no HID reports, cannot clear recovery state from this capture, and its ASUS write backend remains source locked.\n\nContinue?",
                 primaryLabel: "Continue");
             if (!proceed) return;
             cancellationToken.ThrowIfCancellationRequested();
@@ -828,7 +840,10 @@ public partial class App : System.Windows.Application
             session = await captureService.StartAsync(target, cancellationToken);
             cancellationToken.ThrowIfCancellationRequested();
             _mainWindow.SetArmouryCaptureStatus(
-                $"Integrated ETW capture running through {string.Join(" + ", session.EnabledProviders)}. Follow the Armoury prompts; this app remains write-locked.");
+                $"Capture running through {string.Join(" + ", session.EnabledProviders)}. Follow the staged baseline, A/B, X/Y, and reset prompts; this app remains write-locked.");
+            await RequireCaptureStepAsync(
+                "Baseline: leave the current M1/M2 assignments untouched briefly, then choose Done. Do not apply an Armoury change during this baseline window.",
+                "Capture baseline · no change");
 
             await captureService.MarkActionAsync(session, "step-started-m1-a-m2-b", cancellationToken);
             await RequireCaptureStepAsync(

@@ -19,6 +19,14 @@ if (-not $SkipTests) {
     Assert-NativeSuccess "dotnet test"
 }
 
+# Build the native Armoury tap DLL so it can be embedded as a resource.
+$cmakeBuild = Join-Path $repo "native/ArmouryTap/build"
+if (Test-Path $cmakeBuild) { Remove-Item $cmakeBuild -Recurse -Force }
+cmake -S (Join-Path $repo "native/ArmouryTap") -B $cmakeBuild -G "Visual Studio 17 2022" -A x64
+Assert-NativeSuccess "cmake configure"
+cmake --build $cmakeBuild --config Release
+Assert-NativeSuccess "cmake build"
+
 if (Test-Path $publishDir) { Remove-Item $publishDir -Recurse -Force }
 if (Test-Path $zipPath) { Remove-Item $zipPath -Force }
 New-Item -ItemType Directory -Path $publishDir -Force | Out-Null
@@ -43,6 +51,8 @@ Copy-Item (Join-Path $repo "LICENSE") $publishDir
 Copy-Item (Join-Path $repo "THIRD-PARTY-NOTICES.md") $publishDir
 Copy-Item (Join-Path $repo "CONTRIBUTING.md") $publishDir
 Copy-Item (Join-Path $repo "docs") (Join-Path $publishDir "docs") -Recurse
+Copy-Item (Join-Path $repo "docs/ARMOURY-TAP-SECURITY.md") (Join-Path $publishDir "docs/ARMOURY-TAP-SECURITY.md") -Force
+Copy-Item (Join-Path $repo "docs/ARMOURY-TAP-USER-GUIDE.md") (Join-Path $publishDir "docs/ARMOURY-TAP-USER-GUIDE.md") -Force
 New-Item -ItemType Directory -Path (Join-Path $publishDir "LICENSES") -Force | Out-Null
 Copy-Item (Join-Path $repo "LICENSES/*") (Join-Path $publishDir "LICENSES")
 Compress-Archive -Path "$publishDir/*" -DestinationPath $zipPath -CompressionLevel Optimal

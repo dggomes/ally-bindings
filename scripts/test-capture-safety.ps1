@@ -339,8 +339,156 @@ if ($app -notmatch 'enableRearButtons\s*&&\s*ArmouryProtocolValidation\.IsOperat
     $app -notmatch 'allowUnverifiedRecoveryReset\s*&&\s*ArmouryProtocolValidation\.RecoveryWritesApproved') {
     throw 'Windows backend construction is not guarded by operation-specific validation gates.'
 }
-if ($xaml -notmatch 'IsEnabled="\{Binding CanEnableAsusRearButtonMappings\}"') {
+if ($xaml -notmatch 'IsEnabled="{Binding CanEnableAsusRearButtonMappings}"') {
     throw 'The ASUS write opt-in UI is not visibly locked.'
+}
+
+# ── Self-contained Armoury tap assertions ──
+
+$tapProtocolPath = Join-Path $root 'src/AllyBindings.Core/ArmouryTapProtocol.cs'
+$tapHelperPath = Join-Path $root 'src/AllyBindings.Windows/ArmouryTapCaptureHelper.cs'
+$tapNativePath = Join-Path $root 'native/ArmouryTap/src/ArmouryTap.cpp'
+$tapCmakePath = Join-Path $root 'native/ArmouryTap/CMakeLists.txt'
+$tapSecurityDocPath = Join-Path $root 'docs/ARMOURY-TAP-SECURITY.md'
+$tapUserGuidePath = Join-Path $root 'docs/ARMOURY-TAP-USER-GUIDE.md'
+
+$tapProtocol = Get-Content -Raw -LiteralPath $tapProtocolPath
+$tapHelper = Get-Content -Raw -LiteralPath $tapHelperPath
+$tapNative = Get-Content -Raw -LiteralPath $tapNativePath
+$tapCmake = Get-Content -Raw -LiteralPath $tapCmakePath
+$tapSecurityDoc = Get-Content -Raw -LiteralPath $tapSecurityDocPath
+$tapUserGuide = Get-Content -Raw -LiteralPath $tapUserGuidePath
+
+# PID 1B6E must not be in the Ally rear-button allowlist
+$hidDevicePath = Join-Path $root 'src/AllyBindings.Windows/AsusRearButtonHidDevice.cs'
+$hidDevice = Get-Content -Raw -LiteralPath $hidDevicePath
+if ($hidDevice -match '0x1B6E') {
+    throw 'PID 0x1B6E (ProArt PZ13) is still in the ASUS rear-button allowlist.'
+}
+
+# Tap protocol constants
+foreach ($required in @(
+    'AsusVendorId = 0x0B05',
+    'AllyProductId = 0x1B4C',
+    'ReportId = 0x5A',
+    'MinimumReportLength = 50',
+    'MaximumReportLength = 64',
+    'MaximumRecords = 256',
+    'WireRecordSize = 124',
+    'WireMagic = 0x31544241',
+    'WireVersion = 1',
+    'ArmouryCrateSE.Service',
+    'ArmouryCrate.Service',
+    'ArmouryCrateSE',
+    'AsusOptimization')) {
+    if ($tapProtocol.IndexOf($required, [StringComparison]::Ordinal) -lt 0) {
+        throw "The tap protocol contract is missing: $required"
+    }
+}
+
+# Tap helper must authenticate, verify signatures, and fail closed
+foreach ($required in @(
+    'HelperArgument = "--armoury-tap-capture-helper"',
+    'NativeResourceName',
+    'WinVerifyTrust',
+    'ASUSTeK COMPUTER INC.',
+    'IsWow64Process2',
+    'IsNativeAmd64',
+    'HasAsusAuthenticodeSignature',
+    'Revalidate',
+    'StartTimeUtc',
+    'ExecutablePath',
+    'CryptographicOperations.FixedTimeEquals',
+    'GetNamedPipeClientProcessId',
+    'GetNamedPipeServerProcessId',
+    'VerifyParentExecutableIdentity',
+    'CreatePrivateExtractionDirectory',
+    'DeleteExtractionDirectory',
+    'DirectorySecurity',
+    'SetAccessRuleProtection',
+    'PipeSecurity',
+    'NetworkSid',
+    'AccessControlType.Deny',
+    'OpenProcess',
+    'VirtualAllocEx',
+    'WriteProcessMemory',
+    'CreateRemoteThread',
+    'FreeLibrary',
+    'FindRemoteModule',
+    'ReadExportRva',
+    'ArmouryTapStop',
+    'MaximumCaptureDuration')) {
+    if ($tapHelper.IndexOf($required, [StringComparison]::Ordinal) -lt 0) {
+        throw "The tap helper is missing safety/lifecycle control: $required"
+    }
+}
+
+# Native DLL must hook the right APIs, preserve return/LastError, and drain callbacks
+foreach ($required in @(
+    'HidD_SetFeature',
+    'WriteFile',
+    'MH_Initialize',
+    'MH_CreateHook',
+    'MH_EnableHook',
+    'MH_DisableHook',
+    'MH_Uninitialize',
+    'SetLastError(error)',
+    'g_activeCallbacks',
+    'CallbackLease',
+    'g_droppedRecords',
+    'ArmouryTapStop',
+    'kVendor',
+    'kProduct',
+    '0x5A',
+    'kMinReport',
+    'kMaxReport',
+    'kQueueCapacity')) {
+    if ($tapNative.IndexOf($required, [StringComparison]::Ordinal) -lt 0) {
+        throw "The native tap DLL is missing safety requirement: $required"
+    }
+}
+
+# CMake must produce x64-only DLL with security mitigations
+foreach ($required in @('FATAL_ERROR', 'MultiThreaded', '/guard:cf', '/DYNAMICBASE', '/NXCOMPAT', 'AllyBindings.ArmouryTap')) {
+    if ($tapCmake.IndexOf($required, [StringComparison]::Ordinal) -lt 0) {
+        throw "The native CMake build is missing requirement: $required"
+    }
+}
+
+# Security contract and user guide must exist with key invariants
+foreach ($required in @(
+    'hardwareWriteAttemptedByAllyBindings: false',
+    'hardwareUnlockEvidence: false',
+    'reviewRequired: true',
+    'driverInstalled: false',
+    'externalCaptureToolRequired: false',
+    'rawSystemTraceWritten: false')) {
+    if ($tapSecurityDoc.IndexOf($required, [StringComparison]::Ordinal) -lt 0) {
+        throw "The tap security contract is missing invariant: $required"
+    }
+}
+if ($tapUserGuidePath -and (Test-Path -LiteralPath $tapUserGuidePath) -eq $false) {
+    throw 'The tap user guide document is missing.'
+}
+
+# App startup must recognize tap helper arguments before the single-instance mutex
+if ($app.IndexOf('ArmouryTapCaptureHelper.TryParseArguments', [StringComparison]::Ordinal) -lt 0 -or
+    $app.IndexOf('ArmouryTapCaptureHelper.TryParseArguments', [StringComparison]::Ordinal) -gt
+    $app.IndexOf('new Mutex(', [StringComparison]::Ordinal)) {
+    throw 'The tap helper is not recognized before the single-instance mutex.'
+}
+
+# Capture service must try tap first with ETW fallback
+if ($service -notmatch 'ArmouryTapCaptureHelper\.HelperArgument' -or
+    $service -notmatch 'ArmouryEtwCaptureHelper\.HelperArgument' -or
+    $service -notmatch 'catch \(ArmouryCaptureException\)') {
+    throw 'The capture service does not try the user-mode tap first with ETW fallback.'
+}
+
+# Manifest must distinguish tap vs ETW source
+if ($service -notmatch 'Self-contained ASUS-signed-process user-mode HID write tap' -or
+    $service -notmatch 'Windows built-in USB ETW real-time FullDataBusTrace session') {
+    throw 'The capture manifest does not distinguish tap vs ETW evidence source.'
 }
 
 Write-Output 'Integrated ETW capture safety and privacy assertions passed.'
