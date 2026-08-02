@@ -9,7 +9,7 @@ A lightweight, local-first Windows controller-profile selector for Xbox Remote P
 
 Ally Bindings lets you save named mappings, rotate them from the controller, and see the pending choice in a small overlay. It is intentionally conservative: the current public build exercises the complete profile-selection experience without hiding the physical controller, creating a virtual controller, or writing unvalidated ASUS controller settings.
 
-> **Project status: preview.** This source tree targets `v0.3.0-preview.14`. Standard-button remapping is preview-only. Four physical Armoury captures were clean but contained no exact rear-mapping packets; the v13 run proved that binary-only schema retention was dominated by USB rundown descriptors, firmware hashes and command TRBs while scalar UCX URB framing disappeared. M1/M2 writes remain locked while the bounded metadata-only capture focuses on UCX URB body/status/transfer-data fields. See [Current capabilities](#current-capabilities) before installing.
+> **Project status: preview.** This source tree targets `v0.3.0-preview.15`. Standard-button remapping is preview-only. Five physical Armoury captures were clean but contained no exact rear-mapping packets; v14 isolated action-correlated UCX control-transfer metadata, but Windows emitted none of the data-bearing completion events needed to recover payload bytes. M1/M2 writes remain locked. The preferred next experiment is a separate unelevated, target-scoped read-only snapshot of ASUS feature report `0x5A`. See [Current capabilities](#current-capabilities) before installing.
 
 Ally Bindings is an independent project and is not affiliated with ASUS, ROG, Microsoft or Xbox.
 
@@ -62,7 +62,8 @@ The chord and timings are configurable. The app can remain in the notification a
 | Panic/default shortcut (`Ctrl+Alt+F12`) | **Working** |
 | Automatic and manual update checks | **Working** |
 | Verified GitHub Releases updater with rollback | **Working** |
-| Passive Armoury M1/M2 protocol capture | **Working; focused UCX URB validation run required and write-locked** |
+| Read-only ASUS report `0x5A` snapshot | **Working; physical validation required and zero write authority** |
+| USB ETW Armoury M1/M2 protocol capture | **Working; retained as deeper diagnostic fallback and write-locked** |
 | Standard XInput remapping | **Preview only** |
 | ASUS M1/M2 controller-setting writes | **Disabled pending physical validation** |
 | Physical-device hiding / virtual controller output | **Not enabled** |
@@ -121,32 +122,31 @@ Face-button-only chords such as `A + B` are supported but discouraged while the 
 
 When the main window is active, use **D-pad** to move focus, **A** to select, **B** to go back, **LB/RB** to change section, **X** to save, and **Y** to select the current profile. Every primary action is at least 48 device-independent pixels high for touch use.
 
-## Passive Armoury protocol capture
+## Read-only Armoury state snapshot
 
-This preview includes a deliberately passive logger for investigating what Armoury Crate sends when changing M1/M2 assignments. This must happen **before** Ally Bindings enables any ASUS controller-setting write.
+The preferred protocol-discovery path is now a separate, unelevated feature-report snapshot. It issues one bounded HID `GET_FEATURE` request for ASUS report `0x5A` at baseline and after each of three deliberate Armoury changes. `GET_FEATURE` is an active USB request, but it is read-only: this workflow has no call path to `SET_FEATURE`, the controller backend or either hardware write gate.
 
-The logger:
+The snapshot workflow:
 
-- confirms the supported ROG Ally model and compatible ASUS feature-report interfaces before any ETW session starts, then revalidates that identity afterwards;
-- self-elevates the same Ally Bindings executable for the temporary ETW session—there is no second app, installed service or capture driver;
-- consumes Windows' `Microsoft-Windows-USB-UCX`, `Microsoft-Windows-USB-USBXHCI`, and `Microsoft-Windows-USB-USBHUB3` providers in real time with `FullDataBusTrace`;
-- never writes a raw ETL/PCAP; the USB stream is system-wide while active, but it retains only exact bounded 50–64-byte `5A D1 02 08 2C` candidate reports plus metadata-only UCX control-transfer field shapes/counts—never generic transfer values;
-- records action windows for `M1=A / M2=B`, `M1=X / M2=Y`, and Armoury's Reset to Default;
-- records sequence diagnostics but labels every capture **REVIEW REQUIRED** until physical Ally validation binds the Windows-build-specific event schema to the confirmed HID interface and outbound feature `SET_REPORT`;
-- keeps custom and recovery writes source-locked and never clears recovery state from a capture;
-- requires recovery authorization before custom mappings can ever be enabled, while reset writes still require the recovery gate explicitly;
-- creates one ZIP containing the filtered evidence JSON, action markers and manifest, then displays the ZIP's SHA-256; no duplicate loose evidence files are retained.
+- confirms the supported ROG Ally model and compatible ASUS report-`0x5A` interfaces before reading, then revalidates the exact identity at every stage;
+- reads every compatible interface exactly once per stage with the descriptor's report length, bounded to 50–64 bytes, a three-second timeout and no retry;
+- uses no administrator elevation, ETW session, system-wide trace, named pipe, helper process, driver or Armoury database access;
+- records baseline, `M1=A / M2=B`, `M1=X / M2=Y`, and Armoury's Reset to Default;
+- stores exact bounded report bytes as hex plus per-report SHA-256, expected-vector comparisons, changed offsets and reset-to-baseline analysis;
+- labels every result **REVIEW REQUIRED**, sets `hardwareUnlockEvidence=false`, and cannot alter source-locked custom or recovery writes;
+- creates one ZIP containing `snapshot.json`, `manifest.json` and `README.txt`, then displays the ZIP's SHA-256.
 
-### One-time capture procedure
+### One-time snapshot procedure
 
 1. Photograph or export any custom Armoury M1/M2 assignments.
-2. In Ally Bindings, open the persistent **Capture & update** section and choose **Start capture** in the prominent **Capture Armoury M1/M2** card.
-3. Confirm the displayed ROG Ally model and compatible ASUS HID interfaces.
-4. Accept Windows' one-time UAC prompt for Ally Bindings' integrated ETW helper.
-5. Follow the prompts to apply `M1=A / M2=B`, then `M1=X / M2=Y`, then Armoury's **Reset to Default**. The helper stops automatically.
-6. Keep the generated ZIP under `%LOCALAPPDATA%\AllyBindings\captures\`, record its displayed SHA-256 separately if it will be reviewed, and share it only deliberately.
+2. Open **Capture & update** and choose **Start snapshot** in **Snapshot M1/M2 state · read-only**.
+3. Read the consent disclosure and confirm the displayed ROG Ally model and compatible ASUS HID interfaces.
+4. Follow the prompts for `M1=A / M2=B`, `M1=X / M2=Y`, and Armoury's **Reset to Default**. Ally Bindings reads report `0x5A` once at each stage.
+5. Keep the generated ZIP under `%LOCALAPPDATA%\AllyBindings\captures\`, record its displayed SHA-256 separately if it will be reviewed, and share it only deliberately.
 
-The app never writes the broad ETW stream to disk. It keeps exact bounded ASUS report candidates when found and a bounded metadata-only inventory of UCX control-transfer provider/event/field/type/length/count shapes; generic transfer values are never serialized. A bundle containing a candidate still records controller configuration bytes, and every bundle should be treated as **private diagnostic data**. The ZIP lives in a user-writable directory, so its internal hashes are integrity checks, not immutable provenance: protocol approval requires repeated captures plus an independently recorded bundle digest. No verdict automatically unlocks writes; enabling hardware requires human review and a later source change.
+Successful reports contain private controller-configuration bytes. The ZIP lives in a user-writable directory, so its hashes detect accidental or unsophisticated modification but do not create immutable provenance. Require at least two independent matching physical runs and human review before making any protocol claim. No snapshot verdict automatically unlocks writes.
+
+The existing Windows USB ETW capture remains available as a deeper diagnostic fallback. It still requires UAC because its helper consumes system-wide providers, writes no raw ETL/PCAP, retains only bounded exact candidates plus metadata-only UCX shapes, and has zero write authority. V14 showed that Windows did not emit UCX data-bearing completion events 22/25 for these actions, so ETW is no longer the preferred next experiment.
 
 More detail: [hardware validation runbook](docs/HARDWARE-SPIKE.md).
 
@@ -171,7 +171,8 @@ The updater protects against corruption and mismatched downloads. Until releases
 - The permanent Default profile cannot be edited or deleted.
 - `Ctrl+Alt+F12` provides a keyboard recovery/default path.
 - The current build sends no custom or recovery ASUS M1/M2 report.
-- Passive capture fails closed on device ambiguity, unavailable ETW providers, dropped events or target-identity changes; no raw system-wide trace is written.
+- Read-only snapshots fail closed on unsupported model, interface ambiguity, target-identity changes or out-of-bounds report lengths; they use no elevation or system-wide trace and have zero write authority.
+- USB ETW capture fails closed on device ambiguity, unavailable providers, dropped events or target-identity changes; no raw system-wide trace is written.
 - Normal diagnostics contain configuration/status metadata, not input history. Capture bundles are separate, explicit private artifacts.
 
 Please report security concerns privately using the process in [SECURITY.md](SECURITY.md), not a public issue.

@@ -1,3 +1,5 @@
+using System.Collections.Immutable;
+
 namespace AllyBindings.Core;
 
 public static class ArmouryProtocolValidation
@@ -144,10 +146,24 @@ public sealed record AsusRearButtonWriteResult(
     int Succeeded,
     string Message);
 
+public sealed record AsusRearButtonReadResult(
+    bool Attempted,
+    bool Succeeded,
+    IReadOnlyList<AsusFeatureReportRead> Reads,
+    string Message);
+
+public sealed record AsusFeatureReportRead(
+    string DeviceId,
+    ImmutableArray<byte> Report,
+    string Sha256,
+    string Message);
+
 public interface IAsusRearButtonDevice : IAsyncDisposable
 {
     Task<AsusRearButtonDeviceStatus> InitializeAsync(CancellationToken cancellationToken = default);
     AsusRearButtonDeviceStatus GetStatus();
+    Task<AsusRearButtonReadResult> ReadFeatureReportAsync(
+        CancellationToken cancellationToken = default);
     Task<AsusRearButtonWriteResult> WriteFeatureReportAsync(
         byte[] report,
         CancellationToken cancellationToken = default);
