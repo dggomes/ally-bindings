@@ -202,6 +202,15 @@ if ($service -match 'diagnosticCandidates|retainedHex|RetainedBytes' -or
     $helper -notmatch 'Volatile\.Write\(ref capturePhase') {
     throw 'Schema discovery is not metadata-only and phase-bucketed.'
 }
+foreach ($phaseMarker in @(
+    'step-started-m1-a-m2-b',
+    'step-started-m1-x-m2-y',
+    'step-started-reset-to-default')) {
+    if ($service -notmatch [regex]::Escape($phaseMarker) -or
+        $app -notmatch [regex]::Escape($phaseMarker)) {
+        throw "The capture phase protocol is not wired to the UI action marker '$phaseMarker'."
+    }
+}
 if ($service -notmatch 'ReadBoundedLineAsync' -or $helper -notmatch 'ReadBoundedLineAsync') {
     throw 'The ETW IPC protocol does not bound both command and response messages.'
 }
