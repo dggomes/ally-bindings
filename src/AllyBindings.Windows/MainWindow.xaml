@@ -184,9 +184,9 @@
                             AutomationProperties.AutomationId="ControllerMapScrollViewer">
                 <Grid x:Name="ControllerMapSurface" MinWidth="776" MinHeight="350">
                   <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="94" />
-                    <ColumnDefinition Width="588" />
-                    <ColumnDefinition Width="94" />
+                    <ColumnDefinition Width="180" />
+                    <ColumnDefinition Width="416" />
+                    <ColumnDefinition Width="180" />
                   </Grid.ColumnDefinitions>
 
                   <StackPanel VerticalAlignment="Center">
@@ -248,8 +248,9 @@
                         <Canvas.LayoutTransform><ScaleTransform ScaleY="0.84" /></Canvas.LayoutTransform>
                         <Canvas.Resources>
                           <Style x:Key="DiagramHitTarget" TargetType="Button">
-                            <Setter Property="MinWidth" Value="58" />
-                            <Setter Property="MinHeight" Value="69" />
+                            <Setter Property="MinWidth" Value="81" />
+                            <Setter Property="MinHeight" Value="97" />
+                            <Setter Property="IsHitTestVisible" Value="False" />
                             <Setter Property="Padding" Value="0" />
                             <Setter Property="Background" Value="#01000000" />
                             <Setter Property="BorderBrush" Value="Transparent" />
