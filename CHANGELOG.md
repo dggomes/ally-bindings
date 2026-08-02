@@ -6,6 +6,24 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Thi
 
 ## [Unreleased]
 
+## [v0.3.0-preview.14] - 2026-08-02
+
+### Fixed
+
+- Focus metadata-only schema retention on `Microsoft-Windows-USB-UCX` class/control-transfer body, completion-status and transfer-data fields after the v13 physical run showed that binary-only retention was dominated by unrelated USB descriptors, firmware hashes and XHCI command TRBs.
+- Exclude top-level and nested controller/device/pipe/IRP/URB pointer framing, rundown schemas and unrelated binary events from the persisted schema inventory without changing exact in-memory marker or report inspection.
+- Reserve independent schema capacity for transfer-data/status metadata so earlier framing variation cannot starve the target evidence, and serialize equivalent inventories in deterministic key order.
+- Stamp the focused UCX URB capture report and manifest as schema version 7.
+
+### Safety
+
+- Keep marker discovery on the complete unfiltered ETW field list so schema-retention filtering cannot alter marker adjacency or hide an exact candidate.
+- Keep generic transfer values transient: the focused inventory still exports only bounded provider/event/property/type/length/count metadata and has zero write authority.
+
+### Tests
+
+- Cover the UCX class/control event and field allowlist, nested pointer/identity rejection, transfer-data/status priority, framing-noise starvation, count aggregation and unfiltered marker inspection.
+
 ## [v0.3.0-preview.13] - 2026-08-02
 
 ### Fixed

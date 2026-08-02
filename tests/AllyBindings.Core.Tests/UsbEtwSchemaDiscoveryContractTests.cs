@@ -14,6 +14,7 @@ public sealed class UsbEtwSchemaDiscoveryContractTests
             nameof(UsbEtwSchemaDiscoveryReport.DiagnosticOnly),
             nameof(UsbEtwSchemaDiscoveryReport.ContainsPayloadBytes),
             nameof(UsbEtwSchemaDiscoveryReport.Complete),
+            nameof(UsbEtwSchemaDiscoveryReport.SelectionPolicy),
             nameof(UsbEtwSchemaDiscoveryReport.SchemaShapes),
             nameof(UsbEtwSchemaDiscoveryReport.MarkerShapes));
         AssertContract<UsbEtwSchemaShape>(
@@ -76,6 +77,7 @@ public sealed class UsbEtwSchemaDiscoveryContractTests
             DiagnosticOnly: true,
             ContainsPayloadBytes: false,
             Complete: true,
+            SelectionPolicy: UsbEtwSchemaRetentionPolicy.SelectionPolicyId,
             SchemaShapes: [],
             MarkerShapes:
             [

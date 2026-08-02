@@ -21,7 +21,7 @@ Implementation safety gates:
 
 1. Both custom and recovery writes are source locked until the passive Armoury capture below is reviewed.
 2. The app must confirm the supported ROG Ally model and compatible ASUS feature-report interfaces before starting Windows USB ETW, then revalidate that identity after capture.
-3. The real-time ETW filter retains only metadata-decoded 50–64-byte binary fields containing the exact ASUS `5A D1 02 08 2C` rear-mapping prefix; zero padding is preserved, non-zero trailing bytes fail exact validation, and no raw ETL is written.
+3. The real-time ETW filter retains only exact metadata-decoded 50–64-byte fields containing the ASUS `5A D1 02 08 2C` rear-mapping prefix plus bounded metadata-only UCX control-transfer field shapes/counts; generic transfer values are never serialized, zero padding in exact candidates is preserved, non-zero trailing bytes fail validation, and no raw ETL is written.
 4. Before a later build can unlock writes, Armoury's `M1=A/M2=B`, `M1=X/M2=Y`, and Reset-to-Default reports must be compared byte-for-byte with the clean-room builder.
 5. The later write path must still require exact DMI manufacturer/model, known ASUS VID/PID, an openable report `0x5A`, and mapping zone `0x08`.
 6. Standard mappings remain preview-only and are labelled as such.
@@ -54,7 +54,15 @@ Known limitation: there is no proven read-back path for preserving a user's cust
 - TraceEvent exposed each UCX transfer body as a dictionary-backed nested structure (`Other` at the top level), while v12 inspected only top-level byte arrays. Consequently the capture retained only 16-byte USBXHCI command TRBs, found no ASUS marker, and exhausted the metadata-shape quota on scalar rundown/control fields.
 - The result remains non-conclusive and cannot unlock either write gate, but it gives a specific instrumentation fix: recursively inspect bounded nested ETW structures in memory, serialize only property framing for binary-bearing events, and continue to exclude generic payload bytes from the ZIP.
 
-Conclusion: keep both write gates locked. The next schema-v6 capture build must inspect TraceEvent's bounded nested structure values and export only bounded provider/event/property/framing metadata grouped into the three action phases. It checks the exact full and command-only markers in memory—including markers split across adjacent decoded properties—but exports no generic payload bytes, hashes, raw timestamps, process IDs, device paths, pointers or scalar values. Discovery metadata can never become unlock evidence.
+### Physical capture 4 — v13 proves binary-only retention is the wrong filter (2026-08-02)
+
+- Bundle SHA-256: `958011b41016f68e12efb611833f404b9e7e0ba05420c2ebae532d4252e32c95`; evidence SHA-256: `23670d424d65c24d1a7e049ad8818ffbc933288510e58bc22039a2e80f9f6e3c`.
+- The schema-v6 capture came from released commit `3ecd23f440210f1ffce151f95f8ad2f5e6048850`, observed 3,354 events and decoded 9,988 binary bytes with zero event loss, oversized events, decode failures, ambiguity, candidate drops or aggregate overflow.
+- It retained zero exact ASUS reports and zero known-marker observations. The 214 retained shapes were 64 baseline plus 50 in each action phase.
+- Every action phase's inventory was dominated by the same 42-field USBXHCI device-rundown schema plus eight XHCI command-TRB fields. Baseline retained a USB configuration descriptor and firmware-hash fields. No UCX action schema survived because those URB structures contained no byte-array leaf or known marker.
+- Windows USB provider manifests place full transfer bytes in dedicated FullDataBusTrace completion fields such as `fid_URB_TransferData`, while start/header events carry URB setup/framing. The next diagnostic must therefore retain bounded UCX URB body/status/transfer-data **metadata even when no binary leaf is present**, while excluding identity pointers and unrelated rundown/TRB/hash schemas.
+
+Conclusion: keep both write gates locked. The next schema-v7 capture build focuses the persisted inventory on UCX class/control-transfer body, status and transfer-data fields, with transfer/status capacity reserved independently from lower-priority framing. It still checks every decoded field for exact full and command-only markers in memory—including markers split across genuinely adjacent properties—but exports no generic payload bytes, hashes, raw timestamps, process IDs, device paths, pointers or scalar values. Discovery metadata can never become unlock evidence.
 
 1. Run **Capture Armoury M1/M2 protocol (passive)**; no separate capture software is required.
 2. Confirm the displayed ROG Ally model and compatible ASUS feature-report interfaces.
@@ -71,6 +79,7 @@ Research references:
 - G-Helper HID transport: <https://github.com/seerge/g-helper/blob/main/app/USB/AsusHid.cs>
 - Handheld Companion Ally device family: <https://github.com/Valkirie/HandheldCompanion/tree/main/HandheldCompanion/Devices/ASUS>
 - Linux ROG Ally driver research: <https://github.com/NeroReflex/ROGueENEMY>
+- Windows UCX ETW manifest archive: <https://github.com/repnz/etw-providers-docs/blob/d5f68e8acda5da154ab44e405b610dd8c2ba1164/Manifests-Win10-18990/Microsoft-Windows-USB-UCX.xml>
 
 ## Preconditions
 

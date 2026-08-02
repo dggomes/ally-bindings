@@ -20,6 +20,10 @@ internal static class ArmouryEtwCaptureHelper
     private const int MaximumRetainedReports = 256;
     private const int MaximumSchemaShapes = 256;
     private const int MaximumSchemaShapesPerPhase = 64;
+    private const int MaximumPrioritySchemaShapes = 64;
+    private const int MaximumPrioritySchemaShapesPerPhase = 16;
+    private const int MaximumFramingSchemaShapes = MaximumSchemaShapes - MaximumPrioritySchemaShapes;
+    private const int MaximumFramingSchemaShapesPerPhase = MaximumSchemaShapesPerPhase - MaximumPrioritySchemaShapesPerPhase;
     private const int MaximumMarkerShapes = 64;
     private const int MaximumMarkerShapesPerPhase = 16;
     private const int MaximumPayloadProperties = 256;
@@ -122,7 +126,12 @@ internal static class ArmouryEtwCaptureHelper
         ArmouryCaptureDiagnostics.Record(sessionId, "helper-providers-verified");
 
         var reports = new List<UsbEtwFeatureReport>();
-        var schemaShapes = new Dictionary<EtwSchemaShapeKey, long>();
+        var schemaShapes = new UsbEtwPrioritizedSchemaCounter<EtwSchemaShapeKey>(
+            static item => item.Phase,
+            MaximumPrioritySchemaShapes,
+            MaximumPrioritySchemaShapesPerPhase,
+            MaximumFramingSchemaShapes,
+            MaximumFramingSchemaShapesPerPhase);
         var markerShapes = new Dictionary<EtwMarkerShapeKey, long>();
         var capturePhases = new UsbEtwCapturePhaseWindows();
         long observedEventCount = 0;
@@ -179,14 +188,16 @@ internal static class ArmouryEtwCaptureHelper
                 var eventQpc = data.TimeStampQPC;
 #pragma warning restore CS0618
                 var phase = capturePhases.Classify(eventQpc);
-                // Scalar-only rundown/control metadata exhausted the v12 shape
-                // quota before useful transfer schemas arrived. Retain full
-                // property framing only for events that actually expose binary
-                // leaves; marker inspection below still considers every field.
-                foreach (var field in fields.DecodedBytes == 0
-                    ? []
-                    : fields.PropertyShapes)
+                // V13 proved that binary-only retention is still too broad: firmware hashes,
+                // configuration descriptors and command TRBs consumed the inventory while
+                // the scalar-only UCX URB framing disappeared. Retain only metadata for UCX
+                // class/control-transfer bodies, status and data fields. Exact marker and
+                // report inspection below still considers every decoded field and byte-array
+                // leaf in memory.
+                foreach (var field in fields.PropertyShapes)
                 {
+                    var retentionClass = UsbEtwSchemaRetentionPolicy.Classify(providerName, eventName, field.Name);
+                    if (retentionClass == UsbEtwSchemaRetentionClass.None) continue;
                     var key = new EtwSchemaShapeKey(
                         phase,
                         providerName,
@@ -200,13 +211,10 @@ internal static class ArmouryEtwCaptureHelper
                         field.RuntimeType,
                         field.LengthBucket,
                         fields.TotalBinaryLengthBucket);
-                    IncrementPhaseBounded(
-                        schemaShapes,
-                        key,
-                        static item => item.Phase,
-                        MaximumSchemaShapes,
-                        MaximumSchemaShapesPerPhase,
-                        ref schemaDiscoveryLimitExceeded);
+                    if (!schemaShapes.Increment(key, retentionClass))
+                    {
+                        schemaDiscoveryLimitExceeded = true;
+                    }
                 }
 
                 try
@@ -371,12 +379,19 @@ internal static class ArmouryEtwCaptureHelper
         }
         if (cancelled) return 2;
 
-        var schemaShapeOutput = schemaShapes
+        var schemaShapeOutput = schemaShapes.Entries
             .OrderBy(pair => pair.Key.Phase)
             .ThenBy(pair => pair.Key.ProviderName, StringComparer.Ordinal)
             .ThenBy(pair => pair.Key.EventName, StringComparer.Ordinal)
             .ThenBy(pair => pair.Key.EventId)
+            .ThenBy(pair => pair.Key.EventVersion)
+            .ThenBy(pair => pair.Key.Opcode)
+            .ThenBy(pair => pair.Key.PayloadPropertyCountBucket, StringComparer.Ordinal)
             .ThenBy(pair => pair.Key.FieldOrdinal)
+            .ThenBy(pair => pair.Key.FieldName, StringComparer.Ordinal)
+            .ThenBy(pair => pair.Key.RuntimeType, StringComparer.Ordinal)
+            .ThenBy(pair => pair.Key.FieldLengthBucket, StringComparer.Ordinal)
+            .ThenBy(pair => pair.Key.TotalBinaryLengthBucket, StringComparer.Ordinal)
             .Select(pair => new UsbEtwSchemaShape(
                 pair.Key.Phase,
                 pair.Key.ProviderName,

@@ -251,7 +251,7 @@ internal sealed class ArmouryCaptureService
         var evidenceHash = Convert.ToHexString(SHA256.HashData(outputBytes)).ToLowerInvariant();
         var reportBytes = SerializeJson(new
         {
-            schemaVersion = 6,
+            schemaVersion = 7,
             actions = session.Actions,
             assessment,
             reports,
@@ -259,6 +259,7 @@ internal sealed class ArmouryCaptureService
                 DiagnosticOnly: true,
                 ContainsPayloadBytes: false,
                 Complete: !output.SchemaDiscoveryLimitExceeded,
+                SelectionPolicy: UsbEtwSchemaRetentionPolicy.SelectionPolicyId,
                 output.SchemaShapes,
                 output.MarkerShapes),
             etw = new
@@ -282,7 +283,7 @@ internal sealed class ArmouryCaptureService
         });
         var manifestBytes = SerializeJson(new
         {
-            schemaVersion = 6,
+            schemaVersion = 7,
             capturedAtUtc = DateTimeOffset.UtcNow,
             applicationVersion = GetApplicationVersion(),
             source = "Windows built-in USB ETW real-time FullDataBusTrace session",
@@ -300,6 +301,7 @@ internal sealed class ArmouryCaptureService
                 diagnosticOnly = true,
                 containsPayloadBytes = false,
                 complete = !output.SchemaDiscoveryLimitExceeded,
+                selectionPolicy = UsbEtwSchemaRetentionPolicy.SelectionPolicyId,
                 phases = new
                 {
                     baseline = 0,
