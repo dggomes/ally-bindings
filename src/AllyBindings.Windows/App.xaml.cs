@@ -801,12 +801,22 @@ public partial class App : System.Windows.Application
         }
         finally
         {
-            _mainWindow.SetArmouryCaptureBusy(false);
-            _armouryCaptureCancellation?.Dispose();
-            _armouryCaptureCancellation = null;
-            _armouryCaptureInProgress = false;
-            _armouryCaptureCompletion?.TrySetResult();
-            _armouryCaptureCompletion = null;
+            TaskCompletionSource? captureCompletion;
+            await _operationGate.WaitAsync();
+            try
+            {
+                _mainWindow.SetArmouryCaptureBusy(false);
+                _armouryCaptureCancellation?.Dispose();
+                _armouryCaptureCancellation = null;
+                _armouryCaptureInProgress = false;
+                captureCompletion = _armouryCaptureCompletion;
+                _armouryCaptureCompletion = null;
+            }
+            finally
+            {
+                _operationGate.Release();
+            }
+            captureCompletion?.TrySetResult();
         }
     }
 
