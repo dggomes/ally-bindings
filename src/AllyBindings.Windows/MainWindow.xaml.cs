@@ -14,6 +14,7 @@ using CheckBox = System.Windows.Controls.CheckBox;
 using Clipboard = System.Windows.Clipboard;
 using Color = System.Windows.Media.Color;
 using ComboBox = System.Windows.Controls.ComboBox;
+using Point = System.Windows.Point;
 
 namespace AllyBindings.Windows;
 
@@ -25,6 +26,28 @@ public sealed record ControllerBindingDisplay(
 
 public partial class MainWindow : Window, INotifyPropertyChanged
 {
+    private static readonly (ControllerButton Source, Point Center)[] DiagramControlCenters =
+    [
+        (ControllerButton.LeftTrigger, new Point(157.5, 81)),
+        (ControllerButton.RightTrigger, new Point(542.5, 81)),
+        (ControllerButton.LeftBumper, new Point(175, 106.5)),
+        (ControllerButton.RightBumper, new Point(525, 106.5)),
+        (ControllerButton.LeftStick, new Point(151, 176)),
+        (ControllerButton.DPadUp, new Point(164.5, 244)),
+        (ControllerButton.DPadLeft, new Point(139, 268.5)),
+        (ControllerButton.DPadRight, new Point(191.5, 268.5)),
+        (ControllerButton.DPadDown, new Point(164.5, 294.5)),
+        (ControllerButton.View, new Point(222, 338)),
+        (ControllerButton.Menu, new Point(478, 338)),
+        (ControllerButton.Y, new Point(551, 155)),
+        (ControllerButton.X, new Point(506, 200)),
+        (ControllerButton.B, new Point(596, 200)),
+        (ControllerButton.A, new Point(551, 245)),
+        (ControllerButton.RightStick, new Point(546, 315)),
+        (ControllerButton.M1, new Point(164, 405)),
+        (ControllerButton.M2, new Point(536, 405)),
+    ];
+
     private readonly ControllerUiInputRouter _uiInput = new();
     private ProfileEditor? _selectedProfile;
     private ControllerButton _shortcutButton1;
@@ -44,6 +67,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private bool _updateBusy;
     private readonly SemaphoreSlim _dialogGate = new(1, 1);
     private TaskCompletionSource<bool>? _dialogCompletion;
+    private Point? _diagramMouseDownPosition;
+    private readonly Dictionary<int, Point> _diagramTouchDownPositions = [];
 
     public MainWindow(AppConfiguration configuration, BackendStatus backendStatus)
     {
@@ -175,10 +200,12 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     {
         await _dialogGate.WaitAsync();
         var completion = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        IInputElement? dialogOrigin = null;
         try
         {
             if (BindingPickerOverlay.Visibility == Visibility.Visible) CloseBindingPicker();
             if (NameKeyboardOverlay.Visibility == Visibility.Visible) CloseNameKeyboard();
+            dialogOrigin = Keyboard.FocusedElement;
             SetWorkspaceInteractive(false);
             _dialogCompletion = completion;
             ControllerDialogTitle.Text = title;
@@ -202,6 +229,14 @@ public partial class MainWindow : Window, INotifyPropertyChanged
                 ControllerDialogOverlay.Visibility = Visibility.Collapsed;
             }
             SetWorkspaceInteractive(true);
+            if (dialogOrigin is UIElement { IsVisible: true, IsEnabled: true } origin)
+            {
+                Keyboard.Focus(origin);
+            }
+            else
+            {
+                FocusControllerDefault();
+            }
             _dialogGate.Release();
         }
     }
@@ -674,6 +709,62 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             .FirstOrDefault(candidate => candidate.Row.Source == source);
         if (display is null) return;
         OpenBindingPicker(display.Row, button, display.Label);
+    }
+
+    private void ControllerDiagram_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        _diagramMouseDownPosition = e.GetPosition((IInputElement)sender);
+    }
+
+    private void ControllerDiagram_PreviewMouseLeftButtonUp(object sender, MouseButtonEventArgs e)
+    {
+        var start = _diagramMouseDownPosition;
+        _diagramMouseDownPosition = null;
+        if (start.HasValue && OpenNearestDiagramControl(start.Value, e.GetPosition((IInputElement)sender))) e.Handled = true;
+    }
+
+    private void ControllerDiagram_PreviewTouchDown(object sender, TouchEventArgs e)
+    {
+        _diagramTouchDownPositions[e.TouchDevice.Id] = e.GetTouchPoint((IInputElement)sender).Position;
+    }
+
+    private void ControllerDiagram_PreviewTouchUp(object sender, TouchEventArgs e)
+    {
+        if (!_diagramTouchDownPositions.Remove(e.TouchDevice.Id, out var start)) return;
+        if (OpenNearestDiagramControl(start, e.GetTouchPoint((IInputElement)sender).Position)) e.Handled = true;
+    }
+
+    private bool OpenNearestDiagramControl(Point start, Point end)
+    {
+        if (!CanEditSelected) return false;
+        if ((end - start).LengthSquared > 12 * 12) return false;
+
+        var startNearest = DiagramControlCenters
+            .Select(control => (control.Source, DistanceSquared: (control.Center - start).LengthSquared))
+            .OrderBy(control => control.DistanceSquared)
+            .First();
+        var endNearest = DiagramControlCenters
+            .Select(control => (control.Source, DistanceSquared: (control.Center - end).LengthSquared))
+            .OrderBy(control => control.DistanceSquared)
+            .First();
+        if (startNearest.Source != endNearest.Source ||
+            startNearest.DistanceSquared > 55 * 55 || endNearest.DistanceSquared > 55 * 55) return false;
+
+        var origin = FindDescendantButton(ControllerMapSurface, endNearest.Source);
+        if (origin is null) return false;
+        ControllerDiagramButton_Click(origin, new RoutedEventArgs(ButtonBase.ClickEvent));
+        return true;
+    }
+
+    private static Button? FindDescendantButton(DependencyObject parent, ControllerButton source)
+    {
+        for (var index = 0; index < VisualTreeHelper.GetChildrenCount(parent); index++)
+        {
+            var child = VisualTreeHelper.GetChild(parent, index);
+            if (child is Button { Tag: ControllerButton candidate } button && candidate == source) return button;
+            if (FindDescendantButton(child, source) is { } descendant) return descendant;
+        }
+        return null;
     }
 
     private void OpenBindingPicker(BindingRow row, Button origin, string label)

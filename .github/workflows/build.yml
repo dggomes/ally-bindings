@@ -14,12 +14,12 @@ jobs:
     name: Core tests
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-dotnet@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6
         with:
           dotnet-version: 8.0.x
       - run: dotnet test tests/AllyBindings.Core.Tests/AllyBindings.Core.Tests.csproj --configuration Release --logger "trx;LogFileName=core.trx"
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         if: always()
         with:
           name: core-test-results
@@ -29,8 +29,8 @@ jobs:
     name: Windows build and package
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-dotnet@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6
         with:
           dotnet-version: 8.0.x
       - name: Restore
@@ -78,18 +78,18 @@ jobs:
         run: ./scripts/test-etw-provider.ps1
       - name: Validate changelog release-note extraction
         shell: pwsh
-        run: ./scripts/get-release-notes.ps1 -Tag v0.3.0-preview.1 -OutputPath artifacts/release-notes-test.md
-      - uses: actions/upload-artifact@v7
+        run: ./scripts/get-release-notes.ps1 -Tag v0.3.0-preview.2 -OutputPath artifacts/release-notes-test.md
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: AllyBindings-win-x64
           path: artifacts/AllyBindings-win-x64.zip
           if-no-files-found: error
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: AllyBindings-ui-screenshots
           path: artifacts/ui-screenshots/*.png
           if-no-files-found: error
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         if: always()
         with:
           name: windows-test-results

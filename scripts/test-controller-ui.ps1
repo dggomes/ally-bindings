@@ -24,6 +24,7 @@ foreach ($requiredText in @(
     'AutomationProperties.AutomationId="NavigationController"',
     'AutomationProperties.AutomationId="NavigationShortcut"',
     'AutomationProperties.AutomationId="NavigationCaptureUpdate"',
+    'ScrollViewer.HorizontalScrollBarVisibility="Disabled"',
     'Capture Armoury M1/M2',
     'x:Name="ArmouryCaptureButton"',
     'Content="Start capture"',
@@ -39,8 +40,16 @@ foreach ($requiredText in @(
     'AutomationProperties.AutomationId="BindingPickerCancel"',
     'AutomationProperties.AutomationId="ControllerMapHint"',
     'AutomationProperties.AutomationId="ControllerMapReset"',
-    'x:Name="ControllerMapSurface" MinWidth="700" MinHeight="350"',
-    '<ColumnDefinition Width="400" />',
+    'x:Name="ControllerMapSurface" MinWidth="776" MinHeight="350"',
+    '<ColumnDefinition Width="416" />',
+    '<Setter Property="MinWidth" Value="90" />',
+    '<Setter Property="MinHeight" Value="110" />',
+    '<Setter Property="IsHitTestVisible" Value="False" />',
+    '<ScaleTransform ScaleY="0.84" />',
+    'PreviewMouseLeftButtonDown="ControllerDiagram_PreviewMouseLeftButtonDown"',
+    'PreviewMouseLeftButtonUp="ControllerDiagram_PreviewMouseLeftButtonUp"',
+    'PreviewTouchDown="ControllerDiagram_PreviewTouchDown"',
+    'PreviewTouchUp="ControllerDiagram_PreviewTouchUp"',
     'AutomationProperties.AutomationId="{Binding AutomationId}"',
     'ItemsSource="{Binding LeftBindings}"',
     'ItemsSource="{Binding DPadBindings}"',
@@ -71,6 +80,19 @@ foreach ($source in @(
 }
 if ($windowCode.IndexOf('$"Mapping-{source}"', [StringComparison]::Ordinal) -lt 0) {
     throw 'Mapping controls do not expose stable per-button automation IDs.'
+}
+if ($windowCode.IndexOf('private bool OpenNearestDiagramControl', [StringComparison]::Ordinal) -lt 0) {
+    throw 'Dense illustrated controls do not route pointer and touch input to the nearest physical control.'
+}
+foreach ($requiredCode in @(
+    'if ((end - start).LengthSquared > 12 * 12) return false;',
+    'startNearest.Source != endNearest.Source',
+    'dialogOrigin = Keyboard.FocusedElement;',
+    'Keyboard.Focus(origin);'
+)) {
+    if ($windowCode.IndexOf($requiredCode, [StringComparison]::Ordinal) -lt 0) {
+        throw "Controller interaction safety is missing required logic: $requiredCode"
+    }
 }
 if ($appXaml -notmatch '<Setter Property="MinHeight" Value="48"') {
     throw 'The global touch target minimum is below 48 device-independent pixels.'

@@ -6,6 +6,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Thi
 
 ## [Unreleased]
 
+## [v0.3.0-preview.2] - 2026-08-02
+
 ### Added
 
 - Full physical-trigger source mappings with XInput-compatible trigger activation and analog trigger-to-trigger intensity preservation; configuration schema 3 prevents older builds from silently stripping those mappings after rollback.
@@ -13,8 +15,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Thi
 ### Changed
 
 - Rebuilt the controller workspace around an Armoury-style oversized Ally diagram with all 18 physical controls visible as labelled, touch-sized mapping actions.
-- Every mapping action and every matching control on the controller illustration now opens the controller-operable binding modal; stable UI Automation IDs cover both interaction paths.
-- Preview releases recapture the tagged binary's real WPF screens and replace the packaged documentation images before signing off the archive.
+- Every mapping action and every matching control on the controller illustration now opens the controller-operable binding modal; the illustrated controls expose 48-DIP targets at the Ally viewport and dense clusters route touch/pointer input to the nearest physical control.
+- Preview releases recapture the tagged binary's real WPF screens, replace the packaged documentation images before signing off the archive, and reverify the public assets after publication.
+- GitHub Actions dependencies are pinned to immutable commits, and `main` requires the full Windows/core checks through a pull request before release tags can be cut.
 
 ## [v0.3.0-preview.1] - 2026-08-01
 
@@ -112,3 +115,4 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Thi
 [v0.01]: https://github.com/dggomes/ally-bindings/releases/tag/v0.01
 [v0.2.0-preview.2]: https://github.com/dggomes/ally-bindings/releases/tag/v0.2.0-preview.2
 [v0.3.0-preview.1]: https://github.com/dggomes/ally-bindings/releases/tag/v0.3.0-preview.1
+[v0.3.0-preview.2]: https://github.com/dggomes/ally-bindings/releases/tag/v0.3.0-preview.2

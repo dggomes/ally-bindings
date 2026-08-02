@@ -13,6 +13,7 @@ if (-not (Test-Path -LiteralPath $ExecutablePath -PathType Leaf)) {
 
 Add-Type -AssemblyName UIAutomationClient
 Add-Type -AssemblyName UIAutomationTypes
+Add-Type -AssemblyName System.Windows.Forms
 
 function Find-ElementContaining {
     param(
@@ -119,6 +120,12 @@ try {
         $transform.Resize(1040, 736)
         Start-Sleep -Milliseconds 300
     }
+    $navigationList = Wait-ElementContaining -Root $root -Name 'App sections' -ControlType ([System.Windows.Automation.ControlType]::List)
+    [object]$navigationScroll = $null
+    if ($navigationList.TryGetCurrentPattern([System.Windows.Automation.ScrollPattern]::Pattern, [ref]$navigationScroll) -and
+        ([System.Windows.Automation.ScrollPattern]$navigationScroll).Current.HorizontallyScrollable) {
+        throw 'Section navigation exposes a horizontal scrollbar at 1040x736.'
+    }
     $controllerMap = Wait-ElementById -Root $root -AutomationId 'ControllerMapScrollViewer'
     $mapScroll = [System.Windows.Automation.ScrollPattern]$controllerMap.GetCurrentPattern([System.Windows.Automation.ScrollPattern]::Pattern)
     if ($mapScroll.Current.HorizontallyScrollable -or $mapScroll.Current.VerticallyScrollable) {
@@ -155,12 +162,35 @@ try {
         throw "Trigger mapping accessibility name was incomplete: $($leftTrigger.Current.Name)"
     }
 
+    $leftTrigger.SetFocus()
+    [System.Windows.Forms.SendKeys]::SendWait('{DOWN}')
+    Start-Sleep -Milliseconds 120
+    $directionalTarget = [System.Windows.Automation.AutomationElement]::FocusedElement
+    $directionalTargetId = $directionalTarget.Current.AutomationId
+    if (($directionalTargetId -notlike 'Mapping-*' -and $directionalTargetId -notlike 'Diagram-*') -or
+        $directionalTargetId -eq 'Mapping-LeftTrigger') {
+        throw "D-pad-equivalent navigation did not move to another controller mapping control; focused '$directionalTargetId'."
+    }
+    [System.Windows.Forms.SendKeys]::SendWait('{ENTER}')
+    Wait-ElementContaining -Root $root -Name 'Binding output choices' -ControlType ([System.Windows.Automation.ControlType]::List) | Out-Null
+    $cancelDirectionalPicker = Wait-ElementById -Root $root -AutomationId 'BindingPickerCancel'
+    $invoke = [System.Windows.Automation.InvokePattern]$cancelDirectionalPicker.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern)
+    $invoke.Invoke()
+    Start-Sleep -Milliseconds 100
+    if ([System.Windows.Automation.AutomationElement]::FocusedElement.Current.AutomationId -ne $directionalTargetId) {
+        throw "Controller navigation modal did not restore focus to '$directionalTargetId'."
+    }
+
     $expectedDiagramIds = $expectedMappingIds | ForEach-Object { $_ -replace '^Mapping-', 'Diagram-' }
     $diagramButtons = @($expectedDiagramIds | ForEach-Object { Wait-ElementById -Root $root -AutomationId $_ })
     if ($diagramButtons.Count -ne 18) { throw "Expected 18 interactive controller-diagram controls, found $($diagramButtons.Count)." }
     foreach ($diagramButton in $diagramButtons) {
         if (-not $diagramButton.Current.IsEnabled -or $diagramButton.Current.IsOffscreen) {
             throw "Controller diagram control '$($diagramButton.Current.AutomationId)' is not directly usable."
+        }
+        $diagramBounds = $diagramButton.Current.BoundingRectangle
+        if ($diagramBounds.Width -lt 48 -or $diagramBounds.Height -lt 48) {
+            throw "Controller diagram control '$($diagramButton.Current.AutomationId)' is smaller than the 48-DIP touch target at 1040x736: $([Math]::Round($diagramBounds.Width, 2))x$([Math]::Round($diagramBounds.Height, 2))."
         }
         $invoke = [System.Windows.Automation.InvokePattern]$diagramButton.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern)
         $invoke.Invoke()
