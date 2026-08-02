@@ -20,13 +20,34 @@ function Invoke-RejectedHelperPeer {
 
     $sessionId = [Guid]::NewGuid()
     $pipeName = "AllyBindings.ArmouryEtw.$($sessionId.ToString('D'))"
-    $options = [IO.Pipes.PipeOptions]::Asynchronous -bor [IO.Pipes.PipeOptions]::CurrentUserOnly
-    $server = [IO.Pipes.NamedPipeServerStream]::new(
+    $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
+    $userSid = $identity.User
+    $networkSid = [Security.Principal.SecurityIdentifier]::new(
+        [Security.Principal.WellKnownSidType]::NetworkSid,
+        $null)
+    $pipeSecurity = [IO.Pipes.PipeSecurity]::new()
+    $pipeSecurity.SetAccessRuleProtection($true, $false)
+    $pipeSecurity.SetOwner($userSid)
+    $pipeSecurity.AddAccessRule([IO.Pipes.PipeAccessRule]::new(
+        $networkSid,
+        [IO.Pipes.PipeAccessRights]::FullControl,
+        [Security.AccessControl.AccessControlType]::Deny))
+    $pipeSecurity.AddAccessRule([IO.Pipes.PipeAccessRule]::new(
+        $userSid,
+        [IO.Pipes.PipeAccessRights]::FullControl,
+        [Security.AccessControl.AccessControlType]::Allow))
+    $server = [IO.Pipes.NamedPipeServerStreamAcl]::Create(
         $pipeName,
         [IO.Pipes.PipeDirection]::InOut,
         1,
         [IO.Pipes.PipeTransmissionMode]::Byte,
-        $options)
+        [IO.Pipes.PipeOptions]::Asynchronous,
+        0,
+        0,
+        $pipeSecurity,
+        [IO.HandleInheritability]::None,
+        [IO.Pipes.PipeAccessRights]0)
+    $identity.Dispose()
     $process = $null
     try {
         $connect = $server.WaitForConnectionAsync()

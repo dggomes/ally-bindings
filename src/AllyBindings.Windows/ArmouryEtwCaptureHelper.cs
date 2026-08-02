@@ -2,6 +2,8 @@ using System.Diagnostics;
 using System.IO;
 using System.IO.Pipes;
 using System.Runtime.InteropServices;
+using System.Security.AccessControl;
+using System.Security.Principal;
 using System.Text;
 using System.Text.Json;
 using AllyBindings.Core;
@@ -50,7 +52,7 @@ internal static class ArmouryEtwCaptureHelper
             ".",
             ArmouryEtwCapturePipe.GetPipeName(sessionId),
             PipeDirection.InOut,
-            PipeOptions.Asynchronous | PipeOptions.CurrentUserOnly);
+            PipeOptions.Asynchronous);
         try
         {
             await pipe.ConnectAsync(15_000, cancellationToken).ConfigureAwait(false);
@@ -352,6 +354,47 @@ internal static class ArmouryEtwCapturePipe
     internal const string ResultFileName = "etw-filtered-reports.json";
 
     public static string GetPipeName(Guid sessionId) => $"AllyBindings.ArmouryEtw.{sessionId:D}";
+
+    public static NamedPipeServerStream CreateServer(Guid sessionId)
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            throw new PlatformNotSupportedException("The Armoury ETW pipe ACL is available only on Windows.");
+        }
+
+        using var identity = WindowsIdentity.GetCurrent();
+        var userSid = identity.User
+            ?? throw new InvalidOperationException("Windows did not expose the current user's security identifier.");
+        var networkSid = new SecurityIdentifier(WellKnownSidType.NetworkSid, domainSid: null);
+        var security = new PipeSecurity();
+        security.SetAccessRuleProtection(isProtected: true, preserveInheritance: false);
+        security.SetOwner(userSid);
+        security.AddAccessRule(new(
+            networkSid,
+            PipeAccessRights.FullControl,
+            AccessControlType.Deny));
+        security.AddAccessRule(new(
+            userSid,
+            PipeAccessRights.FullControl,
+            AccessControlType.Allow));
+
+        // CurrentUserOnly intentionally cannot be used here: on Windows it also
+        // requires the client and server to have the same UAC elevation level.
+        // The helper is elevated and the app is not. This explicit SID ACL keeps
+        // the pipe local/current-user while PID + executable checks authenticate
+        // both endpoints after connection.
+        return NamedPipeServerStreamAcl.Create(
+            GetPipeName(sessionId),
+            PipeDirection.InOut,
+            1,
+            PipeTransmissionMode.Byte,
+            PipeOptions.Asynchronous,
+            inBufferSize: 0,
+            outBufferSize: 0,
+            security,
+            HandleInheritability.None,
+            additionalAccessRights: default);
+    }
 
     public static string GetCaptureRoot()
     {

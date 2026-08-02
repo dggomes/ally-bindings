@@ -6,6 +6,17 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Thi
 
 ## [Unreleased]
 
+## [v0.3.0-preview.10] - 2026-08-02
+
+### Fixed
+
+- Allow the elevated ETW helper to connect to the unelevated app through an explicit current-user SID ACL. `.NET`'s `PipeOptions.CurrentUserOnly` intentionally rejects cross-elevation connections even for the same Windows account.
+- Deny network logons at the pipe ACL and retain both endpoint PID checks plus exact executable-path authentication after connection.
+
+### Tests
+
+- Exercise helper authentication through the same protected SID ACL used by the app and keep forged PID/executable peers fail-closed.
+
 ## [v0.3.0-preview.9] - 2026-08-02
 
 ### Added
@@ -207,3 +218,4 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Thi
 [v0.3.0-preview.7]: https://github.com/dggomes/ally-bindings/releases/tag/v0.3.0-preview.7
 [v0.3.0-preview.8]: https://github.com/dggomes/ally-bindings/releases/tag/v0.3.0-preview.8
 [v0.3.0-preview.9]: https://github.com/dggomes/ally-bindings/releases/tag/v0.3.0-preview.9
+[v0.3.0-preview.10]: https://github.com/dggomes/ally-bindings/releases/tag/v0.3.0-preview.10
