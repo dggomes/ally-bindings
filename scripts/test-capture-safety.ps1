@@ -110,6 +110,13 @@ if ($startMethod.IndexOf('try', [StringComparison]::Ordinal) -gt
     $startMethod.IndexOf('catch (OperationCanceledException)', [StringComparison]::Ordinal) -lt 0) {
     throw 'Pre-capture target rediscovery is outside the diagnostic boundary or cancellation is retained as a failure.'
 }
+$cancelMethod = $service.Substring(
+    $service.IndexOf('public void CancelAndDelete()', [StringComparison]::Ordinal),
+    $service.IndexOf('private static void TryDispose', [StringComparison]::Ordinal) -
+    $service.IndexOf('public void CancelAndDelete()', [StringComparison]::Ordinal))
+if ($cancelMethod.IndexOf('ArmouryCaptureDiagnostics.Delete(SessionId)', [StringComparison]::Ordinal) -lt 0) {
+    throw 'A cancelled active capture retains its lifecycle diagnostic.'
+}
 if ($service -notmatch 'Stopwatch\.GetTimestamp\(\)' -or
     $service -notmatch 'PerformanceCounterTimestamp' -or
     $extractor -notmatch 'PerformanceCounterTimestamp') {

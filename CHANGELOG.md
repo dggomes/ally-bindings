@@ -206,3 +206,4 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Thi
 [v0.3.0-preview.6]: https://github.com/dggomes/ally-bindings/releases/tag/v0.3.0-preview.6
 [v0.3.0-preview.7]: https://github.com/dggomes/ally-bindings/releases/tag/v0.3.0-preview.7
 [v0.3.0-preview.8]: https://github.com/dggomes/ally-bindings/releases/tag/v0.3.0-preview.8
+[v0.3.0-preview.9]: https://github.com/dggomes/ally-bindings/releases/tag/v0.3.0-preview.9

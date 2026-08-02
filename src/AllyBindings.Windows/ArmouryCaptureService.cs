@@ -656,6 +656,7 @@ internal sealed class ArmouryCaptureSession(
         finally
         {
             Dispose();
+            ArmouryCaptureDiagnostics.Delete(SessionId);
             try
             {
                 System.IO.Directory.Delete(Directory, recursive: true);
