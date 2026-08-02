@@ -28,15 +28,15 @@ Assert-True ($coreProtocol.Contains('Task<AsusRearButtonReadResult> ReadFeatureR
 Assert-True ($coreProtocol.Contains('IReadOnlyList<AsusFeatureReportRead> Reads')) 'Read results must retain per-interface outcomes.'
 
 $readMethod = Get-MethodBody $device 'public async Task<AsusRearButtonReadResult> ReadFeatureReportAsync(' 'public async Task<AsusRearButtonWriteResult> WriteFeatureReportAsync('
-Assert-True (-not $readMethod.Contains('SetFeature', [StringComparison]::OrdinalIgnoreCase)) 'The public read seam must not reference SetFeature.'
-Assert-True (-not $readMethod.Contains('WriteFeatureReport', [StringComparison]::OrdinalIgnoreCase)) 'The public read seam must not call the write path.'
+Assert-True ($readMethod.IndexOf('SetFeature', [StringComparison]::OrdinalIgnoreCase) -lt 0) 'The public read seam must not reference SetFeature.'
+Assert-True ($readMethod.IndexOf('WriteFeatureReport', [StringComparison]::OrdinalIgnoreCase) -lt 0) 'The public read seam must not call the write path.'
 Assert-True ($device.Contains('stream.GetFeature(buffer);')) 'The HID implementation must issue GetFeature.'
 Assert-True (($device.Split('stream.GetFeature(buffer);').Length - 1) -eq 1) 'The HID implementation must have one bounded GetFeature call site.'
 Assert-True ($device.Contains('reportLength is < AsusRearButtonProtocol.ReportLength or > UsbEtwHidFeatureReportExtractor.MaximumWireReportLength')) 'Reads must reject lengths outside 50-64 bytes.'
 Assert-True ($device.Contains('no retry was attempted')) 'Read failures and timeouts must not retry.'
 
 foreach ($forbidden in @('ArmouryEtw', 'NamedPipe', 'runas', 'WriteFeatureReportAsync(', 'SetFeature(')) {
-    Assert-True (-not $service.Contains($forbidden, [StringComparison]::OrdinalIgnoreCase)) "Snapshot service must not reference $forbidden"
+    Assert-True ($service.IndexOf($forbidden, [StringComparison]::OrdinalIgnoreCase) -lt 0) "Snapshot service must not reference $forbidden"
 }
 Assert-True ($service.Contains('source = "read-only HidSharp GetFeature(0x5A) snapshot"')) 'Snapshot manifest must identify the read-only source.'
 Assert-True ($service.Contains('rawSystemTraceWritten = false')) 'Snapshot manifest must deny raw trace output.'
@@ -48,12 +48,12 @@ Assert-True ($service.Contains('minimumIndependentMatchingRuns = 2')) 'Snapshot 
 Assert-True ($analyzer.Contains('HardwareUnlockEvidence: false')) 'Analyzer output must always be zero-authority.'
 Assert-True ($analyzer.Contains('Readback analysis is review-required diagnostic evidence')) 'Analyzer must state review requirement.'
 foreach ($forbidden in @('WriteFeatureReportAsync', 'SetFeature', 'CustomWritesApproved = true', 'RecoveryWritesApproved = true')) {
-    Assert-True (-not $analyzer.Contains($forbidden, [StringComparison]::OrdinalIgnoreCase)) "Analyzer must not contain $forbidden"
+    Assert-True ($analyzer.IndexOf($forbidden, [StringComparison]::OrdinalIgnoreCase) -lt 0) "Analyzer must not contain $forbidden"
 }
 
 $appSnapshot = Get-MethodBody $app 'public async Task CaptureRearButtonSnapshotAsync()' 'public async Task CaptureArmouryProtocolAsync()'
 foreach ($forbidden in @('ArmouryCaptureService', 'ArmouryEtw', 'MarkActionAsync', 'WriteFeatureReportAsync', 'SetFeature', 'runas')) {
-    Assert-True (-not $appSnapshot.Contains($forbidden, [StringComparison]::OrdinalIgnoreCase)) "Snapshot workflow must not reference $forbidden"
+    Assert-True ($appSnapshot.IndexOf($forbidden, [StringComparison]::OrdinalIgnoreCase) -lt 0) "Snapshot workflow must not reference $forbidden"
 }
 Assert-True ($appSnapshot.Contains('AsusFeatureReportSnapshotStage.Baseline')) 'Workflow must read the baseline stage.'
 Assert-True ($appSnapshot.Contains('AsusFeatureReportSnapshotStage.M1A_M2B')) 'Workflow must read the A/B stage.'
