@@ -12,7 +12,7 @@ M1/M2 are not independent XInput buttons. ASUS configures them as firmware-level
 
 - ASUS's official remapping guide says M1/M2 are secondary-function modifiers by default and can be assigned their own actions by clearing **Set as Secondary Function**.
 - G-Helper applies those assignments through ASUS HID feature report `0x5A`, command `0xD1`, mapping zone `0x08`.
-- Handheld Companion independently uses the same report family/zone and identifies Xbox ROG Ally X as DMI model `RC73XA`.
+- Handheld Companion independently uses the same report family/zone and identifies Xbox ROG Ally X as DMI model token `RC73XA`; Daniel's firmware exposes the equivalent repeated product string `RC73XA_RC73XA`.
 - Linux ROG Ally support likewise treats M1/M2 as ASUS firmware-programmable keyboard/controller actions rather than gamepad button bits.
 
 This supports a narrow direct-write backend; it does **not** make M1/M2 readable through `XInputGetState`. Ally Bindings therefore offers M1/M2 only as physical mapping sources, never as shortcut-chord buttons.
