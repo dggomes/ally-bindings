@@ -245,7 +245,11 @@
 
                   <Grid Grid.Column="1" Margin="4,0">
                     <Viewbox Stretch="Uniform" StretchDirection="Both">
-                      <Canvas Width="700" Height="500" PreviewMouseLeftButtonUp="ControllerDiagram_PreviewMouseLeftButtonUp" PreviewTouchUp="ControllerDiagram_PreviewTouchUp">
+                      <Canvas Width="700" Height="500"
+                              PreviewMouseLeftButtonDown="ControllerDiagram_PreviewMouseLeftButtonDown"
+                              PreviewMouseLeftButtonUp="ControllerDiagram_PreviewMouseLeftButtonUp"
+                              PreviewTouchDown="ControllerDiagram_PreviewTouchDown"
+                              PreviewTouchUp="ControllerDiagram_PreviewTouchUp">
                         <Canvas.LayoutTransform><ScaleTransform ScaleY="0.84" /></Canvas.LayoutTransform>
                         <Canvas.Resources>
                           <Style x:Key="DiagramHitTarget" TargetType="Button">

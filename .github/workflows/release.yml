@@ -137,10 +137,10 @@ jobs:
             throw "Draft release metadata verification failed"
           }
           gh release edit $tag --repo $env:GITHUB_REPOSITORY --draft=false --prerelease
-
-          $publicVerify = Join-Path $PWD 'artifacts/public-release-verification'
-          New-Item -ItemType Directory -Force -Path $publicVerify | Out-Null
-          gh release download $tag --repo $env:GITHUB_REPOSITORY --dir $publicVerify
+          try {
+            $publicVerify = Join-Path $PWD 'artifacts/public-release-verification'
+            New-Item -ItemType Directory -Force -Path $publicVerify | Out-Null
+            gh release download $tag --repo $env:GITHUB_REPOSITORY --dir $publicVerify
           $expectedNames = @(
             "AllyBindings-$tag-win-x64.exe",
             "AllyBindings-$tag-win-x64.exe.sha256",
@@ -164,4 +164,15 @@ jobs:
           if ($published.tagName -cne $tag -or $published.name -cne "Ally Bindings $tag — Preview" -or
               $published.isDraft -or -not $published.isPrerelease) {
             throw "Published release metadata verification failed"
+          }
+          } catch {
+            $verificationError = $_
+            Write-Warning "Public verification failed; withdrawing $tag immediately."
+            gh release edit $tag --repo $env:GITHUB_REPOSITORY --draft=true
+            if ($LASTEXITCODE -ne 0) {
+              Write-Warning "Redrafting failed; deleting the public release while preserving the tag."
+              gh release delete $tag --repo $env:GITHUB_REPOSITORY --yes --cleanup-tag=false
+              if ($LASTEXITCODE -ne 0) { throw "Public verification failed and automatic withdrawal also failed: $verificationError" }
+            }
+            throw $verificationError
           }

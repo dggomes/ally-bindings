@@ -67,6 +67,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private bool _updateBusy;
     private readonly SemaphoreSlim _dialogGate = new(1, 1);
     private TaskCompletionSource<bool>? _dialogCompletion;
+    private Point? _diagramMouseDownPosition;
+    private readonly Dictionary<int, Point> _diagramTouchDownPositions = [];
 
     public MainWindow(AppConfiguration configuration, BackendStatus backendStatus)
     {
@@ -198,10 +200,12 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     {
         await _dialogGate.WaitAsync();
         var completion = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        IInputElement? dialogOrigin = null;
         try
         {
             if (BindingPickerOverlay.Visibility == Visibility.Visible) CloseBindingPicker();
             if (NameKeyboardOverlay.Visibility == Visibility.Visible) CloseNameKeyboard();
+            dialogOrigin = Keyboard.FocusedElement;
             SetWorkspaceInteractive(false);
             _dialogCompletion = completion;
             ControllerDialogTitle.Text = title;
@@ -225,6 +229,14 @@ public partial class MainWindow : Window, INotifyPropertyChanged
                 ControllerDialogOverlay.Visibility = Visibility.Collapsed;
             }
             SetWorkspaceInteractive(true);
+            if (dialogOrigin is UIElement { IsVisible: true, IsEnabled: true } origin)
+            {
+                Keyboard.Focus(origin);
+            }
+            else
+            {
+                FocusControllerDefault();
+            }
             _dialogGate.Release();
         }
     }
@@ -699,26 +711,46 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         OpenBindingPicker(display.Row, button, display.Label);
     }
 
+    private void ControllerDiagram_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        _diagramMouseDownPosition = e.GetPosition((IInputElement)sender);
+    }
+
     private void ControllerDiagram_PreviewMouseLeftButtonUp(object sender, MouseButtonEventArgs e)
     {
-        if (OpenNearestDiagramControl(e.GetPosition((IInputElement)sender))) e.Handled = true;
+        var start = _diagramMouseDownPosition;
+        _diagramMouseDownPosition = null;
+        if (start.HasValue && OpenNearestDiagramControl(start.Value, e.GetPosition((IInputElement)sender))) e.Handled = true;
+    }
+
+    private void ControllerDiagram_PreviewTouchDown(object sender, TouchEventArgs e)
+    {
+        _diagramTouchDownPositions[e.TouchDevice.Id] = e.GetTouchPoint((IInputElement)sender).Position;
     }
 
     private void ControllerDiagram_PreviewTouchUp(object sender, TouchEventArgs e)
     {
-        if (OpenNearestDiagramControl(e.GetTouchPoint((IInputElement)sender).Position)) e.Handled = true;
+        if (!_diagramTouchDownPositions.Remove(e.TouchDevice.Id, out var start)) return;
+        if (OpenNearestDiagramControl(start, e.GetTouchPoint((IInputElement)sender).Position)) e.Handled = true;
     }
 
-    private bool OpenNearestDiagramControl(Point position)
+    private bool OpenNearestDiagramControl(Point start, Point end)
     {
         if (!CanEditSelected) return false;
-        var nearest = DiagramControlCenters
-            .Select(control => (control.Source, DistanceSquared: (control.Center - position).LengthSquared))
+        if ((end - start).LengthSquared > 12 * 12) return false;
+
+        var startNearest = DiagramControlCenters
+            .Select(control => (control.Source, DistanceSquared: (control.Center - start).LengthSquared))
             .OrderBy(control => control.DistanceSquared)
             .First();
-        if (nearest.DistanceSquared > 55 * 55) return false;
+        var endNearest = DiagramControlCenters
+            .Select(control => (control.Source, DistanceSquared: (control.Center - end).LengthSquared))
+            .OrderBy(control => control.DistanceSquared)
+            .First();
+        if (startNearest.Source != endNearest.Source ||
+            startNearest.DistanceSquared > 55 * 55 || endNearest.DistanceSquared > 55 * 55) return false;
 
-        var origin = FindDescendantButton(ControllerMapSurface, nearest.Source);
+        var origin = FindDescendantButton(ControllerMapSurface, endNearest.Source);
         if (origin is null) return false;
         ControllerDiagramButton_Click(origin, new RoutedEventArgs(ButtonBase.ClickEvent));
         return true;

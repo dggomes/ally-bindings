@@ -46,7 +46,9 @@ foreach ($requiredText in @(
     '<Setter Property="MinHeight" Value="110" />',
     '<Setter Property="IsHitTestVisible" Value="False" />',
     '<ScaleTransform ScaleY="0.84" />',
+    'PreviewMouseLeftButtonDown="ControllerDiagram_PreviewMouseLeftButtonDown"',
     'PreviewMouseLeftButtonUp="ControllerDiagram_PreviewMouseLeftButtonUp"',
+    'PreviewTouchDown="ControllerDiagram_PreviewTouchDown"',
     'PreviewTouchUp="ControllerDiagram_PreviewTouchUp"',
     'AutomationProperties.AutomationId="{Binding AutomationId}"',
     'ItemsSource="{Binding LeftBindings}"',
@@ -81,6 +83,16 @@ if ($windowCode.IndexOf('$"Mapping-{source}"', [StringComparison]::Ordinal) -lt 
 }
 if ($windowCode.IndexOf('private bool OpenNearestDiagramControl', [StringComparison]::Ordinal) -lt 0) {
     throw 'Dense illustrated controls do not route pointer and touch input to the nearest physical control.'
+}
+foreach ($requiredCode in @(
+    'if ((end - start).LengthSquared > 12 * 12) return false;',
+    'startNearest.Source != endNearest.Source',
+    'dialogOrigin = Keyboard.FocusedElement;',
+    'Keyboard.Focus(origin);'
+)) {
+    if ($windowCode.IndexOf($requiredCode, [StringComparison]::Ordinal) -lt 0) {
+        throw "Controller interaction safety is missing required logic: $requiredCode"
+    }
 }
 if ($appXaml -notmatch '<Setter Property="MinHeight" Value="48"') {
     throw 'The global touch target minimum is below 48 device-independent pixels.'
