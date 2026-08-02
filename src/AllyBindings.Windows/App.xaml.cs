@@ -1,6 +1,8 @@
 using System.Diagnostics;
 using System.IO;
+using System.IO.Pipes;
 using System.Reflection;
+using System.Text;
 using System.Threading;
 using System.Windows;
 using AllyBindings.Core;
@@ -11,7 +13,9 @@ namespace AllyBindings.Windows;
 
 public partial class App : System.Windows.Application
 {
+    private const string ActivationPipeName = "AllyBindings.Activation.v1";
     private readonly SemaphoreSlim _operationGate = new(1, 1);
+    private readonly ControllerInputArbitration _controllerInputArbitration = new();
     private Mutex? _singleInstance;
     private JsonProfileStore _profileStore = null!;
     private IControllerBackend _backend = null!;
@@ -29,8 +33,13 @@ public partial class App : System.Windows.Application
     private bool _exiting;
     private bool _updateCheckInProgress;
     private bool _armouryCaptureInProgress;
+    private CancellationTokenSource? _armouryCaptureCancellation;
+    private TaskCompletionSource? _armouryCaptureCompletion;
     private bool _allowExitWithPendingRearMapping;
     private System.IO.FileStream? _executableIntegrityLock;
+    private CancellationTokenSource? _activationListenerCancellation;
+    private Task? _activationListenerTask;
+    private bool _activationRequested;
 
     public AppConfiguration Configuration { get; private set; } = AppConfiguration.CreateDefault();
 
@@ -59,10 +68,19 @@ public partial class App : System.Windows.Application
         _singleInstance = new Mutex(initiallyOwned: true, @"Local\AllyBindings.SingleInstance", out var createdNew);
         if (!createdNew)
         {
-            Forms.MessageBox.Show("Ally Bindings is already running in the notification area.", "Ally Bindings", Forms.MessageBoxButtons.OK, Forms.MessageBoxIcon.Information);
+            if (!SignalExistingInstance())
+            {
+                Forms.MessageBox.Show(
+                    "Ally Bindings is already running, but its window could not be opened. Use the notification-area icon.",
+                    "Ally Bindings",
+                    Forms.MessageBoxButtons.OK,
+                    Forms.MessageBoxIcon.Information);
+            }
             Shutdown();
             return;
         }
+
+        StartActivationListener();
 
         var updateSuccessMarker = Environment.GetEnvironmentVariable("ALLY_BINDINGS_UPDATE_SUCCESS_MARKER");
         Environment.SetEnvironmentVariable("ALLY_BINDINGS_UPDATE_SUCCESS_MARKER", null);
@@ -76,6 +94,87 @@ public partial class App : System.Windows.Application
     {
         var exitCode = await ArmouryEtwCaptureHelper.RunAsync(sessionId, parentProcessId);
         Shutdown(exitCode);
+    }
+
+    private static bool SignalExistingInstance()
+    {
+        try
+        {
+            using var client = new NamedPipeClientStream(
+                ".",
+                ActivationPipeName,
+                PipeDirection.Out,
+                PipeOptions.CurrentUserOnly);
+            client.Connect(2500);
+            using var writer = new StreamWriter(client, new UTF8Encoding(false), 256, leaveOpen: false)
+            {
+                AutoFlush = true,
+            };
+            writer.WriteLine("open");
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private void StartActivationListener()
+    {
+        _activationListenerCancellation = new CancellationTokenSource();
+        _activationListenerTask = ListenForActivationAsync(_activationListenerCancellation.Token);
+    }
+
+    private async Task ListenForActivationAsync(CancellationToken cancellationToken)
+    {
+        while (!cancellationToken.IsCancellationRequested)
+        {
+            try
+            {
+                await using var server = new NamedPipeServerStream(
+                    ActivationPipeName,
+                    PipeDirection.In,
+                    1,
+                    PipeTransmissionMode.Byte,
+                    PipeOptions.Asynchronous | PipeOptions.CurrentUserOnly);
+                await server.WaitForConnectionAsync(cancellationToken);
+                using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                timeout.CancelAfter(TimeSpan.FromSeconds(3));
+                using var reader = new StreamReader(server, Encoding.UTF8, false, 256, leaveOpen: true);
+                var command = await reader.ReadLineAsync(timeout.Token);
+                if (string.Equals(command, "open", StringComparison.Ordinal))
+                {
+                    await Dispatcher.InvokeAsync(() =>
+                    {
+                        if (_mainWindow is null)
+                        {
+                            _activationRequested = true;
+                        }
+                        else
+                        {
+                            OpenMainWindow();
+                        }
+                    });
+                }
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                return;
+            }
+            catch
+            {
+                // A malformed or abandoned same-user peer cannot kill activation;
+                // recreate the private listener for the next normal launch.
+            }
+        }
+    }
+
+    private void StopActivationListener()
+    {
+        var cancellation = Interlocked.Exchange(ref _activationListenerCancellation, null);
+        cancellation?.Cancel();
+        cancellation?.Dispose();
+        _activationListenerTask = null;
     }
 
     private async Task InitializeAsync(bool startInBackground, bool startedAfterUpdate, string? updateSuccessMarker)
@@ -156,13 +255,14 @@ public partial class App : System.Windows.Application
             _mainWindow = new MainWindow(Configuration, backendStatus);
             _updateService = new GitHubUpdateService();
             MainWindow = _mainWindow;
-            _mainWindow.SetUpdateStatus($"Current version: {GitHubUpdateService.CurrentVersion.ToString(3)}");
+            _mainWindow.SetUpdateStatus($"Current version: {GitHubUpdateService.CurrentSemanticVersion}");
 
             ConfigureTray();
             _controllerMonitor = new XInputMonitor(Configuration.ControllerIndex);
             _controllerMonitor.SnapshotReceived += ControllerSnapshotReceived;
             _controllerMonitor.ActiveControllerChanged += (_, index) => _mainWindow.SetControllerStatus(index);
             _controllerMonitor.Start();
+            _mainWindow.SetControllerStatus(_controllerMonitor.ActiveControllerIndex);
 
             _panicHotKey = new GlobalPanicHotKey();
             _panicHotKey.Pressed += async (_, _) => await RestoreDefaultAsync("Panic shortcut");
@@ -171,7 +271,7 @@ public partial class App : System.Windows.Application
                 _configurationWarnings = _configurationWarnings.Append("Ctrl+Alt+F12 could not be registered; another application may own it.").ToList();
             }
 
-            if (!startInBackground)
+            if (!startInBackground || _activationRequested)
             {
                 OpenMainWindow();
             }
@@ -231,12 +331,26 @@ public partial class App : System.Windows.Application
 
         _trayIcon = new Forms.NotifyIcon
         {
-            Text = "Ally Bindings · Preview backend",
-            Icon = Drawing.SystemIcons.Application,
+            Text = $"Ally Bindings {GitHubUpdateService.CurrentSemanticVersion} · Preview",
+            Icon = LoadApplicationIcon(),
             Visible = true,
             ContextMenuStrip = menu,
         };
         _trayIcon.DoubleClick += (_, _) => Dispatcher.Invoke(OpenMainWindow);
+    }
+
+    private static Drawing.Icon LoadApplicationIcon()
+    {
+        var executable = Environment.ProcessPath;
+        if (!string.IsNullOrWhiteSpace(executable))
+        {
+            using var extracted = Drawing.Icon.ExtractAssociatedIcon(executable);
+            if (extracted is not null)
+            {
+                return (Drawing.Icon)extracted.Clone();
+            }
+        }
+        return (Drawing.Icon)Drawing.SystemIcons.Application.Clone();
     }
 
     private Task DispatchAsync(Func<Task> action)
@@ -248,7 +362,16 @@ public partial class App : System.Windows.Application
 
     private void ControllerSnapshotReceived(object? sender, ControllerSnapshot snapshot)
     {
-        var events = _cycle.Process(snapshot, DateTimeOffset.UtcNow, BuildCycleItems(), Configuration.ActiveProfileId);
+        var consumedByEditor = _mainWindow.HandleControllerInput(snapshot);
+        var routing = _controllerInputArbitration.Route(snapshot, consumedByEditor);
+        if (routing.CancelCycle)
+        {
+            _cycle.Cancel();
+            _overlay.Dismiss();
+        }
+        if (!routing.ShouldProcess) return;
+
+        var events = _cycle.Process(routing.Snapshot, DateTimeOffset.UtcNow, BuildCycleItems(), Configuration.ActiveProfileId);
         foreach (var cycleEvent in events)
         {
             switch (cycleEvent.Kind)
@@ -288,6 +411,10 @@ public partial class App : System.Windows.Application
         await _operationGate.WaitAsync();
         try
         {
+            if (_armouryCaptureInProgress)
+            {
+                throw new InvalidOperationException("Save is blocked while Armoury capture is active. Cancel or finish the capture first.");
+            }
             var selectedProfileId = editor.SelectedProfile is null
                 ? null
                 : editor.SelectedProfile.IsDefault
@@ -347,6 +474,11 @@ public partial class App : System.Windows.Application
         await _operationGate.WaitAsync();
         try
         {
+            if (_armouryCaptureInProgress)
+            {
+                _mainWindow.SetStatus("Profile changes are blocked while Armoury capture is active.");
+                return;
+            }
             var profile = Configuration.Profiles.FirstOrDefault(candidate => candidate.Id.Equals(profileId, StringComparison.OrdinalIgnoreCase));
             if (profile is null)
             {
@@ -439,6 +571,11 @@ public partial class App : System.Windows.Application
 
     public async Task RestoreDefaultAsync(string reason)
     {
+        if (_armouryCaptureInProgress)
+        {
+            _armouryCaptureCancellation?.Cancel();
+            _mainWindow.CancelControllerDialog();
+        }
         await _operationGate.WaitAsync();
         try
         {
@@ -511,63 +648,76 @@ public partial class App : System.Windows.Application
 
     public async Task CaptureArmouryProtocolAsync()
     {
-        if (_armouryCaptureInProgress) return;
-        _armouryCaptureInProgress = true;
         await _operationGate.WaitAsync();
+        try
+        {
+            if (_armouryCaptureInProgress) return;
+            _armouryCaptureInProgress = true;
+            _armouryCaptureCancellation = new CancellationTokenSource();
+            _armouryCaptureCompletion = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        }
+        finally
+        {
+            _operationGate.Release();
+        }
+        var cancellationToken = _armouryCaptureCancellation.Token;
         ArmouryCaptureSession? session = null;
 
-        static void RequireCaptureStep(string message, string title)
+        async Task RequireCaptureStepAsync(string message, string title)
         {
-            if (Forms.MessageBox.Show(
-                    message,
-                    title,
-                    Forms.MessageBoxButtons.OKCancel,
-                    Forms.MessageBoxIcon.Information) != Forms.DialogResult.OK)
+            cancellationToken.ThrowIfCancellationRequested();
+            if (!await _mainWindow.ShowControllerDialogAsync(title, message, primaryLabel: "Done"))
             {
                 throw new OperationCanceledException("The capture was cancelled. The integrated ETW session was stopped and no bundle was accepted as evidence.");
             }
+            cancellationToken.ThrowIfCancellationRequested();
         }
         try
         {
             _mainWindow.SetArmouryCaptureBusy(true);
-            var proceed = Forms.MessageBox.Show(
+            cancellationToken.ThrowIfCancellationRequested();
+            var proceed = await _mainWindow.ShowControllerDialogAsync(
+                "Capture Armoury M1/M2 protocol",
                 "This starts a temporary Windows USB ETW session inside Ally Bindings. Windows will request administrator approval for the capture helper. No driver, Wireshark or USBPcap is installed, and no raw system-wide trace is written.\n\n" +
                 "You will deliberately change M1/M2 three times through Armoury Crate so we can collect candidate bus payloads for hardware review. Ally Bindings will send no HID reports, cannot clear recovery state from this capture, and its ASUS write backend remains source locked.\n\nContinue?",
-                "Capture Armoury M1/M2 protocol",
-                Forms.MessageBoxButtons.OKCancel,
-                Forms.MessageBoxIcon.Information) == Forms.DialogResult.OK;
+                primaryLabel: "Continue");
             if (!proceed) return;
+            cancellationToken.ThrowIfCancellationRequested();
 
             _cycle.Cancel();
             _mainWindow.SetArmouryCaptureStatus("Confirming the ASUS feature-report interface…");
             var captureService = new ArmouryCaptureService();
-            var target = await captureService.DiscoverTargetAsync();
-            RequireCaptureStep(
+            var target = await captureService.DiscoverTargetAsync(cancellationToken);
+            cancellationToken.ThrowIfCancellationRequested();
+            await RequireCaptureStepAsync(
                 $"Confirm this is the ROG Ally controller you intend to inspect:\n\nModel: {target.Model}\nCompatible ASUS HID interfaces: {string.Join(" | ", target.DeviceIds)}\n\nNo ETW session has started yet. Click Cancel if this identity is unexpected.",
                 "Confirm integrated Windows capture");
-            session = await captureService.StartAsync(target);
+            session = await captureService.StartAsync(target, cancellationToken);
+            cancellationToken.ThrowIfCancellationRequested();
             _mainWindow.SetArmouryCaptureStatus(
                 $"Integrated ETW capture running through {string.Join(" + ", session.EnabledProviders)}. Follow the Armoury prompts; this app remains write-locked.");
 
             session.MarkAction("step-started-m1-a-m2-b");
-            RequireCaptureStep(
-                "In Armoury Crate, set M1 to A and M2 to B. Wait until Armoury shows the assignment as applied, then return here and click OK.",
+            await RequireCaptureStepAsync(
+                "In Armoury Crate, set M1 to A and M2 to B. Wait until Armoury shows the assignment as applied, then return here and choose Done.",
                 "Capture step 1 of 3 · M1=A, M2=B");
             session.MarkAction("armoury-applied-m1-a-m2-b");
 
             session.MarkAction("step-started-m1-x-m2-y");
-            RequireCaptureStep(
-                "In Armoury Crate, now set M1 to X and M2 to Y. Wait until it is applied, then return here and click OK.",
+            await RequireCaptureStepAsync(
+                "In Armoury Crate, now set M1 to X and M2 to Y. Wait until it is applied, then return here and choose Done.",
                 "Capture step 2 of 3 · M1=X, M2=Y");
             session.MarkAction("armoury-applied-m1-x-m2-y");
 
             session.MarkAction("step-started-reset-to-default");
-            RequireCaptureStep(
-                "In Armoury Crate, use its Reset to Default action for M1/M2. Wait until the defaults are applied, then return here and click OK. This captures Armoury's real recovery bytes.",
+            await RequireCaptureStepAsync(
+                "In Armoury Crate, use its Reset to Default action for M1/M2. Wait until the defaults are applied, then return here and choose Done. This captures Armoury's real recovery bytes.",
                 "Capture step 3 of 3 · Armoury defaults");
             session.MarkAction("armoury-reset-m1-m2-to-default");
 
-            var result = await captureService.CompleteAsync(session);
+            cancellationToken.ThrowIfCancellationRequested();
+            var result = await captureService.CompleteAsync(session, cancellationToken);
+            cancellationToken.ThrowIfCancellationRequested();
             session = null;
             _mainWindow.SetArmouryCaptureStatus(
                 $"Capture complete — review required: {result.FeatureReportCount} report 0x5A candidate(s), {result.RearMappingReportCount} structurally valid candidate(s). Bundle SHA-256: {result.BundleSha256}. Bundle: {result.BundlePath}");
@@ -594,18 +744,27 @@ public partial class App : System.Windows.Application
                     failureMessage = $"{failureMessage}\n\nPRIVACY WARNING: {cleanupFailure.Message}";
                 }
             }
-            _mainWindow.SetArmouryCaptureStatus($"Capture failed safely: {failureMessage}");
-            Forms.MessageBox.Show(
-                $"No Ally Bindings controller write was attempted.\n\n{failureMessage}",
-                "Armoury capture failed safely",
-                Forms.MessageBoxButtons.OK,
-                Forms.MessageBoxIcon.Error);
+            _mainWindow.SetArmouryCaptureStatus(
+                ex is OperationCanceledException
+                    ? $"Capture cancelled safely: {failureMessage}"
+                    : $"Capture failed safely: {failureMessage}");
+            if (ex is not OperationCanceledException)
+            {
+                await _mainWindow.ShowControllerDialogAsync(
+                    "Armoury capture failed safely",
+                    $"No Ally Bindings controller write was attempted.\n\n{failureMessage}",
+                    allowCancel: false,
+                    primaryLabel: "OK");
+            }
         }
         finally
         {
             _mainWindow.SetArmouryCaptureBusy(false);
-            _operationGate.Release();
+            _armouryCaptureCancellation?.Dispose();
+            _armouryCaptureCancellation = null;
             _armouryCaptureInProgress = false;
+            _armouryCaptureCompletion?.TrySetResult();
+            _armouryCaptureCompletion = null;
         }
     }
 
@@ -619,6 +778,7 @@ public partial class App : System.Windows.Application
         }
 
         _updateCheckInProgress = true;
+        _mainWindow.SetUpdateBusy(true);
         try
         {
             _mainWindow.SetUpdateStatus("Checking GitHub Releases…");
@@ -639,19 +799,18 @@ public partial class App : System.Windows.Application
 
             if (candidate is null)
             {
-                _mainWindow.SetUpdateStatus($"Current version {GitHubUpdateService.CurrentVersion.ToString(3)} is up to date.");
+                _mainWindow.SetUpdateStatus($"Current version {GitHubUpdateService.CurrentSemanticVersion} is up to date.");
                 return;
             }
 
             _mainWindow.SetUpdateStatus($"Update available: {candidate.TagName}");
-            var choice = Forms.MessageBox.Show(
+            var choice = await _mainWindow.ShowControllerDialogAsync(
+                "Ally Bindings update",
                 $"{candidate.ReleaseName} is available.\n\n" +
                 "The ZIP will be downloaded from this repository, verified against GitHub's SHA-256 digest, staged safely, then installed after Ally Bindings exits.\n\n" +
                 "Install and restart now?",
-                "Ally Bindings update",
-                Forms.MessageBoxButtons.YesNo,
-                Forms.MessageBoxIcon.Information);
-            if (choice != Forms.DialogResult.Yes) return;
+                primaryLabel: "Install");
+            if (!choice) return;
 
             var progress = new Progress<double>(value =>
                 _mainWindow.SetUpdateStatus($"Downloading {candidate.TagName}: {value:P0}"));
@@ -675,16 +834,17 @@ public partial class App : System.Windows.Application
             _mainWindow.SetUpdateStatus($"Update failed safely: {ex.Message}");
             if (userInitiated)
             {
-                Forms.MessageBox.Show(
-                    $"The update was not installed. Existing app files were not changed.\n\n{ex.Message}",
+                await _mainWindow.ShowControllerDialogAsync(
                     "Ally Bindings update",
-                    Forms.MessageBoxButtons.OK,
-                    Forms.MessageBoxIcon.Error);
+                    $"The update was not installed. Existing app files were not changed.\n\n{ex.Message}",
+                    allowCancel: false,
+                    primaryLabel: "OK");
             }
         }
         finally
         {
             _updateCheckInProgress = false;
+            _mainWindow.SetUpdateBusy(false);
         }
     }
 
@@ -714,11 +874,11 @@ public partial class App : System.Windows.Application
                 // The explicit warning below is the recovery gate.
             }
 
-            var continueWithoutReset = Forms.MessageBox.Show(
-                "The best-known native M1/M2 reset could not be written. Updating now may leave the last paddle mapping active until Armoury Crate or another recovery path overwrites it.\n\nUpdate anyway?",
+            var continueWithoutReset = await _mainWindow.ShowControllerDialogAsync(
                 "Controller recovery not confirmed",
-                Forms.MessageBoxButtons.YesNo,
-                Forms.MessageBoxIcon.Warning) == Forms.DialogResult.Yes;
+                "The best-known native M1/M2 reset could not be written. Updating now may leave the last paddle mapping active until Armoury Crate or another recovery path overwrites it.\n\nUpdate anyway?",
+                primaryLabel: "Update anyway",
+                secondaryLabel: "Cancel update");
             _allowExitWithPendingRearMapping = continueWithoutReset;
             return continueWithoutReset;
         }
@@ -774,14 +934,22 @@ public partial class App : System.Windows.Application
         _mainWindow.Topmost = true;
         _mainWindow.Topmost = false;
         _mainWindow.Focus();
+        _mainWindow.FocusControllerDefault();
     }
 
     private async Task ExitAsync()
     {
         if (_exiting) return;
         _exiting = true;
+        var captureCompletion = _armouryCaptureCompletion?.Task;
+        if (captureCompletion is not null)
+        {
+            _armouryCaptureCancellation?.Cancel();
+            _mainWindow.CancelControllerDialog();
+            await captureCompletion;
+        }
         await _operationGate.WaitAsync();
-        var shouldShutdown = true;
+        var shouldShutdown = false;
 
         try
         {
@@ -814,12 +982,12 @@ public partial class App : System.Windows.Application
 
             if (_backendNeedsRestore && !_allowExitWithPendingRearMapping)
             {
-                var exitAnyway = Forms.MessageBox.Show(
+                var exitAnyway = await _mainWindow.ShowControllerDialogAsync(
+                    "Controller recovery not confirmed",
                     "The best-known native M1/M2 reset failed. Exiting may leave the last paddle mapping active until Armoury Crate or another recovery path overwrites it.\n\n" +
                     $"Details: {restoreFailure ?? "No interface accepted the reset."}\n\nExit anyway?",
-                    "Controller recovery not confirmed",
-                    Forms.MessageBoxButtons.YesNo,
-                    Forms.MessageBoxIcon.Warning) == Forms.DialogResult.Yes;
+                    primaryLabel: "Exit anyway",
+                    secondaryLabel: "Stay open");
                 if (!exitAnyway)
                 {
                     _exiting = false;
@@ -847,9 +1015,17 @@ public partial class App : System.Windows.Application
             TryCleanup(() => _trayIcon.Visible = false);
             TryCleanup(() => _trayIcon.Dispose());
             TryCleanup(() => _overlay.Close());
+            StopActivationListener();
             TryCleanup(() => _mainWindow.AllowClose());
             TryCleanup(() => _mainWindow.Close());
             ReleaseSingleInstanceMutex();
+            shouldShutdown = true;
+        }
+        catch (Exception ex)
+        {
+            _exiting = false;
+            _mainWindow.SetStatus($"Exit blocked because recovery confirmation could not complete: {ex.Message}");
+            OpenMainWindow();
         }
         finally
         {
@@ -874,6 +1050,7 @@ public partial class App : System.Windows.Application
         TryCleanup(() => _updateService?.Dispose());
         TryCleanup(() => _controllerMonitor?.Dispose());
         TryCleanup(() => _panicHotKey?.Dispose());
+        StopActivationListener();
         TryCleanup(() => _executableIntegrityLock?.Dispose());
         _executableIntegrityLock = null;
         ReleaseSingleInstanceMutex();

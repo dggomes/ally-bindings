@@ -149,11 +149,14 @@ if ($captureStart -lt 0 -or $captureEnd -le $captureStart) {
     throw 'Could not isolate CaptureArmouryProtocolAsync for the no-write assertion.'
 }
 $captureMethod = $app.Substring($captureStart, $captureEnd - $captureStart)
-$discoverTarget = $captureMethod.IndexOf('DiscoverTargetAsync()', [StringComparison]::Ordinal)
+$discoverTarget = $captureMethod.IndexOf('DiscoverTargetAsync(cancellationToken)', [StringComparison]::Ordinal)
 $confirmTarget = $captureMethod.IndexOf('No ETW session has started yet.', [StringComparison]::Ordinal)
-$startCapture = $captureMethod.IndexOf('StartAsync(target)', [StringComparison]::Ordinal)
+$startCapture = $captureMethod.IndexOf('StartAsync(target, cancellationToken)', [StringComparison]::Ordinal)
 if ($discoverTarget -lt 0 -or $confirmTarget -le $discoverTarget -or $startCapture -le $confirmTarget) {
     throw 'The ETW session starts before explicit confirmation of the discovered ASUS HID target.'
+}
+if ($captureMethod.IndexOf('CompleteAsync(session, cancellationToken)', [StringComparison]::Ordinal) -lt 0) {
+    throw 'Armoury capture completion does not observe panic/exit cancellation.'
 }
 foreach ($forbidden in @('_backend.', 'ApplyAsync(', 'RestoreDefaultAsync(', 'WriteFeatureReport')) {
     if ($captureMethod.IndexOf($forbidden, [StringComparison]::Ordinal) -ge 0) {

@@ -9,9 +9,30 @@ A lightweight, local-first Windows controller-profile selector for Xbox Remote P
 
 Ally Bindings lets you save named mappings, rotate them from the controller, and see the pending choice in a small overlay. It is intentionally conservative: the current public build exercises the complete profile-selection experience without hiding the physical controller, creating a virtual controller, or writing unvalidated ASUS controller settings.
 
-> **Project status: preview.** This source tree targets `v0.2.0-preview.2`. Standard-button remapping is preview-only, and M1/M2 writes are locked until passive Armoury Crate capture data has been reviewed on physical hardware. See [Current capabilities](#current-capabilities) before installing.
+> **Project status: preview.** This source tree targets `v0.3.0-preview.1`. Standard-button remapping is preview-only, and M1/M2 writes are locked until passive Armoury Crate capture data has been reviewed on physical hardware. See [Current capabilities](#current-capabilities) before installing.
 
 Ally Bindings is an independent project and is not affiliated with ASUS, ROG, Microsoft or Xbox.
+
+## Controller-first interface
+
+These are real screenshots captured from the packaged `win-x64` application by the Windows CI workflow.
+
+### Visual controller mapping
+
+![Controller mapping workspace showing physical controller bindings](docs/images/ally-bindings-controller.png)
+
+### Armoury capture and app updates
+
+![Capture and update workspace with visible Armoury M1/M2 capture and manual updater](docs/images/ally-bindings-capture-update.png)
+
+<details>
+<summary>Profiles and shortcut workspaces</summary>
+
+![Profile management workspace](docs/images/ally-bindings-profiles.png)
+
+![Controller shortcut workspace](docs/images/ally-bindings-shortcut.png)
+
+</details>
 
 ## Why this exists
 
@@ -30,12 +51,16 @@ The chord and timings are configurable. The app can remain in the notification a
 |---|---|
 | Named local profiles | **Working** |
 | Profile editor and validation | **Working** |
+| Controller-first/touch UI with gamepad navigation | **Working** |
+| Visual controller binding editor | **Working** |
 | Controller chord and overlay | **Working** |
 | Tray mode and sign-in startup | **Working** |
+| Reopening the running startup/tray instance | **Working** |
+| Branded application and notification-area icon | **Working** |
 | Panic/default shortcut (`Ctrl+Alt+F12`) | **Working** |
 | Automatic and manual update checks | **Working** |
 | Verified GitHub Releases updater with rollback | **Working** |
-| Passive Armoury M1/M2 protocol capture | **Next release; write-locked** |
+| Passive Armoury M1/M2 protocol capture | **Working; review-only and write-locked** |
 | Standard XInput remapping | **Preview only** |
 | ASUS M1/M2 controller-setting writes | **Disabled pending physical validation** |
 | Physical-device hiding / virtual controller output | **Not enabled** |
@@ -66,11 +91,13 @@ For unreleased testing, open the latest successful [Build workflow](https://gith
 
 ## First run
 
-1. Open Ally Bindings and keep the permanent **Default** profile enabled.
-2. Create or edit named profiles.
-3. Leave **Enable experimental ASUS M1/M2 hardware mappings** off; it is locked in the current build anyway.
-4. Test profile rotation with the default **View + Menu** chord.
-5. Optionally enable **Run in the tray when I sign in**.
+1. Open Ally Bindings. A normal launch shows the main window; sign-in startup alone stays quietly in the tray. Launching the EXE again reveals that existing tray instance.
+2. Use the large **Profiles**, **Controller**, **Shortcut**, and **Capture & update** sections by touch or controller.
+   Profile rename, timing changes, binding selection, save/apply, capture prompts and update confirmations are controller-operable. Windows UAC remains a system-controlled touch/keyboard prompt.
+3. Keep the permanent **Default** profile enabled and create or edit named profiles.
+4. Leave **Enable experimental ASUS M1/M2 hardware mappings** off; it is locked in the current build anyway.
+5. Test profile rotation with the default **View + Menu** chord.
+6. Optionally enable **Run in the tray when I sign in**.
 
 Configuration is stored at:
 
@@ -89,6 +116,8 @@ Writes are atomic, the previous valid configuration is backed up, and malformed 
 - If the controller disconnects before commit, the pending selection is cancelled.
 
 Face-button-only chords such as `A + B` are supported but discouraged while the app is in preview mode because observed inputs are not swallowed and may reach the streamed game.
+
+When the main window is active, use **D-pad** to move focus, **A** to select, **B** to go back, **LB/RB** to change section, **X** to save, and **Y** to select the current profile. Every primary action is at least 48 device-independent pixels high for touch use.
 
 ## Passive Armoury protocol capture
 
@@ -109,7 +138,7 @@ The logger:
 ### One-time capture procedure
 
 1. Photograph or export any custom Armoury M1/M2 assignments.
-2. In Ally Bindings, open **Safety & diagnostics** and choose **Capture Armoury M1/M2 protocol with Windows ETW (UAC)**.
+2. In Ally Bindings, open the persistent **Capture & update** section and choose **Start capture** in the prominent **Capture Armoury M1/M2** card.
 3. Confirm the displayed ROG Ally model and compatible ASUS HID interfaces.
 4. Accept Windows' one-time UAC prompt for Ally Bindings' integrated ETW helper.
 5. Follow the prompts to apply `M1=A / M2=B`, then `M1=X / M2=Y`, then Armoury's **Reset to Default**. The helper stops automatically.
@@ -122,7 +151,7 @@ More detail: [hardware validation runbook](docs/HARDWARE-SPIKE.md).
 ## Updates
 
 - Automatic update checks run at most once every 24 hours by default and can be disabled.
-- **Check for updates** runs the same public GitHub Releases check immediately.
+- The always-visible **Update app** button, and **Update app now** under **Capture & update**, run the same public GitHub Releases check immediately.
 - Installation is never silent: the release is shown and confirmation is required.
 - The updater requires GitHub's SHA-256 asset digest, rejects unsafe ZIP paths, symlinks and duplicate entries, stages files before exit, replaces the executable last, and retains application/configuration backups until the new app confirms successful initialization.
 - Failure or timeout attempts every rollback step and relaunches the previous app. Incomplete rollback is reported explicitly.
