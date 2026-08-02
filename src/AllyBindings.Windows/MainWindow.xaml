@@ -182,11 +182,11 @@
               <ScrollViewer HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto" PanningMode="Both"
                             AutomationProperties.Name="Full controller button map"
                             AutomationProperties.AutomationId="ControllerMapScrollViewer">
-                <Grid x:Name="ControllerMapSurface" MinWidth="800" MinHeight="350">
+                <Grid x:Name="ControllerMapSurface" MinWidth="776" MinHeight="350">
                   <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="100" />
+                    <ColumnDefinition Width="88" />
                     <ColumnDefinition Width="600" />
-                    <ColumnDefinition Width="100" />
+                    <ColumnDefinition Width="88" />
                   </Grid.ColumnDefinitions>
 
                   <StackPanel VerticalAlignment="Center">
@@ -245,10 +245,11 @@
                   <Grid Grid.Column="1" Margin="4,0">
                     <Viewbox Stretch="Uniform" StretchDirection="Both">
                       <Canvas Width="700" Height="500" PreviewMouseLeftButtonUp="ControllerDiagram_PreviewMouseLeftButtonUp" PreviewTouchUp="ControllerDiagram_PreviewTouchUp">
+                        <Canvas.LayoutTransform><ScaleTransform ScaleY="0.84" /></Canvas.LayoutTransform>
                         <Canvas.Resources>
                           <Style x:Key="DiagramHitTarget" TargetType="Button">
                             <Setter Property="MinWidth" Value="56" />
-                            <Setter Property="MinHeight" Value="56" />
+                            <Setter Property="MinHeight" Value="67" />
                             <Setter Property="Padding" Value="0" />
                             <Setter Property="Background" Value="#01000000" />
                             <Setter Property="BorderBrush" Value="Transparent" />
