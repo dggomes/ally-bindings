@@ -8,6 +8,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Thi
 
 ## [v0.3.0-preview.6] - 2026-08-02
 
+### Upgrade note
+
+- Preview.4 and preview.5 cannot self-update past this bug because their failure occurs before the replacement binary starts. Close Ally Bindings and run the standalone preview.6 EXE once; configuration remains in `%LOCALAPPDATA%\AllyBindings`. In-app updates from preview.6 onward use the repaired handoff.
+
 ### Fixed
 
 - Closed the downloaded update file before hashing and extracting it. Preview.5 kept its exclusive download handle alive and then failed when its own verifier reopened `update.zip`.
