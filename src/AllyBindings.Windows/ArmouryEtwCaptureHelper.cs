@@ -572,11 +572,22 @@ internal static class ArmouryEtwCaptureHelper
 
     private static string NormalizeMetadata(string? value, string fallback)
     {
-        var normalized = string.Concat((value ?? string.Empty).Where(character => !char.IsControl(character))).Trim();
-        if (normalized.Length == 0) normalized = fallback;
-        return normalized.Length <= MaximumMetadataCharacters
-            ? normalized
-            : normalized[..MaximumMetadataCharacters];
+        var source = string.IsNullOrWhiteSpace(value) ? fallback : value.Trim();
+        var length = Math.Min(source.Length, MaximumMetadataCharacters);
+        return string.Create(length, source, static (destination, input) =>
+        {
+            for (var index = 0; index < destination.Length; index++)
+            {
+                var character = input[index];
+                destination[index] =
+                    (character is >= 'a' and <= 'z') ||
+                    (character is >= 'A' and <= 'Z') ||
+                    (character is >= '0' and <= '9') ||
+                    character is '_' or '-' or '.' or ':'
+                        ? character
+                        : '_';
+            }
+        });
     }
 
     private static void VerifyParentExecutableIdentity(int parentProcessId)
