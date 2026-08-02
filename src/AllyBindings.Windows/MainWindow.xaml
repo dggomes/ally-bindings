@@ -180,11 +180,11 @@
             <Border Grid.Row="1" Background="{StaticResource PanelBrush}" CornerRadius="18" Padding="12" Margin="0,12">
               <ScrollViewer HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto" PanningMode="Both"
                             AutomationProperties.Name="Full controller button map">
-                <Grid x:Name="ControllerMapSurface" MinWidth="740" MinHeight="390">
+                <Grid x:Name="ControllerMapSurface" MinWidth="700" MinHeight="390">
                   <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="160" />
-                    <ColumnDefinition Width="420" />
-                    <ColumnDefinition Width="160" />
+                    <ColumnDefinition Width="150" />
+                    <ColumnDefinition Width="400" />
+                    <ColumnDefinition Width="150" />
                   </Grid.ColumnDefinitions>
 
                   <StackPanel VerticalAlignment="Center">
