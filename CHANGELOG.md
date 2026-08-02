@@ -6,6 +6,18 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Thi
 
 ## [Unreleased]
 
+## [v0.3.0-preview.6] - 2026-08-02
+
+### Fixed
+
+- Closed the downloaded update file before hashing and extracting it. Preview.5 kept its exclusive download handle alive and then failed when its own verifier reopened `update.zip`.
+- Reused one bounded-retry read handle for update hashing and extraction, making the handoff tolerant of short-lived antivirus or indexing locks without weakening digest verification.
+
+### Tests
+
+- Added a Windows end-to-end download-to-verification regression test that requires the prepared ZIP to be exclusively reopenable and the entire staging tree removable after preparation returns.
+- Added a transient exclusive-lock test for package verification. The updater handoff gate now runs in both PR and tagged-release CI.
+
 ## [v0.3.0-preview.5] - 2026-08-02
 
 ### Changed
@@ -143,3 +155,4 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Thi
 [v0.3.0-preview.3]: https://github.com/dggomes/ally-bindings/releases/tag/v0.3.0-preview.3
 [v0.3.0-preview.4]: https://github.com/dggomes/ally-bindings/releases/tag/v0.3.0-preview.4
 [v0.3.0-preview.5]: https://github.com/dggomes/ally-bindings/releases/tag/v0.3.0-preview.5
+[v0.3.0-preview.6]: https://github.com/dggomes/ally-bindings/releases/tag/v0.3.0-preview.6

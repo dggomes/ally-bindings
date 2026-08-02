@@ -17,16 +17,15 @@ public static class UpdatePackageStager
             throw new InvalidDataException("The release SHA-256 digest is invalid.");
         }
 
-        using (var stream = File.OpenRead(zipPath))
+        using var stream = OpenVerifiedReadStream(zipPath);
+        var actual = Convert.ToHexString(SHA256.HashData(stream)).ToLowerInvariant();
+        if (!CryptographicOperations.FixedTimeEquals(
+                Convert.FromHexString(actual),
+                Convert.FromHexString(normalizedExpected)))
         {
-            var actual = Convert.ToHexString(SHA256.HashData(stream)).ToLowerInvariant();
-            if (!CryptographicOperations.FixedTimeEquals(
-                    Convert.FromHexString(actual),
-                    Convert.FromHexString(normalizedExpected)))
-            {
-                throw new InvalidDataException("The downloaded update failed SHA-256 verification.");
-            }
+            throw new InvalidDataException("The downloaded update failed SHA-256 verification.");
         }
+        stream.Position = 0;
 
         if (Directory.Exists(stagingDirectory)) Directory.Delete(stagingDirectory, recursive: true);
         Directory.CreateDirectory(stagingDirectory);
@@ -36,7 +35,7 @@ public static class UpdatePackageStager
 
         try
         {
-            using var archive = ZipFile.OpenRead(zipPath);
+            using var archive = new ZipArchive(stream, ZipArchiveMode.Read, leaveOpen: true);
             if (archive.Entries.Count > MaximumEntries)
             {
                 throw new InvalidDataException("The update archive contains too many files.");
@@ -81,6 +80,22 @@ public static class UpdatePackageStager
         {
             if (Directory.Exists(stagingDirectory)) Directory.Delete(stagingDirectory, recursive: true);
             throw;
+        }
+    }
+
+    private static FileStream OpenVerifiedReadStream(string path)
+    {
+        const int maximumAttempts = 8;
+        for (var attempt = 1; ; attempt++)
+        {
+            try
+            {
+                return new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
+            }
+            catch (IOException) when (attempt < maximumAttempts)
+            {
+                Thread.Sleep(TimeSpan.FromMilliseconds(100 * attempt));
+            }
         }
     }
 }

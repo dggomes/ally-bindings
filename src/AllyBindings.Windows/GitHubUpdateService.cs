@@ -71,22 +71,24 @@ public sealed class GitHubUpdateService : IDisposable
             {
                 throw new InvalidDataException("The update download is unexpectedly large.");
             }
-            await using var source = await response.Content.ReadAsStreamAsync(cancellationToken);
-            await using var destination = new FileStream(zipPath, FileMode.CreateNew, FileAccess.Write, FileShare.None, 81920, useAsync: true);
-            var buffer = new byte[81920];
-            long copied = 0;
-            int read;
-            while ((read = await source.ReadAsync(buffer, cancellationToken)) > 0)
+            await using (var source = await response.Content.ReadAsStreamAsync(cancellationToken))
+            await using (var destination = new FileStream(zipPath, FileMode.CreateNew, FileAccess.Write, FileShare.None, 81920, useAsync: true))
             {
-                await destination.WriteAsync(buffer.AsMemory(0, read), cancellationToken);
-                copied += read;
-                if (copied > MaximumDownloadBytes)
+                var buffer = new byte[81920];
+                long copied = 0;
+                int read;
+                while ((read = await source.ReadAsync(buffer, cancellationToken)) > 0)
                 {
-                    throw new InvalidDataException("The update download exceeded the safety limit.");
+                    await destination.WriteAsync(buffer.AsMemory(0, read), cancellationToken);
+                    copied += read;
+                    if (copied > MaximumDownloadBytes)
+                    {
+                        throw new InvalidDataException("The update download exceeded the safety limit.");
+                    }
+                    if (total > 0) progress?.Report((double)copied / total.Value);
                 }
-                if (total > 0) progress?.Report((double)copied / total.Value);
+                await destination.FlushAsync(cancellationToken);
             }
-            await destination.FlushAsync(cancellationToken);
 
             var packageRoot = UpdatePackageStager.VerifyAndExtract(zipPath, stagingPath, candidate.Sha256);
             return new PreparedUpdate(candidate, updateRoot, packageRoot);
