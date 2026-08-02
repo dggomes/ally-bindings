@@ -6,6 +6,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Thi
 
 ## [Unreleased]
 
+## [v0.3.0-preview.2] - 2026-08-02
+
 ### Added
 
 - Full physical-trigger source mappings with XInput-compatible trigger activation and analog trigger-to-trigger intensity preservation; configuration schema 3 prevents older builds from silently stripping those mappings after rollback.
@@ -112,3 +114,4 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Thi
 [v0.01]: https://github.com/dggomes/ally-bindings/releases/tag/v0.01
 [v0.2.0-preview.2]: https://github.com/dggomes/ally-bindings/releases/tag/v0.2.0-preview.2
 [v0.3.0-preview.1]: https://github.com/dggomes/ally-bindings/releases/tag/v0.3.0-preview.1
+[v0.3.0-preview.2]: https://github.com/dggomes/ally-bindings/releases/tag/v0.3.0-preview.2

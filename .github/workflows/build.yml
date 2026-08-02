@@ -78,7 +78,7 @@ jobs:
         run: ./scripts/test-etw-provider.ps1
       - name: Validate changelog release-note extraction
         shell: pwsh
-        run: ./scripts/get-release-notes.ps1 -Tag v0.3.0-preview.1 -OutputPath artifacts/release-notes-test.md
+        run: ./scripts/get-release-notes.ps1 -Tag v0.3.0-preview.2 -OutputPath artifacts/release-notes-test.md
       - uses: actions/upload-artifact@v7
         with:
           name: AllyBindings-win-x64

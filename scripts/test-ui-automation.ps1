@@ -13,6 +13,7 @@ if (-not (Test-Path -LiteralPath $ExecutablePath -PathType Leaf)) {
 
 Add-Type -AssemblyName UIAutomationClient
 Add-Type -AssemblyName UIAutomationTypes
+Add-Type -AssemblyName System.Windows.Forms
 
 function Find-ElementContaining {
     param(
@@ -153,6 +154,25 @@ try {
     $leftTrigger = Wait-ElementById -Root $root -AutomationId 'Mapping-LeftTrigger'
     if ($leftTrigger.Current.Name -ne 'Left trigger, mapped to LeftTrigger') {
         throw "Trigger mapping accessibility name was incomplete: $($leftTrigger.Current.Name)"
+    }
+
+    $leftTrigger.SetFocus()
+    [System.Windows.Forms.SendKeys]::SendWait('{DOWN}')
+    Start-Sleep -Milliseconds 120
+    $directionalTarget = [System.Windows.Automation.AutomationElement]::FocusedElement
+    $directionalTargetId = $directionalTarget.Current.AutomationId
+    if (($directionalTargetId -notlike 'Mapping-*' -and $directionalTargetId -notlike 'Diagram-*') -or
+        $directionalTargetId -eq 'Mapping-LeftTrigger') {
+        throw "D-pad-equivalent navigation did not move to another controller mapping control; focused '$directionalTargetId'."
+    }
+    [System.Windows.Forms.SendKeys]::SendWait('{ENTER}')
+    Wait-ElementContaining -Root $root -Name 'Binding output choices' -ControlType ([System.Windows.Automation.ControlType]::List) | Out-Null
+    $cancelDirectionalPicker = Wait-ElementById -Root $root -AutomationId 'BindingPickerCancel'
+    $invoke = [System.Windows.Automation.InvokePattern]$cancelDirectionalPicker.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern)
+    $invoke.Invoke()
+    Start-Sleep -Milliseconds 100
+    if ([System.Windows.Automation.AutomationElement]::FocusedElement.Current.AutomationId -ne $directionalTargetId) {
+        throw "Controller navigation modal did not restore focus to '$directionalTargetId'."
     }
 
     $expectedDiagramIds = $expectedMappingIds | ForEach-Object { $_ -replace '^Mapping-', 'Diagram-' }
