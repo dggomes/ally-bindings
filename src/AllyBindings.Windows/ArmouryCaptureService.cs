@@ -48,23 +48,25 @@ internal sealed class ArmouryCaptureService
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(confirmedTarget);
-        var currentTarget = await DiscoverTargetAsync(cancellationToken).ConfigureAwait(false);
-        if (!IsSameTarget(confirmedTarget, currentTarget))
-        {
-            throw new InvalidOperationException(
-                "The confirmed ASUS HID identity changed before ETW capture began. No capture was started.");
-        }
-
         var sessionId = Guid.NewGuid();
-        var pipe = new NamedPipeServerStream(
-            ArmouryEtwCapturePipe.GetPipeName(sessionId),
-            PipeDirection.InOut,
-            1,
-            PipeTransmissionMode.Byte,
-            PipeOptions.Asynchronous | PipeOptions.CurrentUserOnly);
+        ArmouryCaptureDiagnostics.Record(sessionId, "parent-capture-starting");
+        NamedPipeServerStream? pipe = null;
         Process? helper = null;
         try
         {
+            var currentTarget = await DiscoverTargetAsync(cancellationToken).ConfigureAwait(false);
+            if (!IsSameTarget(confirmedTarget, currentTarget))
+            {
+                throw new InvalidOperationException(
+                    "The confirmed ASUS HID identity changed before ETW capture began. No capture was started.");
+            }
+
+            pipe = new NamedPipeServerStream(
+                ArmouryEtwCapturePipe.GetPipeName(sessionId),
+                PipeDirection.InOut,
+                1,
+                PipeTransmissionMode.Byte,
+                PipeOptions.Asynchronous | PipeOptions.CurrentUserOnly);
             var executable = Environment.ProcessPath
                 ?? throw new InvalidOperationException("Windows did not expose the current Ally Bindings executable path.");
             var startInfo = new ProcessStartInfo
@@ -79,8 +81,10 @@ internal sealed class ArmouryCaptureService
             startInfo.ArgumentList.Add(Environment.ProcessId.ToString(System.Globalization.CultureInfo.InvariantCulture));
             helper = Process.Start(startInfo)
                 ?? throw new InvalidOperationException("Windows did not start the elevated in-app ETW capture helper.");
+            ArmouryCaptureDiagnostics.Record(sessionId, "parent-helper-launched");
 
-            var connection = await WaitForReadyAsync(helper, pipe, cancellationToken).ConfigureAwait(false);
+            var connection = await WaitForReadyAsync(sessionId, helper, pipe, cancellationToken).ConfigureAwait(false);
+            ArmouryCaptureDiagnostics.Record(sessionId, "parent-ready-received");
             var directory = Path.Combine(
                 ArmouryEtwCapturePipe.GetCaptureRoot(),
                 $"armoury-etw-{DateTimeOffset.UtcNow:yyyyMMdd-HHmmss}-{sessionId:D}");
@@ -99,22 +103,40 @@ internal sealed class ArmouryCaptureService
         }
         catch (Win32Exception ex) when (ex.NativeErrorCode == 1223)
         {
+            ArmouryCaptureDiagnostics.Delete(sessionId);
             helper?.Dispose();
-            pipe.Dispose();
+            pipe?.Dispose();
             throw new OperationCanceledException(
                 "Windows elevation was cancelled. The temporary ETW logger was not started and no USB data was retained.",
                 ex,
                 cancellationToken);
         }
-        catch
+        catch (OperationCanceledException)
         {
+            ArmouryCaptureDiagnostics.Delete(sessionId);
             if (helper is not null)
             {
                 StopHelper(helper);
                 helper.Dispose();
             }
-            pipe.Dispose();
+            pipe?.Dispose();
             throw;
+        }
+        catch (Exception ex)
+        {
+            var helperExitCode = TryGetExitCode(helper);
+            ArmouryCaptureDiagnostics.Record(sessionId, "parent-start-failed", ex, helperExitCode);
+            if (helper is not null)
+            {
+                StopHelper(helper);
+                helper.Dispose();
+            }
+            pipe?.Dispose();
+            if (ex is ArmouryCaptureException) throw;
+            throw new ArmouryCaptureException(
+                sessionId,
+                $"The elevated ETW helper failed before capture became ready{FormatExitCode(helperExitCode)}.",
+                ex);
         }
     }
 
@@ -123,11 +145,38 @@ internal sealed class ArmouryCaptureService
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(session);
+        try
+        {
+            return await CompleteCoreAsync(session, cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException and not ArmouryCaptureException)
+        {
+            var helperExitCode = TryGetExitCode(session.HelperProcess);
+            ArmouryCaptureDiagnostics.Record(session.SessionId, "parent-completion-failed", ex, helperExitCode);
+            throw new ArmouryCaptureException(
+                session.SessionId,
+                $"The ETW capture could not be completed safely{FormatExitCode(helperExitCode)}.",
+                ex);
+        }
+    }
+
+    private async Task<ArmouryCaptureResult> CompleteCoreAsync(
+        ArmouryCaptureSession session,
+        CancellationToken cancellationToken)
+    {
+        ArmouryCaptureDiagnostics.Record(session.SessionId, "parent-stop-requested");
         await session.PipeWriter.WriteLineAsync("stop").ConfigureAwait(false);
-        var envelope = await ReadEnvelopeAsync(session.PipeReader, CaptureStopTimeout, cancellationToken).ConfigureAwait(false);
+        var envelope = await ReadEnvelopeAsync(
+            session.SessionId,
+            session.HelperProcess,
+            session.PipeReader,
+            CaptureStopTimeout,
+            cancellationToken).ConfigureAwait(false);
         if (!envelope.Type.Equals("result", StringComparison.Ordinal) || envelope.Output is null)
         {
-            throw new InvalidDataException(envelope.Error ?? "The in-app ETW helper returned no filtered evidence.");
+            var failure = new InvalidDataException(envelope.Error ?? "The in-app ETW helper returned no filtered evidence.");
+            ArmouryCaptureDiagnostics.Record(session.SessionId, "parent-result-rejected", failure, TryGetExitCode(session.HelperProcess));
+            throw new ArmouryCaptureException(session.SessionId, failure.Message, failure);
         }
         await WaitForHelperExitAsync(session.HelperProcess, cancellationToken).ConfigureAwait(false);
         var output = envelope.Output;
@@ -202,6 +251,7 @@ internal sealed class ArmouryCaptureService
             ("manifest.json", manifestBytes),
             ("README.txt", readmeBytes));
         session.Dispose();
+        ArmouryCaptureDiagnostics.Delete(session.SessionId);
         return new(
             bundlePath,
             reports.Count,
@@ -212,6 +262,7 @@ internal sealed class ArmouryCaptureService
     }
 
     private static async Task<EtwPipeConnection> WaitForReadyAsync(
+        Guid sessionId,
         Process helper,
         NamedPipeServerStream pipe,
         CancellationToken cancellationToken)
@@ -242,12 +293,19 @@ internal sealed class ArmouryCaptureService
             {
                 AutoFlush = true,
             };
-            var envelope = await ReadEnvelopeAsync(reader, CaptureStartTimeout, cancellationToken).ConfigureAwait(false);
+            var envelope = await ReadEnvelopeAsync(
+                sessionId,
+                helper,
+                reader,
+                CaptureStartTimeout,
+                cancellationToken).ConfigureAwait(false);
             if (!envelope.Type.Equals("ready", StringComparison.Ordinal) || envelope.Ready is null)
             {
                 reader.Dispose();
                 writer.Dispose();
-                throw new InvalidOperationException(envelope.Error ?? "The in-app ETW helper did not become ready.");
+                var failure = new InvalidOperationException(envelope.Error ?? "The in-app ETW helper did not become ready.");
+                ArmouryCaptureDiagnostics.Record(sessionId, "parent-ready-rejected", failure, TryGetExitCode(helper));
+                throw new ArmouryCaptureException(sessionId, failure.Message, failure);
             }
             return new(reader, writer, envelope.Ready);
         }
@@ -259,6 +317,8 @@ internal sealed class ArmouryCaptureService
     }
 
     private static async Task<EtwPipeEnvelope> ReadEnvelopeAsync(
+        Guid sessionId,
+        Process helper,
         StreamReader reader,
         TimeSpan timeoutDuration,
         CancellationToken cancellationToken)
@@ -276,7 +336,11 @@ internal sealed class ArmouryCaptureService
         }
         if (line is null)
         {
-            throw new InvalidDataException("The in-app USB ETW helper disconnected without a result.");
+            var helperExitCode = TryGetExitCode(helper);
+            var failure = new InvalidDataException(
+                $"The in-app USB ETW helper disconnected without a result{FormatExitCode(helperExitCode)}.");
+            ArmouryCaptureDiagnostics.Record(sessionId, "parent-helper-disconnected", failure, helperExitCode);
+            throw new ArmouryCaptureException(sessionId, failure.Message, failure);
         }
         return JsonSerializer.Deserialize<EtwPipeEnvelope>(line, JsonOptions)
             ?? throw new InvalidDataException("The in-app USB ETW helper returned an empty message.");
@@ -429,6 +493,22 @@ internal sealed class ArmouryCaptureService
         expected.DeviceIds.Order(StringComparer.OrdinalIgnoreCase)
             .SequenceEqual(actual.DeviceIds.Order(StringComparer.OrdinalIgnoreCase), StringComparer.OrdinalIgnoreCase);
 
+    private static int? TryGetExitCode(Process? helper)
+    {
+        if (helper is null) return null;
+        try
+        {
+            return helper.HasExited ? helper.ExitCode : null;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static string FormatExitCode(int? exitCode) =>
+        exitCode.HasValue ? $" (exit code {exitCode.Value})" : string.Empty;
+
     private static void StopHelper(Process helper)
     {
         try
@@ -576,6 +656,7 @@ internal sealed class ArmouryCaptureSession(
         finally
         {
             Dispose();
+            ArmouryCaptureDiagnostics.Delete(SessionId);
             try
             {
                 System.IO.Directory.Delete(Directory, recursive: true);

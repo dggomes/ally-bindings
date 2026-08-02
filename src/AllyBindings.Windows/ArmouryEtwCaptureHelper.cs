@@ -45,6 +45,7 @@ internal static class ArmouryEtwCaptureHelper
     {
         if (!OperatingSystem.IsWindows()) return 1;
 
+        ArmouryCaptureDiagnostics.Record(sessionId, "helper-started");
         await using var pipe = new NamedPipeClientStream(
             ".",
             ArmouryEtwCapturePipe.GetPipeName(sessionId),
@@ -53,21 +54,24 @@ internal static class ArmouryEtwCaptureHelper
         try
         {
             await pipe.ConnectAsync(15_000, cancellationToken).ConfigureAwait(false);
+            ArmouryCaptureDiagnostics.Record(sessionId, "helper-pipe-connected");
             if (!GetNamedPipeServerProcessId(pipe.SafePipeHandle, out var serverProcessId) ||
                 serverProcessId != (uint)parentProcessId)
             {
                 throw new InvalidOperationException("The ETW pipe server was not the expected unelevated Ally Bindings parent process.");
             }
             VerifyParentExecutableIdentity(parentProcessId);
+            ArmouryCaptureDiagnostics.Record(sessionId, "helper-parent-authenticated");
             using var reader = new StreamReader(pipe, Encoding.UTF8, detectEncodingFromByteOrderMarks: false, leaveOpen: true);
             await using var writer = new StreamWriter(pipe, new UTF8Encoding(false), leaveOpen: true)
             {
                 AutoFlush = true,
             };
-            return await CaptureAsync(reader, writer, cancellationToken).ConfigureAwait(false);
+            return await CaptureAsync(sessionId, reader, writer, cancellationToken).ConfigureAwait(false);
         }
         catch (Exception ex)
         {
+            ArmouryCaptureDiagnostics.Record(sessionId, "helper-failed", ex, helperExitCode: 1);
             if (pipe.IsConnected)
             {
                 try
@@ -88,6 +92,7 @@ internal static class ArmouryEtwCaptureHelper
     }
 
     private static async Task<int> CaptureAsync(
+        Guid sessionId,
         StreamReader reader,
         StreamWriter writer,
         CancellationToken cancellationToken)
@@ -101,6 +106,7 @@ internal static class ArmouryEtwCaptureHelper
                     $"Required Windows USB ETW provider {provider.Name} ({provider.Id:D}) is unavailable or has an unexpected identity.");
             }
         }
+        ArmouryCaptureDiagnostics.Record(sessionId, "helper-providers-verified");
 
         var reports = new List<UsbEtwFeatureReport>();
         long observedEventCount = 0;
@@ -119,6 +125,7 @@ internal static class ArmouryEtwCaptureHelper
             BufferQuantumKB = 128,
             EnableProviderTimeoutMSec = ProviderEnableTimeoutMilliseconds,
         };
+        ArmouryCaptureDiagnostics.Record(sessionId, "helper-session-created");
         session.Source.Dynamic.All += data =>
         {
             observedEventCount++;
@@ -185,9 +192,11 @@ internal static class ArmouryEtwCaptureHelper
             session.EnableProvider(provider.Id, TraceEventLevel.Verbose, FullDataTraceKeywords);
             enabledProviders.Add(new(provider.Name, provider.Id, FullDataTraceKeywords));
         }
+        ArmouryCaptureDiagnostics.Record(sessionId, "helper-providers-enabled");
 
         var processing = Task.Run(session.Source.Process, CancellationToken.None);
         await WriteEnvelopeAsync(writer, new("ready", Ready: new(enabledProviders))).ConfigureAwait(false);
+        ArmouryCaptureDiagnostics.Record(sessionId, "helper-ready-sent");
 
         string? command = null;
         Exception? commandFailure = null;
@@ -197,6 +206,7 @@ internal static class ArmouryEtwCaptureHelper
         try
         {
             command = await ReadBoundedLineAsync(reader, MaximumCommandCharacters, lifetime.Token).ConfigureAwait(false);
+            ArmouryCaptureDiagnostics.Record(sessionId, $"helper-command-{command ?? "disconnected"}");
         }
         catch (OperationCanceledException ex) when (!cancellationToken.IsCancellationRequested)
         {
@@ -222,6 +232,7 @@ internal static class ArmouryEtwCaptureHelper
                 await processing.WaitAsync(TimeSpan.FromSeconds(10), CancellationToken.None).ConfigureAwait(false);
             }
         }
+        ArmouryCaptureDiagnostics.Record(sessionId, "helper-session-stopped");
 
         if (commandFailure is not null) throw commandFailure;
         var cancelled = command is null || command.Equals("cancel", StringComparison.Ordinal);
@@ -247,6 +258,7 @@ internal static class ArmouryEtwCaptureHelper
                     decodedBinaryByteCount,
                     aggregateLimitExceeded,
                     reports))).ConfigureAwait(false);
+        ArmouryCaptureDiagnostics.Record(sessionId, "helper-result-sent");
         return 0;
     }
 

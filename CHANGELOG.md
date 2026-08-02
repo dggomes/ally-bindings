@@ -6,6 +6,19 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Thi
 
 ## [Unreleased]
 
+## [v0.3.0-preview.9] - 2026-08-02
+
+### Added
+
+- Persist a bounded, privacy-safe lifecycle diagnostic when the elevated USB ETW helper starts, authenticates, verifies providers, creates its session, enables providers, becomes ready, receives a command, stops, or fails.
+- Capture the helper exit code plus bounded, path-redacted error types, HRESULTs and messages without storing usernames, absolute paths, stack traces, USB payloads, controller reports, configuration values, or raw ETW data.
+- Offer explicit `Copy diagnostics` and `Open folder` actions after a capture failure, removing the need to run PowerShell on the handheld without silently exposing diagnostics through the clipboard.
+
+### Tests
+
+- Require rejected helper peers to persist a valid schema-2 diagnostic with the expected structured failure and privacy declaration.
+- Keep diagnostic lifecycle, atomic writes, clipboard handoff, and Explorer disclosure in the capture safety gate.
+
 ## [v0.3.0-preview.8] - 2026-08-02
 
 ### Upgrade note
@@ -193,3 +206,4 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Thi
 [v0.3.0-preview.6]: https://github.com/dggomes/ally-bindings/releases/tag/v0.3.0-preview.6
 [v0.3.0-preview.7]: https://github.com/dggomes/ally-bindings/releases/tag/v0.3.0-preview.7
 [v0.3.0-preview.8]: https://github.com/dggomes/ally-bindings/releases/tag/v0.3.0-preview.8
+[v0.3.0-preview.9]: https://github.com/dggomes/ally-bindings/releases/tag/v0.3.0-preview.9

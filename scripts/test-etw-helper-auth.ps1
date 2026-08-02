@@ -61,6 +61,31 @@ function Invoke-RejectedHelperPeer {
         if ($response.IndexOf($ExpectedErrorFragment, [StringComparison]::OrdinalIgnoreCase) -lt 0) {
             throw "Unexpected helper rejection: $response"
         }
+        $diagnosticPath = Join-Path $env:LOCALAPPDATA "AllyBindings/diagnostics/armoury-etw-$($sessionId.ToString('D')).json"
+        if (-not (Test-Path -LiteralPath $diagnosticPath -PathType Leaf)) {
+            throw 'The rejected helper did not persist an in-app diagnostic.'
+        }
+        $diagnosticJson = Get-Content -Raw -LiteralPath $diagnosticPath
+        $diagnostic = $diagnosticJson | ConvertFrom-Json
+        $matchingError = @($diagnostic.Errors | Where-Object {
+            $_.Stage -eq 'helper-failed' -and
+            $_.Message.IndexOf($ExpectedErrorFragment, [StringComparison]::OrdinalIgnoreCase) -ge 0
+        })
+        if ($diagnostic.SchemaVersion -ne 2 -or $diagnostic.SessionId -ne $sessionId.ToString('D') -or
+            $diagnostic.Stage -ne 'helper-failed' -or $matchingError.Count -ne 1) {
+            throw "The helper diagnostic did not preserve the authenticated failure: $($diagnostic | ConvertTo-Json -Compress)"
+        }
+        if ($diagnostic.Privacy.IndexOf('no usernames, absolute paths, stack traces, USB payloads', [StringComparison]::OrdinalIgnoreCase) -lt 0) {
+            throw 'The helper diagnostic does not declare its payload privacy boundary.'
+        }
+        if ([Text.Encoding]::UTF8.GetByteCount($diagnosticJson) -gt 65536 -or
+            $diagnosticJson.IndexOf($env:USERPROFILE, [StringComparison]::OrdinalIgnoreCase) -ge 0 -or
+            $diagnosticJson.IndexOf($ExecutablePath, [StringComparison]::OrdinalIgnoreCase) -ge 0 -or
+            $null -ne $diagnostic.PSObject.Properties['ExecutablePath'] -or
+            $null -ne $diagnostic.PSObject.Properties['Exception']) {
+            throw 'The helper diagnostic exceeded its disclosure boundary.'
+        }
+        Remove-Item -LiteralPath $diagnosticPath -Force
     }
     finally {
         if ($process) {
