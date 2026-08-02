@@ -6,6 +6,24 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Thi
 
 ## [Unreleased]
 
+## [v0.3.0-preview.6] - 2026-08-02
+
+### Upgrade note
+
+- Every updater-enabled public build before preview.6 (`v0.2.0-preview.1` through `v0.3.0-preview.5`) fails before the replacement binary starts and therefore cannot self-install this repair. Close Ally Bindings and run the standalone preview.6 EXE once; configuration remains in `%LOCALAPPDATA%\AllyBindings`. In-app updates from preview.6 onward use the repaired handoff.
+
+### Fixed
+
+- Closed the downloaded update file before hashing and extracting it. Preview.5 kept its exclusive download handle alive and then failed when its own verifier reopened `update.zip`.
+- Reused one bounded-retry read handle for update hashing and extraction, making the handoff tolerant of short-lived antivirus or indexing locks without weakening digest verification.
+- Clean up stale incomplete-download directories on a later app launch while preserving installer/rollback directories and refusing to traverse reparse points.
+
+### Tests
+
+- Added a Windows end-to-end download-to-verification regression test that requires the prepared ZIP to be exclusively reopenable, the entire staging tree removable after preparation returns, and a stale abandoned download to be cleaned on startup.
+- Added a transient exclusive-lock test for package verification. The updater handoff gate now runs in both PR and tagged-release CI.
+- Preview.5 now has a public assetless withdrawal tombstone, and release CI permanently rejects its denylisted tag rather than permitting corrected assets to be published under it.
+
 ## [v0.3.0-preview.5] - 2026-08-02
 
 ### Changed
@@ -143,3 +161,4 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Thi
 [v0.3.0-preview.3]: https://github.com/dggomes/ally-bindings/releases/tag/v0.3.0-preview.3
 [v0.3.0-preview.4]: https://github.com/dggomes/ally-bindings/releases/tag/v0.3.0-preview.4
 [v0.3.0-preview.5]: https://github.com/dggomes/ally-bindings/releases/tag/v0.3.0-preview.5
+[v0.3.0-preview.6]: https://github.com/dggomes/ally-bindings/releases/tag/v0.3.0-preview.6

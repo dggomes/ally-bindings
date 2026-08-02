@@ -18,6 +18,7 @@ public sealed class GitHubUpdateService : IDisposable
 
     public GitHubUpdateService(HttpMessageHandler? handler = null)
     {
+        CleanupAbandonedDownloads();
         _httpClient = handler is null ? new HttpClient() : new HttpClient(handler, disposeHandler: true);
         _httpClient.Timeout = TimeSpan.FromSeconds(30);
         _httpClient.DefaultRequestHeaders.UserAgent.Add(new ProductInfoHeaderValue("AllyBindings", CurrentVersion.ToString(3)));
@@ -71,22 +72,24 @@ public sealed class GitHubUpdateService : IDisposable
             {
                 throw new InvalidDataException("The update download is unexpectedly large.");
             }
-            await using var source = await response.Content.ReadAsStreamAsync(cancellationToken);
-            await using var destination = new FileStream(zipPath, FileMode.CreateNew, FileAccess.Write, FileShare.None, 81920, useAsync: true);
-            var buffer = new byte[81920];
-            long copied = 0;
-            int read;
-            while ((read = await source.ReadAsync(buffer, cancellationToken)) > 0)
+            await using (var source = await response.Content.ReadAsStreamAsync(cancellationToken))
+            await using (var destination = new FileStream(zipPath, FileMode.CreateNew, FileAccess.Write, FileShare.None, 81920, useAsync: true))
             {
-                await destination.WriteAsync(buffer.AsMemory(0, read), cancellationToken);
-                copied += read;
-                if (copied > MaximumDownloadBytes)
+                var buffer = new byte[81920];
+                long copied = 0;
+                int read;
+                while ((read = await source.ReadAsync(buffer, cancellationToken)) > 0)
                 {
-                    throw new InvalidDataException("The update download exceeded the safety limit.");
+                    await destination.WriteAsync(buffer.AsMemory(0, read), cancellationToken);
+                    copied += read;
+                    if (copied > MaximumDownloadBytes)
+                    {
+                        throw new InvalidDataException("The update download exceeded the safety limit.");
+                    }
+                    if (total > 0) progress?.Report((double)copied / total.Value);
                 }
-                if (total > 0) progress?.Report((double)copied / total.Value);
+                await destination.FlushAsync(cancellationToken);
             }
-            await destination.FlushAsync(cancellationToken);
 
             var packageRoot = UpdatePackageStager.VerifyAndExtract(zipPath, stagingPath, candidate.Sha256);
             return new PreparedUpdate(candidate, updateRoot, packageRoot);
@@ -167,6 +170,33 @@ public sealed class GitHubUpdateService : IDisposable
     private static void TryDeleteDirectory(string path)
     {
         try { if (Directory.Exists(path)) Directory.Delete(path, recursive: true); } catch { }
+    }
+
+    private static void CleanupAbandonedDownloads()
+    {
+        var updatesRoot = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "AllyBindings",
+            "updates");
+        if (!Directory.Exists(updatesRoot)) return;
+
+        foreach (var directory in Directory.EnumerateDirectories(updatesRoot))
+        {
+            try
+            {
+                if ((File.GetAttributes(directory) & FileAttributes.ReparsePoint) != 0 ||
+                    File.Exists(Path.Combine(directory, "install-update.ps1")) ||
+                    Directory.GetLastWriteTimeUtc(directory) > DateTime.UtcNow.AddMinutes(-1))
+                {
+                    continue;
+                }
+                Directory.Delete(directory, recursive: true);
+            }
+            catch
+            {
+                // Best effort. A future launch retries stale incomplete-download cleanup.
+            }
+        }
     }
 
     private void ThrowIfDisposed() => ObjectDisposedException.ThrowIf(_disposed, this);

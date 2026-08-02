@@ -162,6 +162,30 @@ public sealed class GitHubReleaseUpdateTests : IDisposable
     }
 
     [Fact]
+    public async Task Verified_package_retries_a_transient_exclusive_handoff_lock()
+    {
+        var zip = CreateArchive(archive =>
+        {
+            var executable = archive.CreateEntry("AllyBindings.exe");
+            using var writer = new StreamWriter(executable.Open());
+            writer.Write("test executable");
+        });
+        var staging = Path.Combine(_root, "staging-transient-lock");
+        var digest = Sha256(zip);
+        var transientLock = new FileStream(zip, FileMode.Open, FileAccess.Read, FileShare.None);
+        var releaseLock = Task.Run(async () =>
+        {
+            await Task.Delay(250);
+            transientLock.Dispose();
+        });
+
+        var packageRoot = UpdatePackageStager.VerifyAndExtract(zip, staging, digest);
+        await releaseLock;
+
+        Assert.True(File.Exists(Path.Combine(packageRoot, "AllyBindings.exe")));
+    }
+
+    [Fact]
     public void Checksum_mismatch_changes_no_staged_files()
     {
         var zip = CreateArchive(archive => archive.CreateEntry("AllyBindings.exe"));

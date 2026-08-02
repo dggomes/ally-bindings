@@ -1,0 +1,2 @@
+# One immutable tag per line. Release CI must fail before packaging these versions.
+v0.3.0-preview.5

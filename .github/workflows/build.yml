@@ -43,6 +43,9 @@ jobs:
       - name: Verify built Windows version metadata
         shell: pwsh
         run: ./scripts/test-version-metadata.ps1
+      - name: Verify withdrawn release policy
+        shell: pwsh
+        run: ./scripts/test-withdrawn-release-policy.ps1
       - name: Enforce release package contents and size budget
         shell: pwsh
         run: ./scripts/test-release-package.ps1
@@ -64,6 +67,9 @@ jobs:
       - name: Refresh packaged documentation with captured screenshots
         shell: pwsh
         run: ./scripts/refresh-package-screenshots.ps1
+      - name: Exercise updater download-to-verification handoff
+        shell: pwsh
+        run: ./scripts/test-update-download-handoff.ps1
       - name: Exercise updater replacement and startup handshake
         shell: powershell
         run: ./scripts/test-updater-installer.ps1 -PackageRoot artifacts/AllyBindings-win-x64 -RepositoryRoot $PWD
