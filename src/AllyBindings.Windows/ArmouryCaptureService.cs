@@ -251,7 +251,7 @@ internal sealed class ArmouryCaptureService
         var evidenceHash = Convert.ToHexString(SHA256.HashData(outputBytes)).ToLowerInvariant();
         var reportBytes = SerializeJson(new
         {
-            schemaVersion = 5,
+            schemaVersion = 6,
             actions = session.Actions,
             assessment,
             reports,
@@ -282,7 +282,7 @@ internal sealed class ArmouryCaptureService
         });
         var manifestBytes = SerializeJson(new
         {
-            schemaVersion = 5,
+            schemaVersion = 6,
             capturedAtUtc = DateTimeOffset.UtcNow,
             applicationVersion = GetApplicationVersion(),
             source = "Windows built-in USB ETW real-time FullDataBusTrace session",
@@ -520,8 +520,7 @@ internal sealed class ArmouryCaptureService
             output.PayloadDecodeFailureCount != 0 ||
             output.AmbiguousCandidateCount != 0 ||
             output.DroppedMatchingReportCount != 0 ||
-            output.AggregateLimitExceeded ||
-            output.SchemaDiscoveryLimitExceeded;
+            output.AggregateLimitExceeded;
         var validation = ArmouryCaptureSequenceValidator.Validate(
             evidence,
             windows,
@@ -530,7 +529,8 @@ internal sealed class ArmouryCaptureService
             // Ally validation binds the Windows-build-specific ETW schema to
             // the confirmed HID interface and SET_REPORT setup packet.
             captureScopeVerified: false,
-            targetIdentityStable);
+            targetIdentityStable,
+            schemaDiscoveryIncomplete: output.SchemaDiscoveryLimitExceeded);
         return new(
             validation.IsConclusive,
             validation.FirstMappingMatched,

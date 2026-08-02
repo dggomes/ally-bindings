@@ -5,6 +5,7 @@ $corePath = Join-Path $root 'src/AllyBindings.Core/AsusRearButtonProtocol.cs'
 $backendPath = Join-Path $root 'src/AllyBindings.Core/ControllerBackend.cs'
 $extractorPath = Join-Path $root 'src/AllyBindings.Core/UsbEtwHidFeatureReportExtractor.cs'
 $discoveryPath = Join-Path $root 'src/AllyBindings.Core/UsbEtwSchemaDiscovery.cs'
+$payloadFlattenerPath = Join-Path $root 'src/AllyBindings.Core/UsbEtwPayloadFlattener.cs'
 $phasePath = Join-Path $root 'src/AllyBindings.Core/UsbEtwCapturePhases.cs'
 $boundedReaderPath = Join-Path $root 'src/AllyBindings.Core/BoundedTextLineReader.cs'
 $resetGatePath = Join-Path $root 'src/AllyBindings.Core/CaptureResetGate.cs'
@@ -22,6 +23,7 @@ $core = Get-Content -Raw -LiteralPath $corePath
 $backend = Get-Content -Raw -LiteralPath $backendPath
 $extractor = Get-Content -Raw -LiteralPath $extractorPath
 $discovery = Get-Content -Raw -LiteralPath $discoveryPath
+$payloadFlattener = Get-Content -Raw -LiteralPath $payloadFlattenerPath
 $phase = Get-Content -Raw $phasePath
 $boundedReader = Get-Content -Raw $boundedReaderPath
 $resetGate = Get-Content -Raw $resetGatePath
@@ -84,6 +86,8 @@ foreach ($required in @(
     'MaximumMarkerShapesPerPhase',
     'MaximumPayloadProperties',
     'MaximumDecodedPayloadProperties',
+    'MaximumPayloadNestingDepth',
+    'MaximumVisitedPayloadNodes',
     'MaximumMetadataCharacters',
     'MaximumSchemaDiscoveryBytes',
     'MaximumObservedEvents',
@@ -92,6 +96,13 @@ foreach ($required in @(
     if ($helper.IndexOf($required, [StringComparison]::Ordinal) -lt 0) {
         throw "The integrated ETW helper is missing safety/lifecycle control: $required"
     }
+}
+if ($helper -notmatch 'UsbEtwPayloadFlattener\.Flatten' -or
+    $helper -notmatch 'fields\.DecodedBytes\s*==\s*0' -or
+    $payloadFlattener -notmatch 'IEnumerable<KeyValuePair<string, object>>' -or
+    $payloadFlattener -notmatch 'ReferenceEqualityComparer\.Instance' -or
+    $payloadFlattener -match 'JsonSerializer|WriteAll|FileStream|ToString\(') {
+    throw 'Nested ETW payload inspection is not bounded, transient and binary-schema-prioritized.'
 }
 if ($helper.IndexOf('eventsLost = session.EventsLost', [StringComparison]::Ordinal) -gt
     $helper.IndexOf('session.Stop()', [StringComparison]::Ordinal)) {
@@ -140,8 +151,8 @@ if ($service -notmatch 'Stopwatch\.GetTimestamp\(\)' -or
     $extractor -notmatch 'PerformanceCounterTimestamp') {
     throw 'Action markers and ETW reports are not correlated on the shared QPC clock.'
 }
-if (($service | Select-String -Pattern 'schemaVersion\s*=\s*5' -AllMatches).Matches.Count -ne 2) {
-    throw 'Capture report and manifest are not both stamped with QPC-phase schema version 5.'
+if (($service | Select-String -Pattern 'schemaVersion\s*=\s*6' -AllMatches).Matches.Count -ne 2) {
+    throw 'Capture report and manifest are not both stamped with nested-payload schema version 6.'
 }
 if ($extractor -notmatch '0x5A,\s*0xD1,\s*0x02,\s*0x08,\s*0x2C' -or
     $extractor -notmatch 'AsusRearButtonProtocol\.ReportLength' -or

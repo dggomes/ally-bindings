@@ -143,17 +143,29 @@ public sealed class ArmouryCaptureSequenceValidatorTests
         Assert.False(result.IsConclusive);
     }
 
+    [Fact]
+    public void Reports_schema_inventory_truncation_separately_from_dropped_events()
+    {
+        var result = Validate(ValidReports(), schemaDiscoveryIncomplete: true);
+
+        Assert.False(result.IsConclusive);
+        Assert.Contains(result.Reasons, reason => reason.Contains("schema inventory", StringComparison.Ordinal));
+        Assert.DoesNotContain(result.Reasons, reason => reason.Contains("dropped", StringComparison.Ordinal));
+    }
+
     private static ArmouryCaptureSequenceValidation Validate(
         IReadOnlyList<ArmouryCaptureReportEvidence> reports,
         int captureFailureCount = 0,
         bool captureScopeVerified = true,
-        bool targetStable = true) =>
+        bool targetStable = true,
+        bool schemaDiscoveryIncomplete = false) =>
         ArmouryCaptureSequenceValidator.Validate(
             reports,
             Windows(),
             captureFailureCount,
             captureScopeVerified,
-            targetStable);
+            targetStable,
+            schemaDiscoveryIncomplete);
 
     private static ArmouryCaptureReportEvidence[] ValidReports() =>
     [
