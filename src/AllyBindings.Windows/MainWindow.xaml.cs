@@ -14,6 +14,7 @@ using CheckBox = System.Windows.Controls.CheckBox;
 using Clipboard = System.Windows.Clipboard;
 using Color = System.Windows.Media.Color;
 using ComboBox = System.Windows.Controls.ComboBox;
+using Point = System.Windows.Point;
 
 namespace AllyBindings.Windows;
 
@@ -25,6 +26,28 @@ public sealed record ControllerBindingDisplay(
 
 public partial class MainWindow : Window, INotifyPropertyChanged
 {
+    private static readonly (ControllerButton Source, Point Center)[] DiagramControlCenters =
+    [
+        (ControllerButton.LeftTrigger, new Point(157.5, 81)),
+        (ControllerButton.RightTrigger, new Point(542.5, 81)),
+        (ControllerButton.LeftBumper, new Point(175, 106.5)),
+        (ControllerButton.RightBumper, new Point(525, 106.5)),
+        (ControllerButton.LeftStick, new Point(151, 176)),
+        (ControllerButton.DPadUp, new Point(164.5, 244)),
+        (ControllerButton.DPadLeft, new Point(139, 268.5)),
+        (ControllerButton.DPadRight, new Point(191.5, 268.5)),
+        (ControllerButton.DPadDown, new Point(164.5, 294.5)),
+        (ControllerButton.View, new Point(222, 338)),
+        (ControllerButton.Menu, new Point(478, 338)),
+        (ControllerButton.Y, new Point(551, 155)),
+        (ControllerButton.X, new Point(506, 200)),
+        (ControllerButton.B, new Point(596, 200)),
+        (ControllerButton.A, new Point(551, 245)),
+        (ControllerButton.RightStick, new Point(546, 315)),
+        (ControllerButton.M1, new Point(164, 405)),
+        (ControllerButton.M2, new Point(536, 405)),
+    ];
+
     private readonly ControllerUiInputRouter _uiInput = new();
     private ProfileEditor? _selectedProfile;
     private ControllerButton _shortcutButton1;
@@ -674,6 +697,42 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             .FirstOrDefault(candidate => candidate.Row.Source == source);
         if (display is null) return;
         OpenBindingPicker(display.Row, button, display.Label);
+    }
+
+    private void ControllerDiagram_PreviewMouseLeftButtonUp(object sender, MouseButtonEventArgs e)
+    {
+        if (OpenNearestDiagramControl(e.GetPosition((IInputElement)sender))) e.Handled = true;
+    }
+
+    private void ControllerDiagram_PreviewTouchUp(object sender, TouchEventArgs e)
+    {
+        if (OpenNearestDiagramControl(e.GetTouchPoint((IInputElement)sender).Position)) e.Handled = true;
+    }
+
+    private bool OpenNearestDiagramControl(Point position)
+    {
+        if (!CanEditSelected) return false;
+        var nearest = DiagramControlCenters
+            .Select(control => (control.Source, DistanceSquared: (control.Center - position).LengthSquared))
+            .OrderBy(control => control.DistanceSquared)
+            .First();
+        if (nearest.DistanceSquared > 55 * 55) return false;
+
+        var origin = FindDescendantButton(ControllerMapSurface, nearest.Source);
+        if (origin is null) return false;
+        ControllerDiagramButton_Click(origin, new RoutedEventArgs(ButtonBase.ClickEvent));
+        return true;
+    }
+
+    private static Button? FindDescendantButton(DependencyObject parent, ControllerButton source)
+    {
+        for (var index = 0; index < VisualTreeHelper.GetChildrenCount(parent); index++)
+        {
+            var child = VisualTreeHelper.GetChild(parent, index);
+            if (child is Button { Tag: ControllerButton candidate } button && candidate == source) return button;
+            if (FindDescendantButton(child, source) is { } descendant) return descendant;
+        }
+        return null;
     }
 
     private void OpenBindingPicker(BindingRow row, Button origin, string label)

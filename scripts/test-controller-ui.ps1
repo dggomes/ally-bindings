@@ -39,8 +39,12 @@ foreach ($requiredText in @(
     'AutomationProperties.AutomationId="BindingPickerCancel"',
     'AutomationProperties.AutomationId="ControllerMapHint"',
     'AutomationProperties.AutomationId="ControllerMapReset"',
-    'x:Name="ControllerMapSurface" MinWidth="700" MinHeight="350"',
-    '<ColumnDefinition Width="400" />',
+    'x:Name="ControllerMapSurface" MinWidth="800" MinHeight="350"',
+    '<ColumnDefinition Width="600" />',
+    '<Setter Property="MinWidth" Value="56" />',
+    '<Setter Property="MinHeight" Value="56" />',
+    'PreviewMouseLeftButtonUp="ControllerDiagram_PreviewMouseLeftButtonUp"',
+    'PreviewTouchUp="ControllerDiagram_PreviewTouchUp"',
     'AutomationProperties.AutomationId="{Binding AutomationId}"',
     'ItemsSource="{Binding LeftBindings}"',
     'ItemsSource="{Binding DPadBindings}"',
@@ -71,6 +75,9 @@ foreach ($source in @(
 }
 if ($windowCode.IndexOf('$"Mapping-{source}"', [StringComparison]::Ordinal) -lt 0) {
     throw 'Mapping controls do not expose stable per-button automation IDs.'
+}
+if ($windowCode.IndexOf('private bool OpenNearestDiagramControl', [StringComparison]::Ordinal) -lt 0) {
+    throw 'Dense illustrated controls do not route pointer and touch input to the nearest physical control.'
 }
 if ($appXaml -notmatch '<Setter Property="MinHeight" Value="48"') {
     throw 'The global touch target minimum is below 48 device-independent pixels.'

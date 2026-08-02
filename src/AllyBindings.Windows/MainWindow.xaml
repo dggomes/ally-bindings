@@ -39,7 +39,7 @@
 
     <Grid Grid.Row="1">
       <Grid.ColumnDefinitions>
-        <ColumnDefinition Width="250" />
+        <ColumnDefinition Width="180" />
         <ColumnDefinition Width="*" />
       </Grid.ColumnDefinitions>
 
@@ -182,11 +182,11 @@
               <ScrollViewer HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto" PanningMode="Both"
                             AutomationProperties.Name="Full controller button map"
                             AutomationProperties.AutomationId="ControllerMapScrollViewer">
-                <Grid x:Name="ControllerMapSurface" MinWidth="700" MinHeight="350">
+                <Grid x:Name="ControllerMapSurface" MinWidth="800" MinHeight="350">
                   <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="150" />
-                    <ColumnDefinition Width="400" />
-                    <ColumnDefinition Width="150" />
+                    <ColumnDefinition Width="100" />
+                    <ColumnDefinition Width="600" />
+                    <ColumnDefinition Width="100" />
                   </Grid.ColumnDefinitions>
 
                   <StackPanel VerticalAlignment="Center">
@@ -244,11 +244,11 @@
 
                   <Grid Grid.Column="1" Margin="4,0">
                     <Viewbox Stretch="Uniform" StretchDirection="Both">
-                      <Canvas Width="700" Height="500">
+                      <Canvas Width="700" Height="500" PreviewMouseLeftButtonUp="ControllerDiagram_PreviewMouseLeftButtonUp" PreviewTouchUp="ControllerDiagram_PreviewTouchUp">
                         <Canvas.Resources>
                           <Style x:Key="DiagramHitTarget" TargetType="Button">
-                            <Setter Property="MinWidth" Value="0" />
-                            <Setter Property="MinHeight" Value="0" />
+                            <Setter Property="MinWidth" Value="56" />
+                            <Setter Property="MinHeight" Value="56" />
                             <Setter Property="Padding" Value="0" />
                             <Setter Property="Background" Value="#01000000" />
                             <Setter Property="BorderBrush" Value="Transparent" />
@@ -343,25 +343,25 @@
                           <TextBlock Text="M2" HorizontalAlignment="Center" VerticalAlignment="Center" FontWeight="Bold" />
                         </Border>
 
-                        <!-- Direct hit targets: the depicted controller itself is interactive, while the side callouts remain the 48-DIP touch targets. -->
-                        <Button Style="{StaticResource DiagramHitTarget}" Canvas.Left="105" Canvas.Top="60" Width="105" Height="42" Tag="{x:Static core:ControllerButton.LeftTrigger}" Click="ControllerDiagramButton_Click" ToolTip="Map left trigger" AutomationProperties.AutomationId="Diagram-LeftTrigger" AutomationProperties.Name="Map left trigger" />
-                        <Button Style="{StaticResource DiagramHitTarget}" Canvas.Left="490" Canvas.Top="60" Width="105" Height="42" Tag="{x:Static core:ControllerButton.RightTrigger}" Click="ControllerDiagramButton_Click" ToolTip="Map right trigger" AutomationProperties.AutomationId="Diagram-RightTrigger" AutomationProperties.Name="Map right trigger" />
-                        <Button Style="{StaticResource DiagramHitTarget}" Canvas.Left="124" Canvas.Top="91" Width="102" Height="34" Tag="{x:Static core:ControllerButton.LeftBumper}" Click="ControllerDiagramButton_Click" ToolTip="Map left bumper" AutomationProperties.AutomationId="Diagram-LeftBumper" AutomationProperties.Name="Map left bumper" />
-                        <Button Style="{StaticResource DiagramHitTarget}" Canvas.Left="474" Canvas.Top="91" Width="102" Height="34" Tag="{x:Static core:ControllerButton.RightBumper}" Click="ControllerDiagramButton_Click" ToolTip="Map right bumper" AutomationProperties.AutomationId="Diagram-RightBumper" AutomationProperties.Name="Map right bumper" />
-                        <Button Style="{StaticResource DiagramHitTarget}" Canvas.Left="112" Canvas.Top="137" Width="78" Height="78" Tag="{x:Static core:ControllerButton.LeftStick}" Click="ControllerDiagramButton_Click" ToolTip="Map left stick click" AutomationProperties.AutomationId="Diagram-LeftStick" AutomationProperties.Name="Map left stick click" />
-                        <Button Style="{StaticResource DiagramHitTarget}" Canvas.Left="151" Canvas.Top="228" Width="27" Height="30" Tag="{x:Static core:ControllerButton.DPadUp}" Click="ControllerDiagramButton_Click" ToolTip="Map D-pad up" AutomationProperties.AutomationId="Diagram-DPadUp" AutomationProperties.Name="Map D-pad up" />
-                        <Button Style="{StaticResource DiagramHitTarget}" Canvas.Left="124" Canvas.Top="255" Width="30" Height="27" Tag="{x:Static core:ControllerButton.DPadLeft}" Click="ControllerDiagramButton_Click" ToolTip="Map D-pad left" AutomationProperties.AutomationId="Diagram-DPadLeft" AutomationProperties.Name="Map D-pad left" />
-                        <Button Style="{StaticResource DiagramHitTarget}" Canvas.Left="178" Canvas.Top="255" Width="27" Height="27" Tag="{x:Static core:ControllerButton.DPadRight}" Click="ControllerDiagramButton_Click" ToolTip="Map D-pad right" AutomationProperties.AutomationId="Diagram-DPadRight" AutomationProperties.Name="Map D-pad right" />
-                        <Button Style="{StaticResource DiagramHitTarget}" Canvas.Left="151" Canvas.Top="280" Width="27" Height="29" Tag="{x:Static core:ControllerButton.DPadDown}" Click="ControllerDiagramButton_Click" ToolTip="Map D-pad down" AutomationProperties.AutomationId="Diagram-DPadDown" AutomationProperties.Name="Map D-pad down" />
-                        <Button Style="{StaticResource DiagramHitTarget}" Canvas.Left="198" Canvas.Top="318" Width="48" Height="40" Tag="{x:Static core:ControllerButton.View}" Click="ControllerDiagramButton_Click" ToolTip="Map View button" AutomationProperties.AutomationId="Diagram-View" AutomationProperties.Name="Map View button" />
-                        <Button Style="{StaticResource DiagramHitTarget}" Canvas.Left="454" Canvas.Top="318" Width="48" Height="40" Tag="{x:Static core:ControllerButton.Menu}" Click="ControllerDiagramButton_Click" ToolTip="Map Menu button" AutomationProperties.AutomationId="Diagram-Menu" AutomationProperties.Name="Map Menu button" />
-                        <Button Style="{StaticResource DiagramHitTarget}" Canvas.Left="528" Canvas.Top="132" Width="46" Height="46" Tag="{x:Static core:ControllerButton.Y}" Click="ControllerDiagramButton_Click" ToolTip="Map Y button" AutomationProperties.AutomationId="Diagram-Y" AutomationProperties.Name="Map Y button" />
-                        <Button Style="{StaticResource DiagramHitTarget}" Canvas.Left="483" Canvas.Top="177" Width="46" Height="46" Tag="{x:Static core:ControllerButton.X}" Click="ControllerDiagramButton_Click" ToolTip="Map X button" AutomationProperties.AutomationId="Diagram-X" AutomationProperties.Name="Map X button" />
-                        <Button Style="{StaticResource DiagramHitTarget}" Canvas.Left="573" Canvas.Top="177" Width="46" Height="46" Tag="{x:Static core:ControllerButton.B}" Click="ControllerDiagramButton_Click" ToolTip="Map B button" AutomationProperties.AutomationId="Diagram-B" AutomationProperties.Name="Map B button" />
-                        <Button Style="{StaticResource DiagramHitTarget}" Canvas.Left="528" Canvas.Top="222" Width="46" Height="46" Tag="{x:Static core:ControllerButton.A}" Click="ControllerDiagramButton_Click" ToolTip="Map A button" AutomationProperties.AutomationId="Diagram-A" AutomationProperties.Name="Map A button" />
-                        <Button Style="{StaticResource DiagramHitTarget}" Canvas.Left="507" Canvas.Top="276" Width="78" Height="78" Tag="{x:Static core:ControllerButton.RightStick}" Click="ControllerDiagramButton_Click" ToolTip="Map right stick click" AutomationProperties.AutomationId="Diagram-RightStick" AutomationProperties.Name="Map right stick click" />
-                        <Button Style="{StaticResource DiagramHitTarget}" Canvas.Left="129" Canvas.Top="384" Width="70" Height="42" Tag="{x:Static core:ControllerButton.M1}" Click="ControllerDiagramButton_Click" ToolTip="Map rear button M1" AutomationProperties.AutomationId="Diagram-M1" AutomationProperties.Name="Map rear button M1" />
-                        <Button Style="{StaticResource DiagramHitTarget}" Canvas.Left="501" Canvas.Top="384" Width="70" Height="42" Tag="{x:Static core:ControllerButton.M2}" Click="ControllerDiagramButton_Click" ToolTip="Map rear button M2" AutomationProperties.AutomationId="Diagram-M2" AutomationProperties.Name="Map rear button M2" />
+                        <!-- Every illustrated control has a real 48-DIP minimum target at the 1040x736 release viewport. Pointer/touch routing chooses the nearest depicted control so overlapping accessibility bounds never make dense D-pad/ABXY controls ambiguous. -->
+                        <Button Style="{StaticResource DiagramHitTarget}" Canvas.Left="105" Canvas.Top="53" Width="105" Tag="{x:Static core:ControllerButton.LeftTrigger}" Click="ControllerDiagramButton_Click" ToolTip="Map left trigger" AutomationProperties.AutomationId="Diagram-LeftTrigger" AutomationProperties.Name="Map left trigger" />
+                        <Button Style="{StaticResource DiagramHitTarget}" Canvas.Left="490" Canvas.Top="53" Width="105" Tag="{x:Static core:ControllerButton.RightTrigger}" Click="ControllerDiagramButton_Click" ToolTip="Map right trigger" AutomationProperties.AutomationId="Diagram-RightTrigger" AutomationProperties.Name="Map right trigger" />
+                        <Button Style="{StaticResource DiagramHitTarget}" Canvas.Left="124" Canvas.Top="79" Width="102" Tag="{x:Static core:ControllerButton.LeftBumper}" Click="ControllerDiagramButton_Click" ToolTip="Map left bumper" AutomationProperties.AutomationId="Diagram-LeftBumper" AutomationProperties.Name="Map left bumper" />
+                        <Button Style="{StaticResource DiagramHitTarget}" Canvas.Left="474" Canvas.Top="79" Width="102" Tag="{x:Static core:ControllerButton.RightBumper}" Click="ControllerDiagramButton_Click" ToolTip="Map right bumper" AutomationProperties.AutomationId="Diagram-RightBumper" AutomationProperties.Name="Map right bumper" />
+                        <Button Style="{StaticResource DiagramHitTarget}" Canvas.Left="123" Canvas.Top="148" Tag="{x:Static core:ControllerButton.LeftStick}" Click="ControllerDiagramButton_Click" ToolTip="Map left stick click" AutomationProperties.AutomationId="Diagram-LeftStick" AutomationProperties.Name="Map left stick click" />
+                        <Button Style="{StaticResource DiagramHitTarget}" Canvas.Left="137" Canvas.Top="216" Tag="{x:Static core:ControllerButton.DPadUp}" Click="ControllerDiagramButton_Click" ToolTip="Map D-pad up" AutomationProperties.AutomationId="Diagram-DPadUp" AutomationProperties.Name="Map D-pad up" />
+                        <Button Style="{StaticResource DiagramHitTarget}" Canvas.Left="111" Canvas.Top="241" Tag="{x:Static core:ControllerButton.DPadLeft}" Click="ControllerDiagramButton_Click" ToolTip="Map D-pad left" AutomationProperties.AutomationId="Diagram-DPadLeft" AutomationProperties.Name="Map D-pad left" />
+                        <Button Style="{StaticResource DiagramHitTarget}" Canvas.Left="164" Canvas.Top="241" Tag="{x:Static core:ControllerButton.DPadRight}" Click="ControllerDiagramButton_Click" ToolTip="Map D-pad right" AutomationProperties.AutomationId="Diagram-DPadRight" AutomationProperties.Name="Map D-pad right" />
+                        <Button Style="{StaticResource DiagramHitTarget}" Canvas.Left="137" Canvas.Top="267" Tag="{x:Static core:ControllerButton.DPadDown}" Click="ControllerDiagramButton_Click" ToolTip="Map D-pad down" AutomationProperties.AutomationId="Diagram-DPadDown" AutomationProperties.Name="Map D-pad down" />
+                        <Button Style="{StaticResource DiagramHitTarget}" Canvas.Left="194" Canvas.Top="310" Tag="{x:Static core:ControllerButton.View}" Click="ControllerDiagramButton_Click" ToolTip="Map View button" AutomationProperties.AutomationId="Diagram-View" AutomationProperties.Name="Map View button" />
+                        <Button Style="{StaticResource DiagramHitTarget}" Canvas.Left="450" Canvas.Top="310" Tag="{x:Static core:ControllerButton.Menu}" Click="ControllerDiagramButton_Click" ToolTip="Map Menu button" AutomationProperties.AutomationId="Diagram-Menu" AutomationProperties.Name="Map Menu button" />
+                        <Button Style="{StaticResource DiagramHitTarget}" Canvas.Left="523" Canvas.Top="127" Tag="{x:Static core:ControllerButton.Y}" Click="ControllerDiagramButton_Click" ToolTip="Map Y button" AutomationProperties.AutomationId="Diagram-Y" AutomationProperties.Name="Map Y button" />
+                        <Button Style="{StaticResource DiagramHitTarget}" Canvas.Left="478" Canvas.Top="172" Tag="{x:Static core:ControllerButton.X}" Click="ControllerDiagramButton_Click" ToolTip="Map X button" AutomationProperties.AutomationId="Diagram-X" AutomationProperties.Name="Map X button" />
+                        <Button Style="{StaticResource DiagramHitTarget}" Canvas.Left="568" Canvas.Top="172" Tag="{x:Static core:ControllerButton.B}" Click="ControllerDiagramButton_Click" ToolTip="Map B button" AutomationProperties.AutomationId="Diagram-B" AutomationProperties.Name="Map B button" />
+                        <Button Style="{StaticResource DiagramHitTarget}" Canvas.Left="523" Canvas.Top="217" Tag="{x:Static core:ControllerButton.A}" Click="ControllerDiagramButton_Click" ToolTip="Map A button" AutomationProperties.AutomationId="Diagram-A" AutomationProperties.Name="Map A button" />
+                        <Button Style="{StaticResource DiagramHitTarget}" Canvas.Left="518" Canvas.Top="287" Tag="{x:Static core:ControllerButton.RightStick}" Click="ControllerDiagramButton_Click" ToolTip="Map right stick click" AutomationProperties.AutomationId="Diagram-RightStick" AutomationProperties.Name="Map right stick click" />
+                        <Button Style="{StaticResource DiagramHitTarget}" Canvas.Left="136" Canvas.Top="377" Tag="{x:Static core:ControllerButton.M1}" Click="ControllerDiagramButton_Click" ToolTip="Map rear button M1" AutomationProperties.AutomationId="Diagram-M1" AutomationProperties.Name="Map rear button M1" />
+                        <Button Style="{StaticResource DiagramHitTarget}" Canvas.Left="508" Canvas.Top="377" Tag="{x:Static core:ControllerButton.M2}" Click="ControllerDiagramButton_Click" ToolTip="Map rear button M2" AutomationProperties.AutomationId="Diagram-M2" AutomationProperties.Name="Map rear button M2" />
 
                         <TextBlock Canvas.Left="202" Canvas.Top="458" Text="All 18 physical controls are selectable" FontSize="18" Foreground="#AEB5C7" />
                       </Canvas>

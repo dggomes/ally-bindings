@@ -182,6 +182,10 @@ try {
         if (-not $diagramButton.Current.IsEnabled -or $diagramButton.Current.IsOffscreen) {
             throw "Controller diagram control '$($diagramButton.Current.AutomationId)' is not directly usable."
         }
+        $diagramBounds = $diagramButton.Current.BoundingRectangle
+        if ($diagramBounds.Width -lt 48 -or $diagramBounds.Height -lt 48) {
+            throw "Controller diagram control '$($diagramButton.Current.AutomationId)' is smaller than the 48-DIP touch target at 1040x736."
+        }
         $invoke = [System.Windows.Automation.InvokePattern]$diagramButton.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern)
         $invoke.Invoke()
         Wait-ElementContaining -Root $root -Name 'Binding output choices' -ControlType ([System.Windows.Automation.ControlType]::List) | Out-Null
