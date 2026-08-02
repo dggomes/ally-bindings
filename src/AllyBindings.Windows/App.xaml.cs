@@ -580,11 +580,7 @@ public partial class App : System.Windows.Application
                 return _armouryCaptureCompletion?.Task
                     ?? throw new InvalidOperationException("Capture teardown tracking is unavailable while capture is active.");
             },
-            () =>
-            {
-                _armouryCaptureCancellation?.Cancel();
-                _mainWindow.CancelControllerDialog();
-            });
+            RequestArmouryCaptureCancellation);
         _cycle.Cancel();
         BackendApplyResult result;
         try
@@ -937,11 +933,7 @@ public partial class App : System.Windows.Application
         await using var resetLease = await CaptureResetGate.AcquireWhenCaptureStoppedAsync(
             _operationGate,
             () => _armouryCaptureInProgress ? _armouryCaptureCompletion?.Task : null,
-            () =>
-            {
-                _armouryCaptureCancellation?.Cancel();
-                _mainWindow.CancelControllerDialog();
-            });
+            RequestArmouryCaptureCancellation);
         if (!_backendNeedsRestore) return true;
         try
         {
@@ -1031,11 +1023,7 @@ public partial class App : System.Windows.Application
             exitLease = await CaptureResetGate.AcquireWhenCaptureStoppedAsync(
                 _operationGate,
                 () => _armouryCaptureInProgress ? _armouryCaptureCompletion?.Task : null,
-                () =>
-                {
-                    _armouryCaptureCancellation?.Cancel();
-                    _mainWindow.CancelControllerDialog();
-                });
+                RequestArmouryCaptureCancellation);
         }
         catch (Exception ex) when (_armouryCaptureTeardownUnconfirmed)
         {
@@ -1145,6 +1133,17 @@ public partial class App : System.Windows.Application
         _exiting = true;
         RestoreAndDisposeForTermination();
         base.OnSessionEnding(e);
+    }
+
+    private void RequestArmouryCaptureCancellation()
+    {
+        _armouryCaptureCancellation?.Cancel();
+        if (_mainWindow.Dispatcher.CheckAccess())
+        {
+            _mainWindow.CancelControllerDialog();
+            return;
+        }
+        _mainWindow.Dispatcher.Invoke(_mainWindow.CancelControllerDialog);
     }
 
     protected override void OnExit(ExitEventArgs e)

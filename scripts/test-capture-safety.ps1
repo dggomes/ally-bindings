@@ -266,6 +266,11 @@ if ($app -notmatch 'private async Task ExitAsync\(\)[\s\S]*CaptureResetGate\.Acq
     $app -notmatch 'OnSessionEnding\(SessionEndingCancelEventArgs e\)[\s\S]*_exiting = true;') {
     throw 'Exit or session-ending can still race queued capture startup.'
 }
+if ($app -notmatch 'private void RequestArmouryCaptureCancellation\(\)' -or
+    $app -notmatch '_mainWindow\.Dispatcher\.CheckAccess\(\)' -or
+    $app -notmatch '_mainWindow\.Dispatcher\.Invoke\(_mainWindow\.CancelControllerDialog\)') {
+    throw 'Capture cancellation can still touch WPF dialog state from a worker thread.'
+}
 
 if ($service -notmatch 'BoundedTextLineReader' -or $helper -notmatch 'BoundedTextLineReader' -or
     $boundedReader -notmatch 'Array\.IndexOf' -or $boundedReader -notmatch '_offset') {
