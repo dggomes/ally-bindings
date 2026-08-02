@@ -248,6 +248,13 @@ if ($restoreMethod.IndexOf('CaptureResetGate.AcquireWhenCaptureStoppedAsync', [S
     $resetGate -notmatch 'await captureCompletion\.WaitAsync') {
     throw 'Native reset can still begin before active ETW capture cancellation has completed.'
 }
+if ($service -notmatch 'helperExitVerified = HelperProcess\.HasExited \|\| HelperProcess\.WaitForExit\(5_000\)' -or
+    $service -notmatch '!HelperProcess\.WaitForExit\(5_000\) \|\| !HelperProcess\.HasExited' -or
+    $service -notmatch 'Native controller resets remain blocked' -or
+    $app -notmatch 'captureCompletion\?\.TrySetException' -or
+    $app -notmatch 'if \(captureTeardownFailure is null\)') {
+    throw 'Capture completion can still authorize a native reset without positively verified ETW helper exit.'
+}
 if ($service -notmatch 'BoundedTextLineReader' -or $helper -notmatch 'BoundedTextLineReader' -or
     $boundedReader -notmatch 'Array\.IndexOf' -or $boundedReader -notmatch '_offset') {
     throw 'The ETW IPC protocol does not bound both command and response messages.'

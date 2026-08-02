@@ -697,45 +697,66 @@ internal sealed class ArmouryCaptureSession(
 
     public void CancelAndDelete()
     {
+        Exception? terminationFailure = null;
         Exception? cleanupFailure = null;
+        var helperExitVerified = false;
         try
         {
-            PipeWriter.WriteLine("cancel");
-            if (!HelperProcess.HasExited && !HelperProcess.WaitForExit(5_000))
+            try
             {
-                HelperProcess.Kill(entireProcessTree: true);
-                HelperProcess.WaitForExit(5_000);
+                PipeWriter.WriteLine("cancel");
             }
+            catch
+            {
+                // Continue to the mandatory process-termination check.
+            }
+
+            helperExitVerified = HelperProcess.HasExited || HelperProcess.WaitForExit(5_000);
         }
-        catch
+        catch (Exception ex)
+        {
+            terminationFailure = ex;
+        }
+
+        if (!helperExitVerified)
         {
             try
             {
                 if (!HelperProcess.HasExited) HelperProcess.Kill(entireProcessTree: true);
-            }
-            catch
-            {
-                // Best effort; cancelled evidence is never accepted.
-            }
-        }
-        finally
-        {
-            Dispose();
-            ArmouryCaptureDiagnostics.Delete(SessionId);
-            try
-            {
-                System.IO.Directory.Delete(Directory, recursive: true);
+                if (!HelperProcess.WaitForExit(5_000) || !HelperProcess.HasExited)
+                {
+                    throw new TimeoutException("The elevated ETW helper did not exit after cancellation and forced termination.");
+                }
+                helperExitVerified = true;
             }
             catch (Exception ex)
             {
-                cleanupFailure = ex;
+                terminationFailure = terminationFailure is null
+                    ? ex
+                    : new AggregateException(terminationFailure, ex);
             }
         }
-        if (cleanupFailure is not null)
+
+        if (!helperExitVerified && terminationFailure is null)
         {
-            throw new IOException(
-                $"Cancelled capture data could not be removed and remains at: {Directory}",
-                cleanupFailure);
+            terminationFailure = new InvalidOperationException("The elevated ETW helper exit could not be verified.");
+        }
+        try
+        {
+            Dispose();
+            ArmouryCaptureDiagnostics.Delete(SessionId);
+            System.IO.Directory.Delete(Directory, recursive: true);
+        }
+        catch (Exception ex)
+        {
+            cleanupFailure = ex;
+        }
+        if (terminationFailure is not null || cleanupFailure is not null)
+        {
+            var failures = new[] { terminationFailure, cleanupFailure }.OfType<Exception>().ToArray();
+            throw new AggregateException(
+                $"Cancelled capture teardown could not be verified. Native controller resets remain blocked; restart Ally Bindings. Evidence directory: {Directory}",
+                failures);
         }
     }
 

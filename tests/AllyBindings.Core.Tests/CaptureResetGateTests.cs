@@ -97,4 +97,23 @@ public sealed class CaptureResetGateTests
         Assert.True(operationGate.Wait(0));
         operationGate.Release();
     }
+
+    [Fact]
+    public async Task Failed_capture_teardown_never_authorizes_backend_entry()
+    {
+        using var operationGate = new SemaphoreSlim(1, 1);
+        var teardownFailure = Task.FromException(new InvalidOperationException("helper exit unconfirmed"));
+
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+        {
+            await CaptureResetGate.AcquireWhenCaptureStoppedAsync(
+                operationGate,
+                () => teardownFailure,
+                () => { });
+        });
+
+        Assert.Equal("helper exit unconfirmed", exception.Message);
+        Assert.True(operationGate.Wait(0));
+        operationGate.Release();
+    }
 }

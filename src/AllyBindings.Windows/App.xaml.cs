@@ -662,6 +662,7 @@ public partial class App : System.Windows.Application
         }
         var cancellationToken = _armouryCaptureCancellation.Token;
         ArmouryCaptureSession? session = null;
+        Exception? captureTeardownFailure = null;
 
         async Task RequireCaptureStepAsync(string message, string title)
         {
@@ -741,6 +742,7 @@ public partial class App : System.Windows.Application
                 }
                 catch (Exception cleanupFailure)
                 {
+                    captureTeardownFailure = cleanupFailure;
                     failureMessage = $"{failureMessage}\n\nPRIVACY WARNING: {cleanupFailure.Message}";
                 }
             }
@@ -808,15 +810,29 @@ public partial class App : System.Windows.Application
                 _mainWindow.SetArmouryCaptureBusy(false);
                 _armouryCaptureCancellation?.Dispose();
                 _armouryCaptureCancellation = null;
-                _armouryCaptureInProgress = false;
                 captureCompletion = _armouryCaptureCompletion;
-                _armouryCaptureCompletion = null;
+                if (captureTeardownFailure is null)
+                {
+                    _armouryCaptureInProgress = false;
+                    _armouryCaptureCompletion = null;
+                }
             }
             finally
             {
                 _operationGate.Release();
             }
-            captureCompletion?.TrySetResult();
+            if (captureTeardownFailure is null)
+            {
+                captureCompletion?.TrySetResult();
+            }
+            else
+            {
+                captureCompletion?.TrySetException(new InvalidOperationException(
+                    "The elevated ETW helper exit could not be confirmed. Native controller resets remain blocked until Ally Bindings restarts.",
+                    captureTeardownFailure));
+                _mainWindow.SetArmouryCaptureStatus(
+                    "CAPTURE TEARDOWN UNCONFIRMED — native controller resets are blocked. Restart Ally Bindings before continuing.");
+            }
         }
     }
 
