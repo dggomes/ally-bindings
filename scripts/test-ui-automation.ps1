@@ -120,6 +120,12 @@ try {
         $transform.Resize(1040, 736)
         Start-Sleep -Milliseconds 300
     }
+    $navigationList = Wait-ElementContaining -Root $root -Name 'App sections' -ControlType ([System.Windows.Automation.ControlType]::List)
+    [object]$navigationScroll = $null
+    if ($navigationList.TryGetCurrentPattern([System.Windows.Automation.ScrollPattern]::Pattern, [ref]$navigationScroll) -and
+        ([System.Windows.Automation.ScrollPattern]$navigationScroll).Current.HorizontallyScrollable) {
+        throw 'Section navigation exposes a horizontal scrollbar at 1040x736.'
+    }
     $controllerMap = Wait-ElementById -Root $root -AutomationId 'ControllerMapScrollViewer'
     $mapScroll = [System.Windows.Automation.ScrollPattern]$controllerMap.GetCurrentPattern([System.Windows.Automation.ScrollPattern]::Pattern)
     if ($mapScroll.Current.HorizontallyScrollable -or $mapScroll.Current.VerticallyScrollable) {

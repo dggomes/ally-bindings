@@ -24,6 +24,7 @@ foreach ($requiredText in @(
     'AutomationProperties.AutomationId="NavigationController"',
     'AutomationProperties.AutomationId="NavigationShortcut"',
     'AutomationProperties.AutomationId="NavigationCaptureUpdate"',
+    'ScrollViewer.HorizontalScrollBarVisibility="Disabled"',
     'Capture Armoury M1/M2',
     'x:Name="ArmouryCaptureButton"',
     'Content="Start capture"',

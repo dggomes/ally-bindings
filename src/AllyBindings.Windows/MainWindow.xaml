@@ -50,6 +50,7 @@
           <ListBox x:Name="NavigationList" Background="Transparent" BorderThickness="0"
                    SelectedIndex="{Binding SelectedIndex, ElementName=WorkspaceTabs, Mode=TwoWay}"
                    SelectionChanged="NavigationList_SelectionChanged"
+                   ScrollViewer.HorizontalScrollBarVisibility="Disabled"
                    AutomationProperties.Name="App sections">
             <ListBoxItem AutomationProperties.Name="Profiles" AutomationProperties.AutomationId="NavigationProfiles">
               <StackPanel><TextBlock Text="Profiles" FontSize="18" FontWeight="SemiBold" /><TextBlock Text="Choose and manage" Foreground="{StaticResource MutedBrush}" /></StackPanel>
@@ -66,7 +67,7 @@
           </ListBox>
           <StackPanel Grid.Row="1" Margin="4,12,4,2">
             <TextBlock Text="LB / RB  Sections" Foreground="{StaticResource MutedBrush}" />
-            <TextBlock Text="D-pad  Navigate   ·   A  Select" Foreground="{StaticResource MutedBrush}" Margin="0,5,0,0" />
+            <TextBlock Text="D-pad  Navigate   ·   A  Select" Foreground="{StaticResource MutedBrush}" FontSize="11" TextWrapping="Wrap" Margin="0,5,0,0" />
           </StackPanel>
         </Grid>
       </Border>
