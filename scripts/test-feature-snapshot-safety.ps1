@@ -34,6 +34,8 @@ Assert-True ($device.Contains('stream.GetFeature(buffer);')) 'The HID implementa
 Assert-True (($device.Split('stream.GetFeature(buffer);').Length - 1) -eq 1) 'The HID implementation must have one bounded GetFeature call site.'
 Assert-True ($device.Contains('reportLength is < AsusRearButtonProtocol.ReportLength or > UsbEtwHidFeatureReportExtractor.MaximumWireReportLength')) 'Reads must reject lengths outside 50-64 bytes.'
 Assert-True ($device.Contains('no retry was attempted')) 'Read failures and timeouts must not retry.'
+Assert-True ($device.Contains('GetSnapshotInterfaceIdentityKeys')) 'Snapshot identity must retain stable per-interface keys in memory.'
+Assert-True ($device.Contains(':interface_{index + 1}')) 'Public snapshot interface labels must not deduplicate same-PID collections.'
 
 foreach ($forbidden in @('ArmouryEtw', 'NamedPipe', 'runas', 'WriteFeatureReportAsync(', 'SetFeature(')) {
     Assert-True ($service.IndexOf($forbidden, [StringComparison]::OrdinalIgnoreCase) -lt 0) "Snapshot service must not reference $forbidden"
@@ -44,6 +46,8 @@ Assert-True ($service.Contains('hardwareWriteAttempted = false')) 'Snapshot mani
 Assert-True ($service.Contains('hardwareUnlockEvidence = false')) 'Snapshot manifest must deny unlock authority.'
 Assert-True ($service.Contains('userWritableBundleIsImmutableProvenance = false')) 'Snapshot manifest must state its provenance limitation.'
 Assert-True ($service.Contains('minimumIndependentMatchingRuns = 2')) 'Snapshot bundle must require repeated physical evidence.'
+Assert-True ($service.Contains('[property: JsonIgnore] IReadOnlyList<string> InterfaceIdentityKeys')) 'Stable interface keys must remain outside the private evidence bundle.'
+Assert-True ($service.Contains('expected.InterfaceIdentityKeys.Order')) 'Every stage must compare stable interface identity keys.'
 
 Assert-True ($analyzer.Contains('HardwareUnlockEvidence: false')) 'Analyzer output must always be zero-authority.'
 Assert-True ($analyzer.Contains('Readback analysis is review-required diagnostic evidence')) 'Analyzer must state review requirement.'

@@ -37,7 +37,10 @@ internal sealed class AsusFeatureReportSnapshotService
         {
             throw new InvalidOperationException("No compatible ASUS feature-report 0x5A interface was found.");
         }
-        return new(status.Model, status.DeviceIds.Order(StringComparer.OrdinalIgnoreCase).ToArray());
+        return new(
+            status.Model,
+            status.DeviceIds.Order(StringComparer.OrdinalIgnoreCase).ToArray(),
+            device.GetSnapshotInterfaceIdentityKeys().Order(StringComparer.Ordinal).ToArray());
     }
 
     public async Task<AsusFeatureReportSnapshotCapture> ReadStageAsync(
@@ -50,7 +53,8 @@ internal sealed class AsusFeatureReportSnapshotService
         var status = await device.InitializeAsync(cancellationToken).ConfigureAwait(false);
         var currentTarget = new AsusFeatureReportSnapshotTarget(
             status.Model,
-            status.DeviceIds.Order(StringComparer.OrdinalIgnoreCase).ToArray());
+            status.DeviceIds.Order(StringComparer.OrdinalIgnoreCase).ToArray(),
+            device.GetSnapshotInterfaceIdentityKeys().Order(StringComparer.Ordinal).ToArray());
         if (!status.IsSupportedModel || !status.IsAvailable || !IsSameTarget(confirmedTarget, currentTarget))
         {
             throw new InvalidOperationException(
@@ -162,7 +166,9 @@ internal sealed class AsusFeatureReportSnapshotService
         AsusFeatureReportSnapshotTarget actual) =>
         string.Equals(expected.Model, actual.Model, StringComparison.OrdinalIgnoreCase) &&
         expected.DeviceIds.Order(StringComparer.OrdinalIgnoreCase)
-            .SequenceEqual(actual.DeviceIds.Order(StringComparer.OrdinalIgnoreCase), StringComparer.OrdinalIgnoreCase);
+            .SequenceEqual(actual.DeviceIds.Order(StringComparer.OrdinalIgnoreCase), StringComparer.OrdinalIgnoreCase) &&
+        expected.InterfaceIdentityKeys.Order(StringComparer.Ordinal)
+            .SequenceEqual(actual.InterfaceIdentityKeys.Order(StringComparer.Ordinal), StringComparer.Ordinal);
 
     private static byte[] SerializeJson<T>(T value) =>
         JsonSerializer.SerializeToUtf8Bytes(value, JsonOptions);
@@ -221,7 +227,8 @@ internal sealed class AsusFeatureReportSnapshotService
 
 internal sealed record AsusFeatureReportSnapshotTarget(
     string Model,
-    IReadOnlyList<string> DeviceIds);
+    IReadOnlyList<string> DeviceIds,
+    [property: JsonIgnore] IReadOnlyList<string> InterfaceIdentityKeys);
 
 internal sealed record AsusFeatureReportSnapshotResult(
     string BundlePath,

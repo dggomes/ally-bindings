@@ -25,6 +25,7 @@ public sealed class AsusRearButtonHidDevice : IAsusRearButtonDevice
         0x1B6E,
     ];
     private readonly SemaphoreSlim _hidIoGate = new(1, 1);
+    private IReadOnlyList<string> _snapshotInterfaceIdentityKeys = [];
     private AsusRearButtonDeviceStatus _status = new(
         false,
         false,
@@ -67,7 +68,7 @@ public sealed class AsusRearButtonHidDevice : IAsusRearButtonDevice
         return _status;
     }
 
-    private static AsusRearButtonDeviceStatus ProbeSystemAndDevice()
+    private AsusRearButtonDeviceStatus ProbeSystemAndDevice()
     {
         var identity = ReadSystemIdentity();
         var model = identity.ProductName.Trim();
@@ -76,6 +77,7 @@ public sealed class AsusRearButtonHidDevice : IAsusRearButtonDevice
         var modelMatches = AsusAllyModelIdentity.IsSupportedProductName(model);
         if (!manufacturerMatches || !modelMatches)
         {
+            _snapshotInterfaceIdentityKeys = [];
             return new(
                 false,
                 false,
@@ -85,10 +87,8 @@ public sealed class AsusRearButtonHidDevice : IAsusRearButtonDevice
         }
 
         var devices = FindCompatibleDevices();
-        var ids = devices
-            .Select(device => $"VID_{device.VendorID:X4}&PID_{device.ProductID:X4}:report_{AsusRearButtonProtocol.FeatureReportId:X2}")
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .ToArray();
+        var ids = DescribeDevices(devices);
+        _snapshotInterfaceIdentityKeys = devices.Select(BuildInterfaceIdentityKey).ToArray();
         return new(
             true,
             devices.Count > 0,
@@ -100,6 +100,9 @@ public sealed class AsusRearButtonHidDevice : IAsusRearButtonDevice
     }
 
     public AsusRearButtonDeviceStatus GetStatus() => _status;
+
+    internal IReadOnlyList<string> GetSnapshotInterfaceIdentityKeys() =>
+        _snapshotInterfaceIdentityKeys.ToArray();
 
     /// <summary>
     /// Reads report 0x5A from every positively identified compatible interface.
@@ -246,9 +249,10 @@ public sealed class AsusRearButtonHidDevice : IAsusRearButtonDevice
     {
         var devices = FindCompatibleDevices();
         var reads = new List<AsusFeatureReportRead>(devices.Count);
-        foreach (var device in devices)
+        for (var index = 0; index < devices.Count; index++)
         {
-            var deviceId = $"VID_{device.VendorID:X4}&PID_{device.ProductID:X4}:report_{AsusRearButtonProtocol.FeatureReportId:X2}";
+            var device = devices[index];
+            var deviceId = DescribeDevice(device, index);
             var reportLength = device.GetMaxFeatureReportLength();
             if (reportLength is < AsusRearButtonProtocol.ReportLength or > UsbEtwHidFeatureReportExtractor.MaximumWireReportLength)
             {
@@ -343,7 +347,21 @@ public sealed class AsusRearButtonHidDevice : IAsusRearButtonDevice
                 }
             }
         }
-        return devices;
+        return devices
+            .OrderBy(device => device.GetFileSystemName(), StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    }
+
+    private static string[] DescribeDevices(IReadOnlyList<HidDevice> devices) =>
+        devices.Select(DescribeDevice).ToArray();
+
+    private static string DescribeDevice(HidDevice device, int index) =>
+        $"VID_{device.VendorID:X4}&PID_{device.ProductID:X4}:report_{AsusRearButtonProtocol.FeatureReportId:X2}:interface_{index + 1}";
+
+    private static string BuildInterfaceIdentityKey(HidDevice device)
+    {
+        var normalizedPath = device.GetFileSystemName().Trim().ToUpperInvariant();
+        return Convert.ToHexString(SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(normalizedPath)));
     }
 
     private static void ObserveLateFailure<T>(Task<T> operation)
