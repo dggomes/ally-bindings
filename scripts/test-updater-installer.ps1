@@ -49,6 +49,9 @@ try {
     if ([IO.File]::ReadAllText((Join-Path $destination 'CHANGELOG.md')) -eq 'old changelog that must be atomically replaced') {
         throw 'Updater integration test did not replace an existing package file.'
     }
+    if (Get-ChildItem -LiteralPath $destination -Recurse -Force -Filter '*.allybindings-displaced') {
+        throw 'Updater integration test left a displaced replacement file beside the installed package.'
+    }
     if (Test-Path -LiteralPath $updateRoot) {
         throw 'Updater integration test did not remove its verified update staging directory.'
     }

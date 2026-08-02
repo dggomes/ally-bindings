@@ -247,7 +247,7 @@ try {
         $target = Join-Path $Destination $relative
         $saved = Join-Path $backup $relative
         $incoming = "$target.allybindings-new"
-        $displaced = "$saved.allybindings-displaced"
+        $displaced = "$target.allybindings-displaced"
         if (Test-Path -LiteralPath $target -PathType Container) {
             throw "Refusing to replace directory with update file: $relative"
         }
@@ -262,8 +262,11 @@ try {
         }
         $copied.Add($relative)
         if (Test-Path -LiteralPath $target) {
-            [IO.File]::Replace($incoming, $target, $displaced, $true)
-            Remove-Item -LiteralPath $displaced -Force -ErrorAction SilentlyContinue
+            try {
+                [IO.File]::Replace($incoming, $target, $displaced, $true)
+            } finally {
+                Remove-Item -LiteralPath $displaced -Force -ErrorAction SilentlyContinue
+            }
         } else {
             [IO.File]::Move($incoming, $target)
         }
@@ -316,7 +319,7 @@ catch {
         $target = Join-Path $Destination $relative
         $saved = Join-Path $backup $relative
         $restoreIncoming = "$target.allybindings-restore"
-        $failedVersion = "$saved.allybindings-failed-version"
+        $failedVersion = "$target.allybindings-failed-version"
         try {
             Remove-Item -LiteralPath "$target.allybindings-new" -Force -ErrorAction SilentlyContinue
             Remove-Item -LiteralPath $restoreIncoming -Force -ErrorAction SilentlyContinue
@@ -336,12 +339,13 @@ catch {
             $rollbackErrors.Add("Could not restore application file '$relative': $($_.Exception.Message)")
         } finally {
             Remove-Item -LiteralPath $restoreIncoming -Force -ErrorAction SilentlyContinue
+            Remove-Item -LiteralPath $failedVersion -Force -ErrorAction SilentlyContinue
         }
     }
 
     if ($configSnapshotTaken) {
         $configIncoming = "$ConfigPath.allybindings-restore"
-        $failedConfig = "$configBackup.failed-version"
+        $failedConfig = "$ConfigPath.allybindings-failed-version"
         try {
             Remove-Item -LiteralPath $configIncoming -Force -ErrorAction SilentlyContinue
             Remove-Item -LiteralPath $failedConfig -Force -ErrorAction SilentlyContinue
@@ -361,6 +365,7 @@ catch {
             $rollbackErrors.Add("Could not restore the previous configuration: $($_.Exception.Message)")
         } finally {
             Remove-Item -LiteralPath $configIncoming -Force -ErrorAction SilentlyContinue
+            Remove-Item -LiteralPath $failedConfig -Force -ErrorAction SilentlyContinue
         }
     }
 
