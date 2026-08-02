@@ -6,7 +6,24 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Thi
 
 ## [Unreleased]
 
-## [v0.3.0-preview.11] - 2026-08-02
+## [v0.3.0-preview.12] - 2026-08-02
+
+### Fixed
+
+- Classify every schema observation from the ETW event's own QPC timestamp against in-memory action boundaries, preventing buffered events from moving into the wrong Armoury phase.
+- Finish cancellation and teardown of an active ETW capture before any Ally Bindings native reset can begin.
+- Bound and sanitize exact-candidate source-field metadata before IPC serialization.
+
+### Safety
+
+- Withdraw `v0.3.0-preview.11` permanently and remove its assets; its write gates remained locked, but its diagnostic phase attribution could be contaminated or misleading.
+- Replace lexical-only privacy assertions with an explicit metadata DTO contract that recursively rejects byte containers and payload/hash/timestamp fields.
+
+### Tests
+
+- Cover QPC boundary/backlog classification, strict phase-command parsing, all command-marker split boundaries, intentional scalar-report-ID dual observations, reset/capture ordering, and schema serialization payload exclusion.
+
+## [v0.3.0-preview.11] - 2026-08-02 — WITHDRAWN
 
 ### Added
 
@@ -238,3 +255,4 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Thi
 [v0.3.0-preview.9]: https://github.com/dggomes/ally-bindings/releases/tag/v0.3.0-preview.9
 [v0.3.0-preview.10]: https://github.com/dggomes/ally-bindings/releases/tag/v0.3.0-preview.10
 [v0.3.0-preview.11]: https://github.com/dggomes/ally-bindings/releases/tag/v0.3.0-preview.11
+[v0.3.0-preview.12]: https://github.com/dggomes/ally-bindings/releases/tag/v0.3.0-preview.12

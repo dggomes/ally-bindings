@@ -5,6 +5,8 @@ $corePath = Join-Path $root 'src/AllyBindings.Core/AsusRearButtonProtocol.cs'
 $backendPath = Join-Path $root 'src/AllyBindings.Core/ControllerBackend.cs'
 $extractorPath = Join-Path $root 'src/AllyBindings.Core/UsbEtwHidFeatureReportExtractor.cs'
 $discoveryPath = Join-Path $root 'src/AllyBindings.Core/UsbEtwSchemaDiscovery.cs'
+$phasePath = Join-Path $root 'src/AllyBindings.Core/UsbEtwCapturePhases.cs'
+$discoveryContractPath = Join-Path $root 'src/AllyBindings.Core/UsbEtwSchemaDiscoveryContract.cs'
 $servicePath = Join-Path $root 'src/AllyBindings.Windows/ArmouryCaptureService.cs'
 $helperPath = Join-Path $root 'src/AllyBindings.Windows/ArmouryEtwCaptureHelper.cs'
 $diagnosticsPath = Join-Path $root 'src/AllyBindings.Windows/ArmouryCaptureDiagnostics.cs'
@@ -18,6 +20,8 @@ $core = Get-Content -Raw -LiteralPath $corePath
 $backend = Get-Content -Raw -LiteralPath $backendPath
 $extractor = Get-Content -Raw -LiteralPath $extractorPath
 $discovery = Get-Content -Raw -LiteralPath $discoveryPath
+$phase = Get-Content -Raw -LiteralPath $phasePath
+$discoveryContract = Get-Content -Raw -LiteralPath $discoveryContractPath
 $service = Get-Content -Raw -LiteralPath $servicePath
 $helper = Get-Content -Raw -LiteralPath $helperPath
 $diagnostics = Get-Content -Raw -LiteralPath $diagnosticsPath
@@ -75,6 +79,7 @@ foreach ($required in @(
     'MaximumMarkerShapes',
     'MaximumMarkerShapesPerPhase',
     'MaximumPayloadProperties',
+    'MaximumDecodedPayloadProperties',
     'MaximumMetadataCharacters',
     'MaximumSchemaDiscoveryBytes',
     'MaximumObservedEvents',
@@ -130,6 +135,9 @@ if ($service -notmatch 'Stopwatch\.GetTimestamp\(\)' -or
     $service -notmatch 'PerformanceCounterTimestamp' -or
     $extractor -notmatch 'PerformanceCounterTimestamp') {
     throw 'Action markers and ETW reports are not correlated on the shared QPC clock.'
+}
+if (($service | Select-String -Pattern 'schemaVersion\s*=\s*5' -AllMatches).Matches.Count -ne 2) {
+    throw 'Capture report and manifest are not both stamped with QPC-phase schema version 5.'
 }
 if ($extractor -notmatch '0x5A,\s*0xD1,\s*0x02,\s*0x08,\s*0x2C' -or
     $extractor -notmatch 'AsusRearButtonProtocol\.ReportLength' -or
@@ -197,10 +205,16 @@ if ($service -notmatch 'captureScopeVerified:\s*false' -or
 }
 if ($service -match 'diagnosticCandidates|retainedHex|RetainedBytes' -or
     $helper -match 'UsbEtwDiagnosticCandidate|RetainedBytes' -or
-    $service -notmatch 'containsPayloadBytes\s*=\s*false' -or
-    $helper -notmatch 'case\s+"stage-1"' -or
-    $helper -notmatch 'Volatile\.Write\(ref capturePhase') {
-    throw 'Schema discovery is not metadata-only and phase-bucketed.'
+    $service -notmatch 'containsPayloadBytes\s*[:=]\s*false' -or
+    $service -notmatch 'UsbEtwCapturePhaseCommand\.Format\(phase, qpc\)' -or
+    $service -notmatch 'acknowledgement\.Type\.Equals\("phase-ack"' -or
+    $helper -notmatch 'eventQpc\s*=\s*data\.TimeStampQPC' -or
+    $helper -notmatch 'capturePhases\.Classify\(eventQpc\)' -or
+    $helper -notmatch 'UsbEtwCapturePhaseCommand\.TryParse' -or
+    $helper -notmatch 'new\("phase-ack", Phase: phase\)' -or
+    $phase -notmatch 'Volatile\.Write\(ref _phase1Qpc' -or
+    $discoveryContract -notmatch 'record UsbEtwSchemaDiscoveryReport') {
+    throw 'Schema discovery is not metadata-only and QPC-phase-bucketed.'
 }
 foreach ($phaseMarker in @(
     'step-started-m1-a-m2-b',
@@ -210,6 +224,19 @@ foreach ($phaseMarker in @(
         $app -notmatch [regex]::Escape($phaseMarker)) {
         throw "The capture phase protocol is not wired to the UI action marker '$phaseMarker'."
     }
+    $ackBeforePromptPattern = 'await\s+captureService\.MarkActionAsync\(session,\s*"' +
+        [regex]::Escape($phaseMarker) + '"[^;]*;\s*await\s+RequireCaptureStepAsync'
+    if ($app -notmatch $ackBeforePromptPattern) {
+        throw "The UI can expose capture phase '$phaseMarker' before the helper acknowledges its QPC boundary."
+    }
+}
+$restoreStart = $app.IndexOf('public async Task RestoreDefaultAsync', [StringComparison]::Ordinal)
+$restoreEnd = $app.IndexOf('public string BuildDiagnostics()', [StringComparison]::Ordinal)
+$restoreMethod = $app.Substring($restoreStart, $restoreEnd - $restoreStart)
+if ($restoreMethod.IndexOf('await captureCompletion', [StringComparison]::Ordinal) -lt 0 -or
+    $restoreMethod.IndexOf('await captureCompletion', [StringComparison]::Ordinal) -gt
+    $restoreMethod.IndexOf('await _operationGate.WaitAsync()', [StringComparison]::Ordinal)) {
+    throw 'Native reset can still begin before active ETW capture cancellation has completed.'
 }
 if ($service -notmatch 'ReadBoundedLineAsync' -or $helper -notmatch 'ReadBoundedLineAsync') {
     throw 'The ETW IPC protocol does not bound both command and response messages.'

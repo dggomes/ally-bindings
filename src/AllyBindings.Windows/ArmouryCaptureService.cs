@@ -94,7 +94,7 @@ internal sealed class ArmouryCaptureService
                 directory,
                 confirmedTarget,
                 connection.Ready.EnabledProviders.Select(provider => provider.Name).ToArray());
-            session.MarkAction("capture-started");
+            session.RecordAction("capture-started");
             return session;
         }
         catch (Win32Exception ex) when (ex.NativeErrorCode == 1223)
@@ -134,6 +134,29 @@ internal sealed class ArmouryCaptureService
                 $"The elevated ETW helper failed before capture became ready{FormatExitCode(helperExitCode)}.",
                 ex);
         }
+    }
+
+    public async Task MarkActionAsync(
+        ArmouryCaptureSession session,
+        string action,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(session);
+        var (phase, qpc) = session.RecordAction(action);
+        if (phase == 0) return;
+
+        await session.PipeWriter.WriteLineAsync(UsbEtwCapturePhaseCommand.Format(phase, qpc)).ConfigureAwait(false);
+        var acknowledgement = await ReadEnvelopeAsync(
+            session.SessionId,
+            session.HelperProcess,
+            session.PipeReader,
+            TimeSpan.FromSeconds(10),
+            cancellationToken).ConfigureAwait(false);
+        if (!acknowledgement.Type.Equals("phase-ack", StringComparison.Ordinal) || acknowledgement.Phase != phase)
+        {
+            throw new InvalidDataException("The ETW helper did not acknowledge the requested capture phase.");
+        }
+        ArmouryCaptureDiagnostics.Record(session.SessionId, $"parent-phase-{phase}-acknowledged");
     }
 
     public async Task<ArmouryCaptureResult> CompleteAsync(
@@ -176,7 +199,7 @@ internal sealed class ArmouryCaptureService
         }
         await WaitForHelperExitAsync(session.HelperProcess, cancellationToken).ConfigureAwait(false);
         var output = envelope.Output;
-        session.MarkAction("capture-stopped");
+        session.RecordAction("capture-stopped");
 
         var reports = output.Reports
             .Select((report, index) => AnalyseReport(index + 1, report))
@@ -187,18 +210,16 @@ internal sealed class ArmouryCaptureService
         var evidenceHash = Convert.ToHexString(SHA256.HashData(outputBytes)).ToLowerInvariant();
         var reportBytes = SerializeJson(new
         {
-            schemaVersion = 4,
+            schemaVersion = 5,
             actions = session.Actions,
             assessment,
             reports,
-            schemaDiscovery = new
-            {
-                diagnosticOnly = true,
-                containsPayloadBytes = false,
-                complete = !output.SchemaDiscoveryLimitExceeded,
-                schemaShapes = output.SchemaShapes,
-                markerShapes = output.MarkerShapes,
-            },
+            schemaDiscovery = new UsbEtwSchemaDiscoveryReport(
+                DiagnosticOnly: true,
+                ContainsPayloadBytes: false,
+                Complete: !output.SchemaDiscoveryLimitExceeded,
+                output.SchemaShapes,
+                output.MarkerShapes),
             etw = new
             {
                 output.EnabledProviders,
@@ -220,7 +241,7 @@ internal sealed class ArmouryCaptureService
         });
         var manifestBytes = SerializeJson(new
         {
-            schemaVersion = 4,
+            schemaVersion = 5,
             capturedAtUtc = DateTimeOffset.UtcNow,
             applicationVersion = GetApplicationVersion(),
             source = "Windows built-in USB ETW real-time FullDataBusTrace session",
@@ -658,20 +679,19 @@ internal sealed class ArmouryCaptureSession(
     public IReadOnlyList<string> EnabledProviders { get; } = enabledProviders;
     public List<CaptureActionMarker> Actions { get; } = [];
 
-    public void MarkAction(string action)
+    public (int Phase, long Qpc) RecordAction(string action)
     {
-        Actions.Add(new(DateTimeOffset.UtcNow, Stopwatch.GetTimestamp(), action));
-        var phaseCommand = action switch
+        var occurredAtUtc = DateTimeOffset.UtcNow;
+        var qpc = Stopwatch.GetTimestamp();
+        Actions.Add(new(occurredAtUtc, qpc, action));
+        var phase = action switch
         {
-            "step-started-m1-a-m2-b" => "stage-1",
-            "step-started-m1-x-m2-y" => "stage-2",
-            "step-started-reset-to-default" => "stage-3",
-            _ => null,
+            "step-started-m1-a-m2-b" => 1,
+            "step-started-m1-x-m2-y" => 2,
+            "step-started-reset-to-default" => 3,
+            _ => 0,
         };
-        if (phaseCommand is not null)
-        {
-            PipeWriter.WriteLine(phaseCommand);
-        }
+        return (phase, qpc);
     }
 
     public void Dispose()

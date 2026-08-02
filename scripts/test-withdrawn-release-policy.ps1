@@ -2,7 +2,7 @@ $ErrorActionPreference = 'Stop'
 $assertScript = Join-Path $PSScriptRoot 'assert-release-tag-allowed.ps1'
 $denylist = Join-Path (Split-Path -Parent $PSScriptRoot) '.github/withdrawn-release-tags.txt'
 
-foreach ($tag in @('v0.3.0-preview.5', 'v0.3.0-preview.7')) {
+foreach ($tag in @('v0.3.0-preview.5', 'v0.3.0-preview.7', 'v0.3.0-preview.11')) {
     $withdrawnRejected = $false
     try {
         & $assertScript -Tag $tag -DenylistPath $denylist
@@ -16,5 +16,5 @@ foreach ($tag in @('v0.3.0-preview.5', 'v0.3.0-preview.7')) {
     }
 }
 
-& $assertScript -Tag 'v0.3.0-preview.11' -DenylistPath $denylist
-Write-Output 'Withdrawn-release policy passed: preview.5 and preview.7 rejected; preview.11 accepted.'
+& $assertScript -Tag 'v0.3.0-preview.12' -DenylistPath $denylist
+Write-Output 'Withdrawn-release policy passed: preview.5, preview.7, and preview.11 rejected; preview.12 accepted.'

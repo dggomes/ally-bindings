@@ -55,6 +55,27 @@ public sealed class UsbEtwSchemaDiscoveryTests
         Assert.Equal(1, observation.BytesAvailableAfterMarker);
     }
 
+    [Theory]
+    [InlineData(1)]
+    [InlineData(2)]
+    [InlineData(3)]
+    public void Finds_command_marker_at_every_adjacent_field_boundary(int firstPartLength)
+    {
+        byte[] marker = [0xD1, 0x02, 0x08, 0x2C];
+        var fields = new[]
+        {
+            Field(4, marker[..firstPartLength]),
+            Field(5, [.. marker[firstPartLength..], 0xAA]),
+        };
+
+        var observation = Assert.Single(UsbEtwSchemaDiscovery.Inspect(fields));
+
+        Assert.Equal(UsbEtwMarkerKind.CommandMarkerSplitAdjacentFields, observation.Kind);
+        Assert.Equal(4, observation.StartFieldOrdinal);
+        Assert.Equal(5, observation.EndFieldOrdinal);
+        Assert.Equal(1, observation.BytesAvailableAfterMarker);
+    }
+
     [Fact]
     public void Finds_scalar_report_id_followed_by_binary_command_marker()
     {
@@ -66,7 +87,9 @@ public sealed class UsbEtwSchemaDiscoveryTests
 
         var observations = UsbEtwSchemaDiscovery.Inspect(fields);
 
+        Assert.Equal(2, observations.Count);
         Assert.Contains(observations, item => item.Kind == UsbEtwMarkerKind.FullMarkerSplitAdjacentFields);
+        Assert.Contains(observations, item => item.Kind == UsbEtwMarkerKind.CommandMarkerSingleField);
     }
 
     [Fact]

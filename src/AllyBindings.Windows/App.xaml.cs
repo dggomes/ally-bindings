@@ -571,10 +571,16 @@ public partial class App : System.Windows.Application
 
     public async Task RestoreDefaultAsync(string reason)
     {
+        Task? captureCompletion = null;
         if (_armouryCaptureInProgress)
         {
+            captureCompletion = _armouryCaptureCompletion?.Task;
             _armouryCaptureCancellation?.Cancel();
             _mainWindow.CancelControllerDialog();
+        }
+        if (captureCompletion is not null)
+        {
+            await captureCompletion;
         }
         await _operationGate.WaitAsync();
         try
@@ -697,23 +703,23 @@ public partial class App : System.Windows.Application
             _mainWindow.SetArmouryCaptureStatus(
                 $"Integrated ETW capture running through {string.Join(" + ", session.EnabledProviders)}. Follow the Armoury prompts; this app remains write-locked.");
 
-            session.MarkAction("step-started-m1-a-m2-b");
+            await captureService.MarkActionAsync(session, "step-started-m1-a-m2-b", cancellationToken);
             await RequireCaptureStepAsync(
                 "In Armoury Crate, set M1 to A and M2 to B. Wait until Armoury shows the assignment as applied, then return here and choose Done.",
                 "Capture step 1 of 3 · M1=A, M2=B");
-            session.MarkAction("armoury-applied-m1-a-m2-b");
+            await captureService.MarkActionAsync(session, "armoury-applied-m1-a-m2-b", cancellationToken);
 
-            session.MarkAction("step-started-m1-x-m2-y");
+            await captureService.MarkActionAsync(session, "step-started-m1-x-m2-y", cancellationToken);
             await RequireCaptureStepAsync(
                 "In Armoury Crate, now set M1 to X and M2 to Y. Wait until it is applied, then return here and choose Done.",
                 "Capture step 2 of 3 · M1=X, M2=Y");
-            session.MarkAction("armoury-applied-m1-x-m2-y");
+            await captureService.MarkActionAsync(session, "armoury-applied-m1-x-m2-y", cancellationToken);
 
-            session.MarkAction("step-started-reset-to-default");
+            await captureService.MarkActionAsync(session, "step-started-reset-to-default", cancellationToken);
             await RequireCaptureStepAsync(
                 "In Armoury Crate, use its Reset to Default action for M1/M2. Wait until the defaults are applied, then return here and choose Done. This captures Armoury's real recovery bytes.",
                 "Capture step 3 of 3 · Armoury defaults");
-            session.MarkAction("armoury-reset-m1-m2-to-default");
+            await captureService.MarkActionAsync(session, "armoury-reset-m1-m2-to-default", cancellationToken);
 
             cancellationToken.ThrowIfCancellationRequested();
             var result = await captureService.CompleteAsync(session, cancellationToken);
