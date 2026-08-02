@@ -265,3 +265,6 @@ internal sealed class ArmouryCaptureException : InvalidOperationException
     public string DiagnosticPath { get; }
     public string? DiagnosticText => ArmouryCaptureDiagnostics.TryRead(SessionId);
 }
+
+internal sealed class ArmouryCaptureTeardownException(string message, Exception innerException)
+    : InvalidOperationException(message, innerException);

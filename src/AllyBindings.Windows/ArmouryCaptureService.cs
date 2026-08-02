@@ -110,24 +110,44 @@ internal sealed class ArmouryCaptureService
         catch (OperationCanceledException)
         {
             ArmouryCaptureDiagnostics.Delete(sessionId);
+            Exception? terminationFailure = null;
             if (helper is not null)
             {
-                StopHelper(helper);
-                helper.Dispose();
+                try { StopHelper(helper); }
+                catch (Exception ex) { terminationFailure = ex; }
+                try { helper.Dispose(); }
+                catch (Exception ex) { terminationFailure = CombineFailures(terminationFailure, ex); }
             }
-            pipe?.Dispose();
+            try { pipe?.Dispose(); }
+            catch (Exception ex) { terminationFailure = CombineFailures(terminationFailure, ex); }
+            if (terminationFailure is not null)
+            {
+                throw new ArmouryCaptureTeardownException(
+                    "Capture startup was cancelled, but the elevated ETW helper exit could not be confirmed.",
+                    terminationFailure);
+            }
             throw;
         }
         catch (Exception ex)
         {
             var helperExitCode = TryGetExitCode(helper);
             ArmouryCaptureDiagnostics.Record(sessionId, "parent-start-failed", ex, helperExitCode);
+            Exception? terminationFailure = null;
             if (helper is not null)
             {
-                StopHelper(helper);
-                helper.Dispose();
+                try { StopHelper(helper); }
+                catch (Exception stopFailure) { terminationFailure = stopFailure; }
+                try { helper.Dispose(); }
+                catch (Exception disposeFailure) { terminationFailure = CombineFailures(terminationFailure, disposeFailure); }
             }
-            pipe?.Dispose();
+            try { pipe?.Dispose(); }
+            catch (Exception disposeFailure) { terminationFailure = CombineFailures(terminationFailure, disposeFailure); }
+            if (terminationFailure is not null)
+            {
+                throw new ArmouryCaptureTeardownException(
+                    "Capture startup failed, and the elevated ETW helper exit could not be confirmed.",
+                    new AggregateException(ex, terminationFailure));
+            }
             if (ex is ArmouryCaptureException) throw;
             throw new ArmouryCaptureException(
                 sessionId,
@@ -555,25 +575,38 @@ internal sealed class ArmouryCaptureService
     private static string FormatExitCode(int? exitCode) =>
         exitCode.HasValue ? $" (exit code {exitCode.Value})" : string.Empty;
 
+    private static Exception CombineFailures(Exception? first, Exception second) =>
+        first is null ? second : new AggregateException(first, second);
+
     private static void StopHelper(Process helper)
     {
+        Exception? gracefulFailure = null;
+        var helperExitVerified = false;
         try
         {
-            if (!helper.HasExited && !helper.WaitForExit(5_000))
-            {
-                helper.Kill(entireProcessTree: true);
-                helper.WaitForExit(5_000);
-            }
+            helperExitVerified = helper.HasExited || helper.WaitForExit(5_000);
         }
-        catch
+        catch (Exception ex)
+        {
+            gracefulFailure = ex;
+        }
+        if (!helperExitVerified)
         {
             try
             {
                 if (!helper.HasExited) helper.Kill(entireProcessTree: true);
+                if (!helper.WaitForExit(5_000) || !helper.HasExited)
+                {
+                    throw new TimeoutException("The elevated ETW helper did not exit after forced process-tree termination.");
+                }
             }
-            catch
+            catch (Exception forcedFailure)
             {
-                // Best effort; TraceEventSession also stops its session on helper disposal/process exit.
+                throw new ArmouryCaptureTeardownException(
+                    "The elevated ETW helper exit could not be confirmed.",
+                    gracefulFailure is null
+                        ? forcedFailure
+                        : new AggregateException(gracefulFailure, forcedFailure));
             }
         }
     }

@@ -256,6 +256,11 @@ if ($service -notmatch 'helperExitVerified = HelperProcess\.HasExited \|\| Helpe
     $app -notmatch 'if \(_armouryCaptureInProgress \|\| _armouryCaptureTeardownUnconfirmed\)') {
     throw 'Capture completion can still authorize a native reset without positively verified ETW helper exit.'
 }
+if ($service -notmatch 'helperExitVerified = helper\.HasExited \|\| helper\.WaitForExit\(5_000\)' -or
+    $service -notmatch 'ArmouryCaptureTeardownException' -or
+    $app -notmatch 'private async Task<bool> ConfirmSafeExitForUpdateAsync\(\)[\s\S]*CaptureResetGate\.AcquireWhenCaptureStoppedAsync') {
+    throw 'Capture startup or updater shutdown can still bypass verified helper teardown.'
+}
 if ($service -notmatch 'BoundedTextLineReader' -or $helper -notmatch 'BoundedTextLineReader' -or
     $boundedReader -notmatch 'Array\.IndexOf' -or $boundedReader -notmatch '_offset') {
     throw 'The ETW IPC protocol does not bound both command and response messages.'

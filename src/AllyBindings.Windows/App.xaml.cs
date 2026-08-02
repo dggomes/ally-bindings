@@ -734,6 +734,10 @@ public partial class App : System.Windows.Application
         }
         catch (Exception ex)
         {
+            if (ex is ArmouryCaptureTeardownException)
+            {
+                captureTeardownFailure = ex;
+            }
             var failureMessage = ex.Message;
             if (session is not null)
             {
@@ -923,42 +927,42 @@ public partial class App : System.Windows.Application
 
     private async Task<bool> ConfirmSafeExitForUpdateAsync()
     {
-        await _operationGate.WaitAsync();
+        await using var resetLease = await CaptureResetGate.AcquireWhenCaptureStoppedAsync(
+            _operationGate,
+            () => _armouryCaptureInProgress ? _armouryCaptureCompletion?.Task : null,
+            () =>
+            {
+                _armouryCaptureCancellation?.Cancel();
+                _mainWindow.CancelControllerDialog();
+            });
+        if (!_backendNeedsRestore) return true;
         try
         {
-            if (!_backendNeedsRestore) return true;
-            try
+            var restored = await _backend.RestoreDefaultAsync();
+            if (restored.CommandAccepted)
             {
-                var restored = await _backend.RestoreDefaultAsync();
-                if (restored.CommandAccepted)
+                _backendNeedsRestore = false;
+                Configuration = Configuration with
                 {
-                    _backendNeedsRestore = false;
-                    Configuration = Configuration with
-                    {
-                        ActiveProfileId = MappingProfile.Default.Id,
-                        AsusRearButtonMappingActive = false,
-                    };
-                    await _profileStore.SaveAsync(Configuration);
-                    return true;
-                }
+                    ActiveProfileId = MappingProfile.Default.Id,
+                    AsusRearButtonMappingActive = false,
+                };
+                await _profileStore.SaveAsync(Configuration);
+                return true;
             }
-            catch
-            {
-                // The explicit warning below is the recovery gate.
-            }
-
-            var continueWithoutReset = await _mainWindow.ShowControllerDialogAsync(
-                "Controller recovery not confirmed",
-                "The best-known native M1/M2 reset could not be written. Updating now may leave the last paddle mapping active until Armoury Crate or another recovery path overwrites it.\n\nUpdate anyway?",
-                primaryLabel: "Update anyway",
-                secondaryLabel: "Cancel update");
-            _allowExitWithPendingRearMapping = continueWithoutReset;
-            return continueWithoutReset;
         }
-        finally
+        catch
         {
-            _operationGate.Release();
+            // The explicit warning below is the recovery gate.
         }
+
+        var continueWithoutReset = await _mainWindow.ShowControllerDialogAsync(
+            "Controller recovery not confirmed",
+            "The best-known native M1/M2 reset could not be written. Updating now may leave the last paddle mapping active until Armoury Crate or another recovery path overwrites it.\n\nUpdate anyway?",
+            primaryLabel: "Update anyway",
+            secondaryLabel: "Cancel update");
+        _allowExitWithPendingRearMapping = continueWithoutReset;
+        return continueWithoutReset;
     }
 
     private async Task<BackendStatus> ReplaceBackendAsync(

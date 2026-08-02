@@ -12,7 +12,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Thi
 
 - Classify every schema observation from the ETW event's own QPC timestamp inside helper-generated, acknowledged and closed action windows; transition sampling and ETW classification share one lock so thread scheduling cannot move buffered events across phases.
 - Finish cancellation and teardown of an active ETW capture before any Ally Bindings native reset can begin.
-- Require positive elevated-helper exit after graceful cancellation or forced process-tree termination; an unconfirmed exit faults the capture barrier and keeps native resets blocked until restart.
+- Require positive elevated-helper exit after graceful cancellation or forced process-tree termination during both startup and active-capture failures; an unconfirmed exit faults the capture barrier and keeps native reset, updater and process-termination paths write-free until restart.
 - Bound and sanitize exact-candidate source-field metadata before IPC serialization.
 - Preserve coalesced newline-delimited pipe frames with one persistent bounded reader on each side of the authenticated helper channel.
 
