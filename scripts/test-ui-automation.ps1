@@ -204,8 +204,8 @@ try {
         throw "Window did not reach the supported 900x600 minimum; actual size is $([Math]::Round($minimumBounds.Width))x$([Math]::Round($minimumBounds.Height))."
     }
     $mapHint = Wait-ElementById -Root $root -AutomationId 'ControllerMapHint'
-    $mapActions = Wait-ElementById -Root $root -AutomationId 'ControllerMapActions'
-    if ($mapHint.Current.BoundingRectangle.Right -gt $mapActions.Current.BoundingRectangle.Left + 1) {
+    $mapReset = Wait-ElementById -Root $root -AutomationId 'ControllerMapReset'
+    if ($mapHint.Current.BoundingRectangle.Right -gt $mapReset.Current.BoundingRectangle.Left + 1) {
         throw 'Controller hint overlaps the footer actions at 900x600.'
     }
 

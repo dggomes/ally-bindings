@@ -431,9 +431,8 @@
               <TextBlock Text="Touch or click a control · D-pad navigates · A opens binding" Foreground="{StaticResource MutedBrush}"
                          VerticalAlignment="Center" TextTrimming="CharacterEllipsis" Margin="0,0,10,0"
                          AutomationProperties.AutomationId="ControllerMapHint" />
-              <StackPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Right"
-                          AutomationProperties.AutomationId="ControllerMapActions">
-                <Button Content="Reset this layout" Click="ResetBindings_Click" />
+              <StackPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Right">
+                <Button Content="Reset this layout" Click="ResetBindings_Click" AutomationProperties.AutomationId="ControllerMapReset" />
                 <Button Content="X  Save" Click="Save_Click" />
                 <Button Content="Y  Select profile" Style="{StaticResource PrimaryButton}" Click="Apply_Click" />
               </StackPanel>

@@ -38,7 +38,7 @@ foreach ($requiredText in @(
     'AutomationProperties.AutomationId="Diagram-M2"',
     'AutomationProperties.AutomationId="BindingPickerCancel"',
     'AutomationProperties.AutomationId="ControllerMapHint"',
-    'AutomationProperties.AutomationId="ControllerMapActions"',
+    'AutomationProperties.AutomationId="ControllerMapReset"',
     'x:Name="ControllerMapSurface" MinWidth="700" MinHeight="350"',
     '<ColumnDefinition Width="400" />',
     'AutomationProperties.AutomationId="{Binding AutomationId}"',
