@@ -27,7 +27,7 @@ public sealed record ShortcutSettings
 
 public sealed record AppConfiguration
 {
-    public int SchemaVersion { get; init; } = 2;
+    public int SchemaVersion { get; init; } = 3;
     public string ActiveProfileId { get; init; } = MappingProfile.Default.Id;
     public int? ControllerIndex { get; init; }
     public bool RunAtStartup { get; init; }
@@ -52,7 +52,7 @@ public sealed class UnsupportedConfigurationVersionException(int version)
 
 public static partial class ConfigurationValidator
 {
-    public const int CurrentSchemaVersion = 2;
+    public const int CurrentSchemaVersion = 3;
     private static readonly HashSet<ControllerButton> FaceButtons =
     [ControllerButton.A, ControllerButton.B, ControllerButton.X, ControllerButton.Y];
 

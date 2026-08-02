@@ -17,7 +17,11 @@ using ComboBox = System.Windows.Controls.ComboBox;
 
 namespace AllyBindings.Windows;
 
-public sealed record ControllerBindingDisplay(string Label, string Glyph, BindingRow Row);
+public sealed record ControllerBindingDisplay(
+    string Label,
+    string Glyph,
+    string AutomationId,
+    BindingRow Row);
 
 public partial class MainWindow : Window, INotifyPropertyChanged
 {
@@ -54,6 +58,8 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
     public ObservableCollection<ProfileEditor> Profiles { get; } = [];
     public ObservableCollection<ControllerBindingDisplay> LeftBindings { get; } = [];
+    public ObservableCollection<ControllerBindingDisplay> DPadBindings { get; } = [];
+    public ObservableCollection<ControllerBindingDisplay> FaceBindings { get; } = [];
     public ObservableCollection<ControllerBindingDisplay> RightBindings { get; } = [];
     public IReadOnlyList<ControllerButton> ButtonOptions { get; }
     public IReadOnlyList<string> OnScreenKeys { get; } =
@@ -475,32 +481,41 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private void RebuildBindingDisplays()
     {
         LeftBindings.Clear();
+        DPadBindings.Clear();
+        FaceBindings.Clear();
         RightBindings.Clear();
         if (SelectedProfile is null) return;
 
+        AddDisplay(LeftBindings, ControllerButton.LeftTrigger, "Left trigger", "LT");
         AddDisplay(LeftBindings, ControllerButton.LeftBumper, "Left bumper", "LB");
-        AddDisplay(LeftBindings, ControllerButton.LeftStick, "Left stick click", "LS");
-        AddDisplay(LeftBindings, ControllerButton.View, "View", "◧");
-        AddDisplay(LeftBindings, ControllerButton.DPadUp, "D-pad up", "↑");
-        AddDisplay(LeftBindings, ControllerButton.DPadLeft, "D-pad left", "←");
-        AddDisplay(LeftBindings, ControllerButton.DPadRight, "D-pad right", "→");
-        AddDisplay(LeftBindings, ControllerButton.DPadDown, "D-pad down", "↓");
+        AddDisplay(LeftBindings, ControllerButton.LeftStick, "Left stick click", "L3");
+        AddDisplay(LeftBindings, ControllerButton.View, "View button", "▣");
         AddDisplay(LeftBindings, ControllerButton.M1, "Rear button M1", "M1");
 
+        AddDisplay(DPadBindings, ControllerButton.DPadUp, "D-pad up", "↑");
+        AddDisplay(DPadBindings, ControllerButton.DPadLeft, "D-pad left", "←");
+        AddDisplay(DPadBindings, ControllerButton.DPadRight, "D-pad right", "→");
+        AddDisplay(DPadBindings, ControllerButton.DPadDown, "D-pad down", "↓");
+
+        AddDisplay(RightBindings, ControllerButton.RightTrigger, "Right trigger", "RT");
         AddDisplay(RightBindings, ControllerButton.RightBumper, "Right bumper", "RB");
-        AddDisplay(RightBindings, ControllerButton.RightStick, "Right stick click", "RS");
-        AddDisplay(RightBindings, ControllerButton.Menu, "Menu", "☰");
-        AddDisplay(RightBindings, ControllerButton.Y, "Y button", "Y");
-        AddDisplay(RightBindings, ControllerButton.X, "X button", "X");
-        AddDisplay(RightBindings, ControllerButton.B, "B button", "B");
-        AddDisplay(RightBindings, ControllerButton.A, "A button", "A");
+        AddDisplay(RightBindings, ControllerButton.RightStick, "Right stick click", "R3");
+        AddDisplay(RightBindings, ControllerButton.Menu, "Menu button", "☰");
         AddDisplay(RightBindings, ControllerButton.M2, "Rear button M2", "M2");
+
+        AddDisplay(FaceBindings, ControllerButton.Y, "Y button", "Y");
+        AddDisplay(FaceBindings, ControllerButton.X, "X button", "X");
+        AddDisplay(FaceBindings, ControllerButton.B, "B button", "B");
+        AddDisplay(FaceBindings, ControllerButton.A, "A button", "A");
     }
 
     private void AddDisplay(ICollection<ControllerBindingDisplay> destination, ControllerButton source, string label, string glyph)
     {
         var row = SelectedProfile?.Bindings.FirstOrDefault(candidate => candidate.Source == source);
-        if (row is not null) destination.Add(new ControllerBindingDisplay(label, glyph, row));
+        if (row is not null)
+        {
+            destination.Add(new ControllerBindingDisplay(label, glyph, $"Mapping-{source}", row));
+        }
     }
 
     private void AddProfile_Click(object sender, RoutedEventArgs e)

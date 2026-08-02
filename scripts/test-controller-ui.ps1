@@ -29,8 +29,15 @@ foreach ($requiredText in @(
     'Content="Start capture"',
     'Content="Update app"',
     'Content="Update app now"',
-    'Controller mapping',
+    'Choose a button to map',
+    'AutomationProperties.Name="Full controller button map"',
+    'AutomationProperties.AutomationId="ControllerMapScrollViewer"',
+    'x:Name="ControllerMapSurface" MinWidth="700" MinHeight="350"',
+    '<ColumnDefinition Width="400" />',
+    'AutomationProperties.AutomationId="{Binding AutomationId}"',
     'ItemsSource="{Binding LeftBindings}"',
+    'ItemsSource="{Binding DPadBindings}"',
+    'ItemsSource="{Binding FaceBindings}"',
     'ItemsSource="{Binding RightBindings}"',
     'x:Name="BindingPickerOverlay"',
     'x:Name="NameKeyboardOverlay"',
@@ -46,6 +53,17 @@ foreach ($requiredText in @(
 }
 if ($xaml.IndexOf('<DataGrid', [StringComparison]::Ordinal) -ge 0) {
     throw 'The old spreadsheet-style binding editor is still present.'
+}
+foreach ($source in @(
+    'LeftTrigger','LeftBumper','LeftStick','View','DPadUp','DPadLeft','DPadRight','DPadDown','M1',
+    'RightTrigger','RightBumper','Y','X','B','A','RightStick','Menu','M2'
+)) {
+    if ($windowCode.IndexOf("ControllerButton.$source", [StringComparison]::Ordinal) -lt 0) {
+        throw "The full controller map is missing physical source: $source"
+    }
+}
+if ($windowCode.IndexOf('$"Mapping-{source}"', [StringComparison]::Ordinal) -lt 0) {
+    throw 'Mapping controls do not expose stable per-button automation IDs.'
 }
 if ($appXaml -notmatch '<Setter Property="MinHeight" Value="48"') {
     throw 'The global touch target minimum is below 48 device-independent pixels.'

@@ -50,13 +50,19 @@ public static class ControllerButtons
         ControllerButton.M2,
     ];
 
-    public static readonly ControllerButton[] MappableSources = [.. StandardButtons, .. RearButtons];
+    public static readonly ControllerButton[] TriggerSources =
+    [
+        ControllerButton.LeftTrigger,
+        ControllerButton.RightTrigger,
+    ];
+
+    public static readonly ControllerButton[] DigitalMappableSources = [.. StandardButtons, .. RearButtons];
+    public static readonly ControllerButton[] MappableSources = [.. StandardButtons, .. TriggerSources, .. RearButtons];
 
     public static readonly ControllerButton[] OutputTargets =
     [
         .. StandardButtons,
-        ControllerButton.LeftTrigger,
-        ControllerButton.RightTrigger,
+        .. TriggerSources,
     ];
 
     // Shortcut chords are observed through XInput. M1/M2 and the analog
@@ -68,7 +74,7 @@ public static class ControllerButtons
         MappableSources.Contains(source) &&
         (OutputTargets.Contains(target) || (RearButtons.Contains(source) && target == source));
 
-    public static ControllerButton MappableMask { get; } = MappableSources.Aggregate(
+    public static ControllerButton MappableMask { get; } = DigitalMappableSources.Aggregate(
         ControllerButton.None,
         static (mask, button) => mask | button);
 

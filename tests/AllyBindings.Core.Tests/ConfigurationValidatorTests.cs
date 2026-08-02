@@ -60,10 +60,12 @@ public sealed class ConfigurationValidatorTests
         Assert.Contains(result.Warnings, warning => warning.Contains("duplicated", StringComparison.OrdinalIgnoreCase));
     }
 
-    [Fact]
-    public void Version_one_configuration_upgrades_and_preserves_rear_backend_opt_in_default()
+    [Theory]
+    [InlineData(1)]
+    [InlineData(2)]
+    public void Older_configuration_upgrades_and_preserves_rear_backend_opt_in_default(int schemaVersion)
     {
-        var result = ConfigurationValidator.Normalize(AppConfiguration.CreateDefault() with { SchemaVersion = 1 });
+        var result = ConfigurationValidator.Normalize(AppConfiguration.CreateDefault() with { SchemaVersion = schemaVersion });
 
         Assert.Equal(ConfigurationValidator.CurrentSchemaVersion, result.Configuration.SchemaVersion);
         Assert.True(result.Configuration.CheckForUpdatesAutomatically);
@@ -80,6 +82,7 @@ public sealed class ConfigurationValidatorTests
             Bindings = new Dictionary<ControllerButton, ControllerButton>
             {
                 [ControllerButton.M1] = ControllerButton.RightTrigger,
+                [ControllerButton.LeftTrigger] = ControllerButton.B,
                 [ControllerButton.A] = ControllerButton.M2,
             },
         };
@@ -92,6 +95,7 @@ public sealed class ConfigurationValidatorTests
 
         var normalized = Assert.Single(result.Configuration.Profiles, profile => profile.Id == "custom");
         Assert.Equal(ControllerButton.RightTrigger, normalized.Bindings[ControllerButton.M1]);
+        Assert.Equal(ControllerButton.B, normalized.Bindings[ControllerButton.LeftTrigger]);
         Assert.False(normalized.Bindings.ContainsKey(ControllerButton.A));
         Assert.True(result.Configuration.EnableAsusRearButtonMappings);
     }

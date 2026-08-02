@@ -83,4 +83,55 @@ public sealed class MappingEngineTests
         Assert.Equal(ControllerButton.None, output.Buttons);
         Assert.Equal(byte.MaxValue, output.RightTrigger);
     }
+
+    [Fact]
+    public void Apply_can_map_a_physical_trigger_to_a_digital_button()
+    {
+        var input = new ControllerSnapshot(true, ControllerButton.None, LeftTrigger: 180);
+        var profile = new MappingProfile
+        {
+            Id = "trigger-button",
+            Name = "Trigger Button",
+            Bindings = new() { [ControllerButton.LeftTrigger] = ControllerButton.X },
+        };
+
+        var output = MappingEngine.Apply(input, profile);
+
+        Assert.Equal(ControllerButton.X, output.Buttons);
+        Assert.Equal(0, output.LeftTrigger);
+    }
+
+    [Fact]
+    public void Apply_does_not_activate_a_digital_target_below_the_trigger_threshold()
+    {
+        var input = new ControllerSnapshot(true, ControllerButton.None, LeftTrigger: 20);
+        var profile = new MappingProfile
+        {
+            Id = "trigger-button",
+            Name = "Trigger Button",
+            Bindings = new() { [ControllerButton.LeftTrigger] = ControllerButton.X },
+        };
+
+        var output = MappingEngine.Apply(input, profile);
+
+        Assert.Equal(ControllerButton.None, output.Buttons);
+        Assert.Equal(0, output.LeftTrigger);
+    }
+
+    [Fact]
+    public void Apply_preserves_trigger_intensity_when_mapped_to_the_other_trigger()
+    {
+        var input = new ControllerSnapshot(true, ControllerButton.None, LeftTrigger: 173, RightTrigger: 11);
+        var profile = new MappingProfile
+        {
+            Id = "swap-trigger",
+            Name = "Swap Trigger",
+            Bindings = new() { [ControllerButton.LeftTrigger] = ControllerButton.RightTrigger },
+        };
+
+        var output = MappingEngine.Apply(input, profile);
+
+        Assert.Equal(0, output.LeftTrigger);
+        Assert.Equal(173, output.RightTrigger);
+    }
 }

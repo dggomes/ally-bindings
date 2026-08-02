@@ -17,7 +17,9 @@ Ally Bindings is an independent project and is not affiliated with ASUS, ROG, Mi
 
 These are real screenshots captured from the packaged `win-x64` application by the Windows CI workflow.
 
-### Visual controller mapping
+### Full controller mapping
+
+The mapping workspace follows Armoury Crate's controller-first layout: a large Ally diagram sits between labelled controls for every physical button, trigger and rear paddle. Click or select any of the 18 controls to open its binding window.
 
 ![Controller mapping workspace showing physical controller bindings](docs/images/ally-bindings-controller.png)
 
