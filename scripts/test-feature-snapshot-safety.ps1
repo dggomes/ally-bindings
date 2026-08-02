@@ -31,7 +31,7 @@ $readMethod = Get-MethodBody $device 'public async Task<AsusRearButtonReadResult
 Assert-True ($readMethod.IndexOf('SetFeature', [StringComparison]::OrdinalIgnoreCase) -lt 0) 'The public read seam must not reference SetFeature.'
 Assert-True ($readMethod.IndexOf('WriteFeatureReport', [StringComparison]::OrdinalIgnoreCase) -lt 0) 'The public read seam must not call the write path.'
 Assert-True ($device.Contains('stream.GetFeature(buffer);')) 'The HID implementation must issue GetFeature.'
-Assert-True (($device.Split('stream.GetFeature(buffer);').Length - 1) -eq 1) 'The HID implementation must have one bounded GetFeature call site.'
+Assert-True (([regex]::Matches($device, [regex]::Escape('stream.GetFeature(buffer);'))).Count -eq 1) 'The HID implementation must have one bounded GetFeature call site.'
 Assert-True ($device.Contains('reportLength is < AsusRearButtonProtocol.ReportLength or > UsbEtwHidFeatureReportExtractor.MaximumWireReportLength')) 'Reads must reject lengths outside 50-64 bytes.'
 Assert-True ($device.Contains('no retry was attempted')) 'Read failures and timeouts must not retry.'
 Assert-True ($device.Contains('GetSnapshotInterfaceIdentityKeys')) 'Snapshot identity must retain stable per-interface keys in memory.'
