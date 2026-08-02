@@ -71,9 +71,12 @@ foreach ($required in @(
     'MaximumCaptureDuration',
     'MaximumRetainedReports',
     'MaximumSchemaShapes',
+    'MaximumSchemaShapesPerPhase',
     'MaximumMarkerShapes',
+    'MaximumMarkerShapesPerPhase',
     'MaximumPayloadProperties',
     'MaximumMetadataCharacters',
+    'MaximumSchemaDiscoveryBytes',
     'MaximumObservedEvents',
     'MaximumDecodedBinaryBytes',
     'VerifyParentExecutableIdentity')) {

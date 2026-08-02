@@ -24,6 +24,7 @@ internal static class ArmouryEtwCaptureHelper
     private const int MaximumMarkerShapesPerPhase = 16;
     private const int MaximumPayloadProperties = 32;
     private const int MaximumMetadataCharacters = 64;
+    private const int MaximumSchemaDiscoveryBytes = 128 * 1024;
     private const long MaximumObservedEvents = 2_000_000;
     private const long MaximumDecodedBinaryBytes = 512L * 1024 * 1024;
     private const int MaximumCommandCharacters = 16;
@@ -351,6 +352,60 @@ internal static class ArmouryEtwCaptureHelper
         }
         if (cancelled) return 2;
 
+        var schemaShapeOutput = schemaShapes
+            .OrderBy(pair => pair.Key.Phase)
+            .ThenBy(pair => pair.Key.ProviderName, StringComparer.Ordinal)
+            .ThenBy(pair => pair.Key.EventName, StringComparer.Ordinal)
+            .ThenBy(pair => pair.Key.EventId)
+            .ThenBy(pair => pair.Key.FieldOrdinal)
+            .Select(pair => new EtwSchemaShape(
+                pair.Key.Phase,
+                pair.Key.ProviderName,
+                pair.Key.EventName,
+                pair.Key.EventId,
+                pair.Key.EventVersion,
+                pair.Key.Opcode,
+                pair.Key.PayloadPropertyCountBucket,
+                pair.Key.FieldOrdinal,
+                pair.Key.FieldName,
+                pair.Key.RuntimeType,
+                pair.Key.FieldLengthBucket,
+                pair.Key.TotalBinaryLengthBucket,
+                pair.Value))
+            .ToList();
+        var markerShapeOutput = markerShapes
+            .OrderBy(pair => pair.Key.Phase)
+            .ThenBy(pair => pair.Key.ProviderName, StringComparer.Ordinal)
+            .ThenBy(pair => pair.Key.EventId)
+            .ThenBy(pair => pair.Key.Kind, StringComparer.Ordinal)
+            .Select(pair => new EtwMarkerShape(
+                pair.Key.Phase,
+                pair.Key.ProviderName,
+                pair.Key.EventName,
+                pair.Key.EventId,
+                pair.Key.EventVersion,
+                pair.Key.Opcode,
+                pair.Key.Kind,
+                pair.Key.StartFieldOrdinal,
+                pair.Key.EndFieldOrdinal,
+                pair.Key.StartFieldName,
+                pair.Key.EndFieldName,
+                pair.Key.StartRuntimeType,
+                pair.Key.EndRuntimeType,
+                pair.Key.StartLengthBucket,
+                pair.Key.EndLengthBucket,
+                pair.Key.StartOffsetBucket,
+                pair.Key.BytesAfterMarkerBucket,
+                pair.Value))
+            .ToList();
+        var discoveryBytes = JsonSerializer.SerializeToUtf8Bytes(
+            new { SchemaShapes = schemaShapeOutput, MarkerShapes = markerShapeOutput },
+            JsonOptions);
+        if (discoveryBytes.Length > MaximumSchemaDiscoveryBytes)
+        {
+            throw new InvalidDataException("The bounded ETW schema-discovery result exceeded its serialization limit.");
+        }
+
         await WriteEnvelopeAsync(
             writer,
             new(
@@ -367,52 +422,8 @@ internal static class ArmouryEtwCaptureHelper
                     aggregateLimitExceeded,
                     schemaDiscoveryLimitExceeded,
                     reports,
-                    schemaShapes
-                        .OrderBy(pair => pair.Key.Phase)
-                        .ThenBy(pair => pair.Key.ProviderName, StringComparer.Ordinal)
-                        .ThenBy(pair => pair.Key.EventName, StringComparer.Ordinal)
-                        .ThenBy(pair => pair.Key.EventId)
-                        .ThenBy(pair => pair.Key.FieldOrdinal)
-                        .Select(pair => new EtwSchemaShape(
-                            pair.Key.Phase,
-                            pair.Key.ProviderName,
-                            pair.Key.EventName,
-                            pair.Key.EventId,
-                            pair.Key.EventVersion,
-                            pair.Key.Opcode,
-                            pair.Key.PayloadPropertyCountBucket,
-                            pair.Key.FieldOrdinal,
-                            pair.Key.FieldName,
-                            pair.Key.RuntimeType,
-                            pair.Key.FieldLengthBucket,
-                            pair.Key.TotalBinaryLengthBucket,
-                            pair.Value))
-                        .ToList(),
-                    markerShapes
-                        .OrderBy(pair => pair.Key.Phase)
-                        .ThenBy(pair => pair.Key.ProviderName, StringComparer.Ordinal)
-                        .ThenBy(pair => pair.Key.EventId)
-                        .ThenBy(pair => pair.Key.Kind, StringComparer.Ordinal)
-                        .Select(pair => new EtwMarkerShape(
-                            pair.Key.Phase,
-                            pair.Key.ProviderName,
-                            pair.Key.EventName,
-                            pair.Key.EventId,
-                            pair.Key.EventVersion,
-                            pair.Key.Opcode,
-                            pair.Key.Kind,
-                            pair.Key.StartFieldOrdinal,
-                            pair.Key.EndFieldOrdinal,
-                            pair.Key.StartFieldName,
-                            pair.Key.EndFieldName,
-                            pair.Key.StartRuntimeType,
-                            pair.Key.EndRuntimeType,
-                            pair.Key.StartLengthBucket,
-                            pair.Key.EndLengthBucket,
-                            pair.Key.StartOffsetBucket,
-                            pair.Key.BytesAfterMarkerBucket,
-                            pair.Value))
-                        .ToList()))).ConfigureAwait(false);
+                    schemaShapeOutput,
+                    markerShapeOutput))).ConfigureAwait(false);
         ArmouryCaptureDiagnostics.Record(sessionId, "helper-result-sent");
         return 0;
     }
