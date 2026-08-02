@@ -119,6 +119,17 @@ jobs:
           New-Item -ItemType Directory -Force -Path $verify | Out-Null
           gh release download $tag --repo $env:GITHUB_REPOSITORY --dir $verify
 
+          $expectedNames = @(
+            "AllyBindings-$tag-win-x64.exe",
+            "AllyBindings-$tag-win-x64.exe.sha256",
+            "AllyBindings-$tag-win-x64.zip",
+            "AllyBindings-$tag-win-x64.zip.sha256"
+          ) | Sort-Object
+          $actualNames = @(Get-ChildItem -LiteralPath $verify -File | Select-Object -ExpandProperty Name | Sort-Object)
+          if (($actualNames -join "`n") -cne ($expectedNames -join "`n")) {
+            throw "Draft release asset allowlist mismatch: $($actualNames -join ', ')"
+          }
+
           foreach ($kind in @('zip', 'exe')) {
             $asset = Join-Path $verify "AllyBindings-$tag-win-x64.$kind"
             $hashFile = "$asset.sha256"
@@ -130,6 +141,8 @@ jobs:
           $expanded = Join-Path $verify 'expanded'
           Expand-Archive -LiteralPath (Join-Path $verify "AllyBindings-$tag-win-x64.zip") -DestinationPath $expanded
           ./scripts/test-release-package.ps1 -PackageRoot $expanded -ZipPath (Join-Path $verify "AllyBindings-$tag-win-x64.zip")
+          ./scripts/test-version-metadata.ps1 -ExecutablePath (Join-Path $verify "AllyBindings-$tag-win-x64.exe")
+          ./scripts/test-version-metadata.ps1 -ExecutablePath (Join-Path $expanded 'AllyBindings.exe')
 
           $release = gh release view $tag --repo $env:GITHUB_REPOSITORY --json tagName,name,isDraft,isPrerelease | ConvertFrom-Json
           if ($release.tagName -cne $tag -or $release.name -cne "Ally Bindings $tag — Preview" -or
@@ -160,6 +173,8 @@ jobs:
           $publicExpanded = Join-Path $publicVerify 'expanded'
           Expand-Archive -LiteralPath (Join-Path $publicVerify "AllyBindings-$tag-win-x64.zip") -DestinationPath $publicExpanded
           ./scripts/test-release-package.ps1 -PackageRoot $publicExpanded -ZipPath (Join-Path $publicVerify "AllyBindings-$tag-win-x64.zip")
+          ./scripts/test-version-metadata.ps1 -ExecutablePath (Join-Path $publicVerify "AllyBindings-$tag-win-x64.exe")
+          ./scripts/test-version-metadata.ps1 -ExecutablePath (Join-Path $publicExpanded 'AllyBindings.exe')
           $published = gh release view $tag --repo $env:GITHUB_REPOSITORY --json tagName,name,isDraft,isPrerelease | ConvertFrom-Json
           if ($published.tagName -cne $tag -or $published.name -cne "Ally Bindings $tag — Preview" -or
               $published.isDraft -or -not $published.isPrerelease) {

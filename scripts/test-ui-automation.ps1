@@ -126,6 +126,22 @@ try {
         ([System.Windows.Automation.ScrollPattern]$navigationScroll).Current.HorizontallyScrollable) {
         throw 'Section navigation exposes a horizontal scrollbar at 1040x736.'
     }
+    $navigationBounds = $navigationList.Current.BoundingRectangle
+    foreach ($navigationText in @(
+        @{ Id = 'NavigationCaptureLabel'; Name = 'Capture & update' },
+        @{ Id = 'NavigationCaptureSubtitle'; Name = 'ETW capture + app care' }
+    )) {
+        $element = Wait-ElementById -Root $root -AutomationId $navigationText.Id
+        if ($element.Current.Name -cne $navigationText.Name -or $element.Current.IsOffscreen) {
+            throw "Navigation text '$($navigationText.Id)' is incomplete or offscreen: '$($element.Current.Name)'."
+        }
+        $bounds = $element.Current.BoundingRectangle
+        if ($bounds.Width -le 0 -or $bounds.Height -le 0 -or
+            $bounds.Left -lt $navigationBounds.Left -or $bounds.Top -lt $navigationBounds.Top -or
+            $bounds.Right -gt $navigationBounds.Right -or $bounds.Bottom -gt $navigationBounds.Bottom) {
+            throw "Navigation text '$($navigationText.Id)' is clipped at 1040x736."
+        }
+    }
     $controllerMap = Wait-ElementById -Root $root -AutomationId 'ControllerMapScrollViewer'
     $mapScroll = [System.Windows.Automation.ScrollPattern]$controllerMap.GetCurrentPattern([System.Windows.Automation.ScrollPattern]::Pattern)
     if ($mapScroll.Current.HorizontallyScrollable -or $mapScroll.Current.VerticallyScrollable) {

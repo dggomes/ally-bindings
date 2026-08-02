@@ -6,6 +6,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Thi
 
 ## [Unreleased]
 
+## [v0.3.0-preview.3] - 2026-08-02
+
+### Fixed
+
+- Wrapped and automation-verified the full **Capture & update** navigation labels so the persistent rail remains readable at the 1040×736 Ally viewport.
+- Release verification now enforces the exact draft asset allowlist and validates product/file metadata on both standalone and packaged executables after draft and public redownloads.
+
 ## [v0.3.0-preview.2] - 2026-08-02
 
 ### Added
@@ -116,3 +123,4 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Thi
 [v0.2.0-preview.2]: https://github.com/dggomes/ally-bindings/releases/tag/v0.2.0-preview.2
 [v0.3.0-preview.1]: https://github.com/dggomes/ally-bindings/releases/tag/v0.3.0-preview.1
 [v0.3.0-preview.2]: https://github.com/dggomes/ally-bindings/releases/tag/v0.3.0-preview.2
+[v0.3.0-preview.3]: https://github.com/dggomes/ally-bindings/releases/tag/v0.3.0-preview.3
