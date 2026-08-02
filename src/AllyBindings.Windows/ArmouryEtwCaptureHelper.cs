@@ -18,6 +18,13 @@ internal static class ArmouryEtwCaptureHelper
     internal const ulong FullDataTraceKeywords = 0x8101; // Default | FullDataBusTrace | Rundown
     private const int MaximumEventPayloadBytes = 1024 * 1024;
     private const int MaximumRetainedReports = 256;
+    private const int MaximumSchemaShapes = 256;
+    private const int MaximumSchemaShapesPerPhase = 64;
+    private const int MaximumMarkerShapes = 64;
+    private const int MaximumMarkerShapesPerPhase = 16;
+    private const int MaximumPayloadProperties = 32;
+    private const int MaximumMetadataCharacters = 64;
+    private const int MaximumSchemaDiscoveryBytes = 128 * 1024;
     private const long MaximumObservedEvents = 2_000_000;
     private const long MaximumDecodedBinaryBytes = 512L * 1024 * 1024;
     private const int MaximumCommandCharacters = 16;
@@ -111,6 +118,9 @@ internal static class ArmouryEtwCaptureHelper
         ArmouryCaptureDiagnostics.Record(sessionId, "helper-providers-verified");
 
         var reports = new List<UsbEtwFeatureReport>();
+        var schemaShapes = new Dictionary<EtwSchemaShapeKey, long>();
+        var markerShapes = new Dictionary<EtwMarkerShapeKey, long>();
+        var capturePhase = 0;
         long observedEventCount = 0;
         long oversizedEventCount = 0;
         long payloadDecodeFailureCount = 0;
@@ -118,6 +128,7 @@ internal static class ArmouryEtwCaptureHelper
         long droppedMatchingReportCount = 0;
         long decodedBinaryByteCount = 0;
         var aggregateLimitExceeded = false;
+        var schemaDiscoveryLimitExceeded = false;
         // A fixed name lets TraceEvent reclaim a session orphaned by a prior
         // process crash instead of leaking one GUID-named logger per attempt.
         using var session = new TraceEventSession(CaptureSessionName)
@@ -144,13 +155,87 @@ internal static class ArmouryEtwCaptureHelper
 
             try
             {
-                var fields = GetBinaryFields(data, MaximumDecodedBinaryBytes - decodedBinaryByteCount);
+                var fields = GetEventFields(data, MaximumDecodedBinaryBytes - decodedBinaryByteCount);
                 decodedBinaryByteCount += fields.DecodedBytes;
-                if (fields.LimitExceeded)
+                if (fields.AggregateLimitExceeded)
                 {
                     aggregateLimitExceeded = true;
                     return;
                 }
+                if (fields.DiscoveryLimitExceeded)
+                {
+                    schemaDiscoveryLimitExceeded = true;
+                }
+
+                var providerName = NormalizeMetadata(
+                    data.ProviderName ?? data.ProviderGuid.ToString("D"),
+                    "unknown-provider");
+                var eventName = NormalizeMetadata(data.EventName, $"event-{data.ID}");
+                var phase = Volatile.Read(ref capturePhase);
+                foreach (var field in fields.PropertyShapes)
+                {
+                    var key = new EtwSchemaShapeKey(
+                        phase,
+                        providerName,
+                        eventName,
+                        (int)data.ID,
+                        (int)data.Version,
+                        (int)data.Opcode,
+                        fields.PayloadPropertyCountBucket,
+                        field.Ordinal,
+                        field.Name,
+                        field.RuntimeType,
+                        field.LengthBucket,
+                        fields.TotalBinaryLengthBucket);
+                    IncrementPhaseBounded(
+                        schemaShapes,
+                        key,
+                        static item => item.Phase,
+                        MaximumSchemaShapes,
+                        MaximumSchemaShapesPerPhase,
+                        ref schemaDiscoveryLimitExceeded);
+                }
+
+                try
+                {
+                    foreach (var observation in UsbEtwSchemaDiscovery.Inspect(
+                        fields.DiscoveryFields,
+                        MaximumMarkerShapes))
+                    {
+                        var start = fields.PropertyShapes.Single(item => item.Ordinal == observation.StartFieldOrdinal);
+                        var end = fields.PropertyShapes.Single(item => item.Ordinal == observation.EndFieldOrdinal);
+                        var key = new EtwMarkerShapeKey(
+                            phase,
+                            providerName,
+                            eventName,
+                            (int)data.ID,
+                            (int)data.Version,
+                            (int)data.Opcode,
+                            observation.Kind.ToString(),
+                            start.Ordinal,
+                            end.Ordinal,
+                            start.Name,
+                            end.Name,
+                            start.RuntimeType,
+                            end.RuntimeType,
+                            start.LengthBucket,
+                            end.LengthBucket,
+                            BucketLength(observation.StartOffset),
+                            BucketLength(observation.BytesAvailableAfterMarker));
+                        IncrementPhaseBounded(
+                            markerShapes,
+                            key,
+                            static item => item.Phase,
+                            MaximumMarkerShapes,
+                            MaximumMarkerShapesPerPhase,
+                            ref schemaDiscoveryLimitExceeded);
+                    }
+                }
+                catch (UsbEtwSchemaDiscoveryLimitException)
+                {
+                    schemaDiscoveryLimitExceeded = true;
+                }
+
                 var remaining = Math.Max(1, MaximumRetainedReports - reports.Count);
 #pragma warning disable CS0618 // Raw ETW QPC intentionally shares the Windows performance-counter clock with parent markers.
                 var eventQpc = data.TimeStampQPC;
@@ -159,10 +244,10 @@ internal static class ArmouryEtwCaptureHelper
                     new DateTimeOffset(session.Source.SessionStartTime)
                         .AddMilliseconds(data.TimeStampRelativeMSec)
                         .ToUniversalTime(),
-                    data.ProviderName ?? data.ProviderGuid.ToString("D"),
-                    data.EventName ?? $"event-{data.ID}",
+                    providerName,
+                    eventName,
                     (int)data.ID,
-                    fields.Fields,
+                    fields.BinaryFields,
                     remaining,
                     eventQpc);
                 foreach (var report in extraction.Reports)
@@ -207,8 +292,30 @@ internal static class ArmouryEtwCaptureHelper
         lifetime.CancelAfter(MaximumCaptureDuration);
         try
         {
-            command = await ReadBoundedLineAsync(reader, MaximumCommandCharacters, lifetime.Token).ConfigureAwait(false);
-            ArmouryCaptureDiagnostics.Record(sessionId, $"helper-command-{command ?? "disconnected"}");
+            while (true)
+            {
+                command = await ReadBoundedLineAsync(reader, MaximumCommandCharacters, lifetime.Token).ConfigureAwait(false);
+                ArmouryCaptureDiagnostics.Record(sessionId, $"helper-command-{command ?? "disconnected"}");
+                switch (command)
+                {
+                    case "stage-1":
+                        Volatile.Write(ref capturePhase, 1);
+                        continue;
+                    case "stage-2":
+                        Volatile.Write(ref capturePhase, 2);
+                        continue;
+                    case "stage-3":
+                        Volatile.Write(ref capturePhase, 3);
+                        continue;
+                    case "stop":
+                    case "cancel":
+                    case null:
+                        break;
+                    default:
+                        throw new InvalidDataException("The ETW helper received an invalid parent command.");
+                }
+                break;
+            }
         }
         catch (OperationCanceledException ex) when (!cancellationToken.IsCancellationRequested)
         {
@@ -245,6 +352,60 @@ internal static class ArmouryEtwCaptureHelper
         }
         if (cancelled) return 2;
 
+        var schemaShapeOutput = schemaShapes
+            .OrderBy(pair => pair.Key.Phase)
+            .ThenBy(pair => pair.Key.ProviderName, StringComparer.Ordinal)
+            .ThenBy(pair => pair.Key.EventName, StringComparer.Ordinal)
+            .ThenBy(pair => pair.Key.EventId)
+            .ThenBy(pair => pair.Key.FieldOrdinal)
+            .Select(pair => new EtwSchemaShape(
+                pair.Key.Phase,
+                pair.Key.ProviderName,
+                pair.Key.EventName,
+                pair.Key.EventId,
+                pair.Key.EventVersion,
+                pair.Key.Opcode,
+                pair.Key.PayloadPropertyCountBucket,
+                pair.Key.FieldOrdinal,
+                pair.Key.FieldName,
+                pair.Key.RuntimeType,
+                pair.Key.FieldLengthBucket,
+                pair.Key.TotalBinaryLengthBucket,
+                pair.Value))
+            .ToList();
+        var markerShapeOutput = markerShapes
+            .OrderBy(pair => pair.Key.Phase)
+            .ThenBy(pair => pair.Key.ProviderName, StringComparer.Ordinal)
+            .ThenBy(pair => pair.Key.EventId)
+            .ThenBy(pair => pair.Key.Kind, StringComparer.Ordinal)
+            .Select(pair => new EtwMarkerShape(
+                pair.Key.Phase,
+                pair.Key.ProviderName,
+                pair.Key.EventName,
+                pair.Key.EventId,
+                pair.Key.EventVersion,
+                pair.Key.Opcode,
+                pair.Key.Kind,
+                pair.Key.StartFieldOrdinal,
+                pair.Key.EndFieldOrdinal,
+                pair.Key.StartFieldName,
+                pair.Key.EndFieldName,
+                pair.Key.StartRuntimeType,
+                pair.Key.EndRuntimeType,
+                pair.Key.StartLengthBucket,
+                pair.Key.EndLengthBucket,
+                pair.Key.StartOffsetBucket,
+                pair.Key.BytesAfterMarkerBucket,
+                pair.Value))
+            .ToList();
+        var discoveryBytes = JsonSerializer.SerializeToUtf8Bytes(
+            new { SchemaShapes = schemaShapeOutput, MarkerShapes = markerShapeOutput },
+            JsonOptions);
+        if (discoveryBytes.Length > MaximumSchemaDiscoveryBytes)
+        {
+            throw new InvalidDataException("The bounded ETW schema-discovery result exceeded its serialization limit.");
+        }
+
         await WriteEnvelopeAsync(
             writer,
             new(
@@ -259,50 +420,174 @@ internal static class ArmouryEtwCaptureHelper
                     droppedMatchingReportCount,
                     decodedBinaryByteCount,
                     aggregateLimitExceeded,
-                    reports))).ConfigureAwait(false);
+                    schemaDiscoveryLimitExceeded,
+                    reports,
+                    schemaShapeOutput,
+                    markerShapeOutput))).ConfigureAwait(false);
         ArmouryCaptureDiagnostics.Record(sessionId, "helper-result-sent");
         return 0;
     }
 
-    private static BinaryFieldExtraction GetBinaryFields(TraceEvent data, long remainingByteBudget)
+    private static EtwEventFieldExtraction GetEventFields(TraceEvent data, long remainingByteBudget)
     {
-        var fields = new List<UsbEtwBinaryField>();
+        var binaryFields = new List<UsbEtwBinaryField>();
+        var discoveryFields = new List<UsbEtwDiscoveryField>();
+        var propertyShapes = new List<EtwPropertyShape>();
         long decodedBytes = 0;
+        long totalBinaryLength = 0;
         var names = data.PayloadNames;
+        var discoveryLimitExceeded = names.Length > MaximumPayloadProperties;
+
         for (var index = 0; index < names.Length; index++)
         {
             var value = data.PayloadValue(index);
-            var length = value switch
+            var binary = ToBinaryBytes(value);
+            if (binary is not null)
             {
-                byte[] bytes => bytes.LongLength,
-                ArraySegment<byte> segment => segment.Count,
-                ReadOnlyMemory<byte> memory => memory.Length,
-                Memory<byte> memory => memory.Length,
-                _ => 0,
+                if (binary.LongLength > remainingByteBudget - decodedBytes)
+                {
+                    return new(
+                        binaryFields,
+                        discoveryFields,
+                        propertyShapes,
+                        decodedBytes,
+                        BucketLength(names.Length),
+                        BucketLength(totalBinaryLength),
+                        AggregateLimitExceeded: true,
+                        DiscoveryLimitExceeded: discoveryLimitExceeded);
+                }
+                binaryFields.Add(new(names[index], binary));
+                decodedBytes += binary.LongLength;
+                totalBinaryLength += binary.LongLength;
+            }
+
+            if (index >= MaximumPayloadProperties) continue;
+            var runtimeType = GetRuntimeType(value);
+            var observedLength = GetObservedLength(value, binary);
+            var propertyName = NormalizeMetadata(names[index], $"field-{index}");
+            propertyShapes.Add(new(
+                index,
+                propertyName,
+                runtimeType,
+                BucketLength(observedLength)));
+
+            var comparable = binary ?? value switch
+            {
+                byte scalarByte => [scalarByte],
+                sbyte scalarSByte => [unchecked((byte)scalarSByte)],
+                _ => null,
             };
-            if (length == 0) continue;
-            if (length > remainingByteBudget - decodedBytes)
-            {
-                return new(fields, decodedBytes, LimitExceeded: true);
-            }
-            switch (value)
-            {
-                case byte[] bytes:
-                    fields.Add(new(names[index], bytes));
-                    break;
-                case ArraySegment<byte> segment:
-                    fields.Add(new(names[index], segment.ToArray()));
-                    break;
-                case ReadOnlyMemory<byte> memory:
-                    fields.Add(new(names[index], memory.ToArray()));
-                    break;
-                case Memory<byte> memory:
-                    fields.Add(new(names[index], memory.ToArray()));
-                    break;
-            }
-            decodedBytes += length;
+            discoveryFields.Add(new(
+                index,
+                propertyName,
+                runtimeType,
+                observedLength,
+                comparable ?? []));
         }
-        return new(fields, decodedBytes, LimitExceeded: false);
+
+        return new(
+            binaryFields,
+            discoveryFields,
+            propertyShapes,
+            decodedBytes,
+            BucketLength(names.Length),
+            BucketLength(totalBinaryLength),
+            AggregateLimitExceeded: false,
+            DiscoveryLimitExceeded: discoveryLimitExceeded);
+    }
+
+    private static byte[]? ToBinaryBytes(object? value) => value switch
+    {
+        byte[] bytes => bytes,
+        ArraySegment<byte> segment => segment.ToArray(),
+        ReadOnlyMemory<byte> memory => memory.ToArray(),
+        Memory<byte> memory => memory.ToArray(),
+        _ => null,
+    };
+
+    private static string GetRuntimeType(object? value) => value switch
+    {
+        null => "Null",
+        byte[] or ArraySegment<byte> or ReadOnlyMemory<byte> or Memory<byte> => "ByteArray",
+        byte => "Byte",
+        sbyte => "SByte",
+        ushort => "UInt16",
+        short => "Int16",
+        uint => "UInt32",
+        int => "Int32",
+        ulong => "UInt64",
+        long => "Int64",
+        string => "String",
+        Guid => "Guid",
+        Array => "OtherArray",
+        _ => "Other",
+    };
+
+    private static int GetObservedLength(object? value, byte[]? binary) => value switch
+    {
+        null => 0,
+        _ when binary is not null => binary.Length,
+        string text => text.Length,
+        Array array => array.Length,
+        byte or sbyte => 1,
+        ushort or short => 2,
+        uint or int => 4,
+        ulong or long => 8,
+        Guid => 16,
+        _ => 0,
+    };
+
+    private static string BucketLength(long value) => value switch
+    {
+        < 0 => "invalid",
+        <= 64 => value.ToString(System.Globalization.CultureInfo.InvariantCulture),
+        <= 128 => "65-128",
+        <= 256 => "129-256",
+        <= 1024 => "257-1024",
+        _ => ">1024",
+    };
+
+    private static void IncrementPhaseBounded<TKey>(
+        Dictionary<TKey, long> values,
+        TKey key,
+        Func<TKey, int> getPhase,
+        int maximumKeys,
+        int maximumKeysPerPhase,
+        ref bool limitExceeded)
+        where TKey : notnull
+    {
+        if (values.TryGetValue(key, out var count))
+        {
+            values[key] = count == long.MaxValue ? long.MaxValue : count + 1;
+            return;
+        }
+        if (values.Count == maximumKeys ||
+            values.Keys.Count(existing => getPhase(existing) == getPhase(key)) == maximumKeysPerPhase)
+        {
+            limitExceeded = true;
+            return;
+        }
+        values.Add(key, 1);
+    }
+
+    private static string NormalizeMetadata(string? value, string fallback)
+    {
+        var source = string.IsNullOrWhiteSpace(value) ? fallback : value.Trim();
+        var length = Math.Min(source.Length, MaximumMetadataCharacters);
+        return string.Create(length, source, static (destination, input) =>
+        {
+            for (var index = 0; index < destination.Length; index++)
+            {
+                var character = input[index];
+                destination[index] =
+                    (character is >= 'a' and <= 'z') ||
+                    (character is >= 'A' and <= 'Z') ||
+                    (character is >= '0' and <= '9') ||
+                    character is '_' or '-' or '.' or ':'
+                        ? character
+                        : '_';
+            }
+        });
     }
 
     private static void VerifyParentExecutableIdentity(int parentProcessId)
@@ -409,10 +694,20 @@ internal static class ArmouryEtwCapturePipe
 
 internal sealed record EtwProviderDefinition(string Name, Guid Id);
 internal sealed record EtwProviderStatus(string Name, Guid Id, ulong KeywordMask);
-internal sealed record BinaryFieldExtraction(
-    IReadOnlyList<UsbEtwBinaryField> Fields,
+internal sealed record EtwEventFieldExtraction(
+    IReadOnlyList<UsbEtwBinaryField> BinaryFields,
+    IReadOnlyList<UsbEtwDiscoveryField> DiscoveryFields,
+    IReadOnlyList<EtwPropertyShape> PropertyShapes,
     long DecodedBytes,
-    bool LimitExceeded);
+    string PayloadPropertyCountBucket,
+    string TotalBinaryLengthBucket,
+    bool AggregateLimitExceeded,
+    bool DiscoveryLimitExceeded);
+internal sealed record EtwPropertyShape(
+    int Ordinal,
+    string Name,
+    string RuntimeType,
+    string LengthBucket);
 internal sealed record EtwPipeEnvelope(
     string Type,
     EtwCaptureReady? Ready = null,
@@ -429,4 +724,71 @@ internal sealed record EtwCaptureOutput(
     long DroppedMatchingReportCount,
     long DecodedBinaryByteCount,
     bool AggregateLimitExceeded,
-    IReadOnlyList<UsbEtwFeatureReport> Reports);
+    bool SchemaDiscoveryLimitExceeded,
+    IReadOnlyList<UsbEtwFeatureReport> Reports,
+    IReadOnlyList<EtwSchemaShape> SchemaShapes,
+    IReadOnlyList<EtwMarkerShape> MarkerShapes);
+internal sealed record EtwSchemaShapeKey(
+    int Phase,
+    string ProviderName,
+    string EventName,
+    int EventId,
+    int EventVersion,
+    int Opcode,
+    string PayloadPropertyCountBucket,
+    int FieldOrdinal,
+    string FieldName,
+    string RuntimeType,
+    string FieldLengthBucket,
+    string TotalBinaryLengthBucket);
+internal sealed record EtwSchemaShape(
+    int Phase,
+    string ProviderName,
+    string EventName,
+    int EventId,
+    int EventVersion,
+    int Opcode,
+    string PayloadPropertyCountBucket,
+    int FieldOrdinal,
+    string FieldName,
+    string RuntimeType,
+    string FieldLengthBucket,
+    string TotalBinaryLengthBucket,
+    long Count);
+internal sealed record EtwMarkerShapeKey(
+    int Phase,
+    string ProviderName,
+    string EventName,
+    int EventId,
+    int EventVersion,
+    int Opcode,
+    string Kind,
+    int StartFieldOrdinal,
+    int EndFieldOrdinal,
+    string StartFieldName,
+    string EndFieldName,
+    string StartRuntimeType,
+    string EndRuntimeType,
+    string StartLengthBucket,
+    string EndLengthBucket,
+    string StartOffsetBucket,
+    string BytesAfterMarkerBucket);
+internal sealed record EtwMarkerShape(
+    int Phase,
+    string ProviderName,
+    string EventName,
+    int EventId,
+    int EventVersion,
+    int Opcode,
+    string Kind,
+    int StartFieldOrdinal,
+    int EndFieldOrdinal,
+    string StartFieldName,
+    string EndFieldName,
+    string StartRuntimeType,
+    string EndRuntimeType,
+    string StartLengthBucket,
+    string EndLengthBucket,
+    string StartOffsetBucket,
+    string BytesAfterMarkerBucket,
+    long Count);

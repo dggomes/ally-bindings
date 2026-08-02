@@ -26,14 +26,32 @@ Implementation safety gates:
 5. The later write path must still require exact DMI manufacturer/model, known ASUS VID/PID, an openable report `0x5A`, and mapping zone `0x08`.
 6. Standard mappings remain preview-only and are labelled as such.
 
-Known limitation: there is no proven read-back path for preserving a user's custom Armoury M1/M2 assignment. The validation run deliberately changes mappings through Armoury and finishes with Armoury's own reset. Photograph/export any custom assignments first. The ETW stream is system-wide while active; the capture ZIP is private diagnostic data containing only bounded matching candidate fields, not a raw system trace.
+Known limitation: there is no proven read-back path for preserving a user's custom Armoury M1/M2 assignment. The validation run deliberately changes mappings through Armoury and finishes with Armoury's own reset. Photograph/export any custom assignments first. The ETW stream is system-wide while active; the capture ZIP contains exact bounded report candidates plus metadata-only schema discovery, never a raw system trace or generic USB payload dump.
 
 ## Passive Armoury capture gate
+
+### Physical capture 1 — clean but inconclusive (2026-08-02)
+
+- Bundle SHA-256: `e6744dc606b0a3de12a8e4a7f1a5205e4f7b1bf8bcbc0c2ef2e6da24e2c57ffc`.
+- Target identity: `ROG Xbox Ally X RC73XA_RC73XA`, ASUS `VID_0B05&PID_1B4C`, report `0x5A` interface.
+- All three action windows completed: `M1=A/M2=B`, `M1=X/M2=Y`, and Armoury Reset to Default.
+- The integrated ETW session enabled UCX, USBXHCI and USBHUB3 with `FullDataBusTrace`, observed 4,874 events and decoded 15,464 binary bytes.
+- There were zero lost events, oversized events, decode failures, ambiguous candidates, dropped candidates or aggregate-limit failures.
+- No decoded binary field contained the assumed exact `5A D1 02 08 2C` prefix, so all three report windows remained empty and the capture is not unlock evidence.
+
+### Physical capture 2 — button presses do not change the result (2026-08-02)
+
+- Bundle SHA-256: `b24394b7dcb75971d1525750b4fc5d819c3fdbad3ae70fc2d24ad3f6f41a8941`.
+- The same three Armoury assignment/reset windows were completed, with physical M1/M2 presses added after assignment.
+- The session observed 4,140 events and decoded 13,359 binary bytes with zero losses, decode failures, oversized events, ambiguity, drops or aggregate-limit failures.
+- It again retained zero exact reports. Physical rear-button presses generate input traffic; they are not required to make Armoury send its configuration write.
+
+Conclusion: keep both write gates locked. The next capture exports only bounded provider/event/property/framing metadata grouped into the three action phases. It checks the exact full and command-only markers in memory—including markers split across adjacent decoded properties—but exports no generic payload bytes, hashes, raw timestamps, process IDs, device paths, pointers or scalar values. Discovery metadata can never become unlock evidence.
 
 1. Run **Capture Armoury M1/M2 protocol (passive)**; no separate capture software is required.
 2. Confirm the displayed ROG Ally model and compatible ASUS feature-report interfaces.
 3. Accept Windows' one-time UAC prompt for the same Ally Bindings executable acting as the temporary ETW helper.
-4. Apply the three prompted Armoury states: `M1=A/M2=B`, `M1=X/M2=Y`, then Armoury Reset to Default. Capture stops automatically.
+4. Apply the three prompted Armoury states: `M1=A/M2=B`, `M1=X/M2=Y`, then Armoury Reset to Default. Wait for Armoury to show each assignment as applied before choosing Done. Pressing the physical rear buttons is unnecessary. Capture stops automatically.
 5. Retain the single ZIP, record the displayed bundle SHA-256 outside the capture directory, and verify its manifest says `rawSystemTraceWritten: false`. The user-writable ZIP is not immutable provenance; require at least two independent matching captures before proposing a protocol change.
 6. Compare mapping prefix (`5A D1 02 08 2C`), action ordering/slots, complete 50-byte vector plus any preserved zero padding, provider/event/field metadata and default modifier bytes.
 7. Keep both write gates closed on any unexplained extra command, mismatch, dropped/oversized event, ambiguous device identity, unavailable provider or absent reset packet.

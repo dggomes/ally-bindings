@@ -4,6 +4,7 @@ $root = Split-Path -Parent $PSScriptRoot
 $corePath = Join-Path $root 'src/AllyBindings.Core/AsusRearButtonProtocol.cs'
 $backendPath = Join-Path $root 'src/AllyBindings.Core/ControllerBackend.cs'
 $extractorPath = Join-Path $root 'src/AllyBindings.Core/UsbEtwHidFeatureReportExtractor.cs'
+$discoveryPath = Join-Path $root 'src/AllyBindings.Core/UsbEtwSchemaDiscovery.cs'
 $servicePath = Join-Path $root 'src/AllyBindings.Windows/ArmouryCaptureService.cs'
 $helperPath = Join-Path $root 'src/AllyBindings.Windows/ArmouryEtwCaptureHelper.cs'
 $diagnosticsPath = Join-Path $root 'src/AllyBindings.Windows/ArmouryCaptureDiagnostics.cs'
@@ -16,6 +17,7 @@ $releaseWorkflowPath = Join-Path $root '.github/workflows/release.yml'
 $core = Get-Content -Raw -LiteralPath $corePath
 $backend = Get-Content -Raw -LiteralPath $backendPath
 $extractor = Get-Content -Raw -LiteralPath $extractorPath
+$discovery = Get-Content -Raw -LiteralPath $discoveryPath
 $service = Get-Content -Raw -LiteralPath $servicePath
 $helper = Get-Content -Raw -LiteralPath $helperPath
 $diagnostics = Get-Content -Raw -LiteralPath $diagnosticsPath
@@ -68,6 +70,13 @@ foreach ($required in @(
     'EnableProviderTimeoutMSec',
     'MaximumCaptureDuration',
     'MaximumRetainedReports',
+    'MaximumSchemaShapes',
+    'MaximumSchemaShapesPerPhase',
+    'MaximumMarkerShapes',
+    'MaximumMarkerShapesPerPhase',
+    'MaximumPayloadProperties',
+    'MaximumMetadataCharacters',
+    'MaximumSchemaDiscoveryBytes',
     'MaximumObservedEvents',
     'MaximumDecodedBinaryBytes',
     'VerifyParentExecutableIdentity')) {
@@ -125,7 +134,12 @@ if ($service -notmatch 'Stopwatch\.GetTimestamp\(\)' -or
 if ($extractor -notmatch '0x5A,\s*0xD1,\s*0x02,\s*0x08,\s*0x2C' -or
     $extractor -notmatch 'AsusRearButtonProtocol\.ReportLength' -or
     $extractor -notmatch 'MaximumWireReportLength') {
-    throw 'The ETW extractor no longer requires the exact ASUS report prefix and report length.'
+    throw 'The evidence extractor no longer requires the exact ASUS report prefix and wire length.'
+}
+if ($discovery -notmatch '0xD1,\s*0x02,\s*0x08,\s*0x2C' -or
+    $discovery -notmatch 'payload bytes are never returned' -or
+    $discovery -match 'record UsbEtwMarkerObservation\([^)]*byte\[\]') {
+    throw 'Schema discovery is missing the metadata-only command-marker contract.'
 }
 if ($service -notmatch 'Environment\.ProcessPath' -or
     $service -notmatch 'Verb\s*=\s*"runas"' -or
@@ -163,6 +177,10 @@ if ($service -notmatch 'rawSystemTraceWritten\s*=\s*false' -or
     $service -notmatch 'No USBPcap/Wireshark driver, raw ETL, or raw PCAP was written') {
     throw 'The bundle no longer records the no-raw-trace privacy invariant.'
 }
+if ($service -notmatch 'AssemblyInformationalVersionAttribute' -or
+    $service -match 'applicationVersion\s*=\s*typeof\(ArmouryCaptureService\)\.Assembly\.GetName\(\)\.Version') {
+    throw 'Capture evidence is not stamped with the exact informational build version.'
+}
 if ($service -match 'WriteArtifactAsync') {
     throw 'Successful capture still retains loose duplicate private artifacts outside the ZIP.'
 }
@@ -173,8 +191,25 @@ if ($service -notmatch '\.tmp-' -or
 }
 if ($service -notmatch 'captureScopeVerified:\s*false' -or
     $service -notmatch 'hardwareUnlockEvidence\s*=\s*false' -or
+    $service -notmatch 'Discovery metadata is never hardware-unlock evidence' -or
     $app -match 'staleRecoveryMarker\s*&&\s*result\.IsConclusive') {
     throw 'Unvalidated ETW candidates can still become conclusive unlock/recovery evidence.'
+}
+if ($service -match 'diagnosticCandidates|retainedHex|RetainedBytes' -or
+    $helper -match 'UsbEtwDiagnosticCandidate|RetainedBytes' -or
+    $service -notmatch 'containsPayloadBytes\s*=\s*false' -or
+    $helper -notmatch 'case\s+"stage-1"' -or
+    $helper -notmatch 'Volatile\.Write\(ref capturePhase') {
+    throw 'Schema discovery is not metadata-only and phase-bucketed.'
+}
+foreach ($phaseMarker in @(
+    'step-started-m1-a-m2-b',
+    'step-started-m1-x-m2-y',
+    'step-started-reset-to-default')) {
+    if ($service -notmatch [regex]::Escape($phaseMarker) -or
+        $app -notmatch [regex]::Escape($phaseMarker)) {
+        throw "The capture phase protocol is not wired to the UI action marker '$phaseMarker'."
+    }
 }
 if ($service -notmatch 'ReadBoundedLineAsync' -or $helper -notmatch 'ReadBoundedLineAsync') {
     throw 'The ETW IPC protocol does not bound both command and response messages.'

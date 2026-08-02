@@ -3,6 +3,7 @@ using System.Diagnostics;
 using System.IO;
 using System.IO.Compression;
 using System.IO.Pipes;
+using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text;
@@ -186,10 +187,18 @@ internal sealed class ArmouryCaptureService
         var evidenceHash = Convert.ToHexString(SHA256.HashData(outputBytes)).ToLowerInvariant();
         var reportBytes = SerializeJson(new
         {
-            schemaVersion = 3,
+            schemaVersion = 4,
             actions = session.Actions,
             assessment,
             reports,
+            schemaDiscovery = new
+            {
+                diagnosticOnly = true,
+                containsPayloadBytes = false,
+                complete = !output.SchemaDiscoveryLimitExceeded,
+                schemaShapes = output.SchemaShapes,
+                markerShapes = output.MarkerShapes,
+            },
             etw = new
             {
                 output.EnabledProviders,
@@ -201,16 +210,19 @@ internal sealed class ArmouryCaptureService
                 output.DroppedMatchingReportCount,
                 output.DecodedBinaryByteCount,
                 output.AggregateLimitExceeded,
+                output.SchemaDiscoveryLimitExceeded,
                 retainedReportCount = reports.Count,
+                retainedSchemaShapeCount = output.SchemaShapes.Count,
+                retainedMarkerShapeCount = output.MarkerShapes.Count,
                 fullDataBusTraceKeyword = $"0x{ArmouryEtwCaptureHelper.FullDataTraceKeywords:X}",
-                privacy = "A system-wide USB ETW stream was filtered in memory. Only bounded candidate binary fields were retained; no raw ETL was written.",
+                privacy = "A system-wide USB ETW stream was inspected in memory. Schema discovery contains only bounded event/property/framing metadata grouped by action phase; it contains no generic payload bytes, payload hashes, raw ETL, timestamps, process IDs, device paths, pointers or scalar values.",
             },
         });
         var manifestBytes = SerializeJson(new
         {
-            schemaVersion = 3,
+            schemaVersion = 4,
             capturedAtUtc = DateTimeOffset.UtcNow,
-            applicationVersion = typeof(ArmouryCaptureService).Assembly.GetName().Version?.ToString(),
+            applicationVersion = GetApplicationVersion(),
             source = "Windows built-in USB ETW real-time FullDataBusTrace session",
             selectedAsusHid = session.Target,
             evidence = new
@@ -221,9 +233,23 @@ internal sealed class ArmouryCaptureService
                 rawSystemTraceWritten = false,
                 hardwareUnlockEvidence = false,
             },
+            schemaDiscovery = new
+            {
+                diagnosticOnly = true,
+                containsPayloadBytes = false,
+                complete = !output.SchemaDiscoveryLimitExceeded,
+                phases = new
+                {
+                    baseline = 0,
+                    m1A_m2B = 1,
+                    m1X_m2Y = 2,
+                    resetToDefault = 3,
+                },
+            },
             expectedProtocol = new
             {
                 rearMappingPrefix = "5A D1 02 08 2C",
+                diagnosticCommandPrefix = "D1 02 08 2C",
                 minimumReportLength = AsusRearButtonProtocol.ReportLength,
                 maximumReportLength = UsbEtwHidFeatureReportExtractor.MaximumWireReportLength,
                 expectedReportId = "5A",
@@ -235,7 +261,11 @@ internal sealed class ArmouryCaptureService
             },
             assessment,
         });
-        var readmeBytes = Encoding.UTF8.GetBytes(BuildReadme(reports.Count, assessment));
+        var readmeBytes = Encoding.UTF8.GetBytes(BuildReadme(
+            reports.Count,
+            output.SchemaShapes.Count,
+            output.MarkerShapes.Count,
+            assessment));
 
         var bundlePath = Path.Combine(
             session.Directory,
@@ -450,7 +480,8 @@ internal sealed class ArmouryCaptureService
             output.PayloadDecodeFailureCount != 0 ||
             output.AmbiguousCandidateCount != 0 ||
             output.DroppedMatchingReportCount != 0 ||
-            output.AggregateLimitExceeded;
+            output.AggregateLimitExceeded ||
+            output.SchemaDiscoveryLimitExceeded;
         var validation = ArmouryCaptureSequenceValidator.Validate(
             evidence,
             windows,
@@ -536,6 +567,14 @@ internal sealed class ArmouryCaptureService
     private static byte[] SerializeJson(object value) =>
         JsonSerializer.SerializeToUtf8Bytes(value, JsonOptions);
 
+    private static string GetApplicationVersion()
+    {
+        var assembly = typeof(ArmouryCaptureService).Assembly;
+        return assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion
+            ?? assembly.GetName().Version?.ToString()
+            ?? "unknown";
+    }
+
 
     private static string CreateBundle(
         string bundlePath,
@@ -580,14 +619,20 @@ internal sealed class ArmouryCaptureService
         }
     }
 
-    private static string BuildReadme(int reportCount, CaptureAssessment assessment) =>
+    private static string BuildReadme(
+        int reportCount,
+        int schemaShapeCount,
+        int markerShapeCount,
+        CaptureAssessment assessment) =>
         $"Ally Bindings integrated Windows USB ETW Armoury capture{Environment.NewLine}" +
         $"Retained ASUS rear-mapping report candidates: {reportCount}{Environment.NewLine}{Environment.NewLine}" +
+        $"Retained metadata-only ETW property shapes: {schemaShapeCount}{Environment.NewLine}" +
+        $"Retained metadata-only ASUS marker shapes: {markerShapeCount}{Environment.NewLine}{Environment.NewLine}" +
         $"Assessment: REVIEW REQUIRED — NOT HARDWARE UNLOCK EVIDENCE{Environment.NewLine}" +
         (assessment.Reasons.Count == 0
             ? string.Empty
             : string.Join(Environment.NewLine, assessment.Reasons.Select(reason => $"- {reason}")) + Environment.NewLine) +
-        "Windows' built-in USB ETW providers were consumed in real time with FullDataBusTrace. No USBPcap/Wireshark driver, raw ETL, or raw PCAP was written. The USB ETW stream is system-wide while active, but only bounded metadata-decoded binary fields containing the ASUS 5A D1 02 08 2C candidate prefix appear in this bundle. These candidates are not treated as target-device SET_REPORT proof until validated on a physical ROG Ally against the Windows-build-specific event schema. Ally Bindings sent no HID write and cannot clear recovery state from this capture. Hardware writes remain source locked.";
+        "Windows' built-in USB ETW providers were consumed in real time with FullDataBusTrace. No USBPcap/Wireshark driver, raw ETL, or raw PCAP was written. Schema discovery contains only bounded event/property/framing metadata grouped by action phase: no generic payload bytes, payload hashes, raw timestamps, process IDs, device paths, pointers or scalar values. Discovery metadata is never hardware-unlock evidence. Exact target-device SET_REPORT scope and vectors still require physical review. Ally Bindings sent no HID write and cannot clear recovery state from this capture. Hardware writes remain source locked.";
 
 }
 
@@ -613,8 +658,21 @@ internal sealed class ArmouryCaptureSession(
     public IReadOnlyList<string> EnabledProviders { get; } = enabledProviders;
     public List<CaptureActionMarker> Actions { get; } = [];
 
-    public void MarkAction(string action) =>
+    public void MarkAction(string action)
+    {
         Actions.Add(new(DateTimeOffset.UtcNow, Stopwatch.GetTimestamp(), action));
+        var phaseCommand = action switch
+        {
+            "step-started-m1-a-m2-b" => "stage-1",
+            "step-started-m1-x-m2-y" => "stage-2",
+            "step-started-reset-to-default" => "stage-3",
+            _ => null,
+        };
+        if (phaseCommand is not null)
+        {
+            PipeWriter.WriteLine(phaseCommand);
+        }
+    }
 
     public void Dispose()
     {
