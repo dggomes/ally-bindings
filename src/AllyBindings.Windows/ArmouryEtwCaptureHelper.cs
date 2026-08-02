@@ -393,7 +393,7 @@ internal static class ArmouryEtwCapturePipe
             outBufferSize: 0,
             security,
             HandleInheritability.None,
-            PipeAccessRights.ReadWrite);
+            additionalAccessRights: default);
     }
 
     public static string GetCaptureRoot()

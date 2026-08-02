@@ -46,7 +46,7 @@ function Invoke-RejectedHelperPeer {
         0,
         $pipeSecurity,
         [IO.HandleInheritability]::None,
-        [IO.Pipes.PipeAccessRights]::ReadWrite)
+        [IO.Pipes.PipeAccessRights]0)
     $identity.Dispose()
     $process = $null
     try {
