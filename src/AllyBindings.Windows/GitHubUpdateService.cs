@@ -91,8 +91,8 @@ public sealed class GitHubUpdateService : IDisposable
                 await destination.FlushAsync(cancellationToken);
             }
 
-            var packageRoot = UpdatePackageStager.VerifyAndExtract(zipPath, stagingPath, candidate.Sha256);
-            return new PreparedUpdate(candidate, updateRoot, packageRoot);
+            var package = UpdatePackageStager.VerifyExtractAndDescribe(zipPath, stagingPath, candidate.Sha256);
+            return new PreparedUpdate(candidate, updateRoot, package.PackageRoot, package.ExecutableSha256);
         }
         catch
         {
@@ -105,6 +105,9 @@ public sealed class GitHubUpdateService : IDisposable
     {
         ArgumentNullException.ThrowIfNull(update);
         destinationDirectory = Path.GetFullPath(destinationDirectory);
+        EnsureNoReparsePoints(update.UpdateRoot, "update working directory");
+        EnsureNoReparsePoints(update.PackageRoot, "verified package directory");
+        EnsureNoReparsePoints(destinationDirectory, "application directory");
         EnsureWritable(destinationDirectory);
 
         var scriptPath = Path.Combine(update.UpdateRoot, "install-update.ps1");
@@ -125,6 +128,8 @@ public sealed class GitHubUpdateService : IDisposable
         startInfo.ArgumentList.Add(processId.ToString(System.Globalization.CultureInfo.InvariantCulture));
         startInfo.ArgumentList.Add("-PackageRoot");
         startInfo.ArgumentList.Add(update.PackageRoot);
+        startInfo.ArgumentList.Add("-ExecutableSha256");
+        startInfo.ArgumentList.Add(update.ExecutableSha256);
         startInfo.ArgumentList.Add("-Destination");
         startInfo.ArgumentList.Add(destinationDirectory);
         startInfo.ArgumentList.Add("-UpdateRoot");
@@ -164,6 +169,18 @@ public sealed class GitHubUpdateService : IDisposable
         {
             try { File.Delete(incoming); } catch { }
             try { File.Delete(probe); } catch { }
+        }
+    }
+
+    private static void EnsureNoReparsePoints(string path, string description)
+    {
+        for (var current = new DirectoryInfo(Path.GetFullPath(path)); current is not null; current = current.Parent)
+        {
+            if (current.Exists && (current.Attributes & FileAttributes.ReparsePoint) != 0)
+            {
+                throw new InvalidOperationException(
+                    $"The {description} cannot pass through a symbolic link or junction: {current.FullName}");
+            }
         }
     }
 
@@ -212,12 +229,16 @@ public sealed class GitHubUpdateService : IDisposable
 param(
     [Parameter(Mandatory=$true)][int]$ProcessId,
     [Parameter(Mandatory=$true)][string]$PackageRoot,
+    [Parameter(Mandatory=$true)][string]$ExecutableSha256,
     [Parameter(Mandatory=$true)][string]$Destination,
     [Parameter(Mandatory=$true)][string]$UpdateRoot,
     [Parameter(Mandatory=$true)][string]$ConfigPath,
     [switch]$NonInteractive
 )
 $ErrorActionPreference = 'Stop'
+if ($ExecutableSha256 -notmatch '^[0-9a-fA-F]{64}$') {
+    throw 'The expected executable SHA-256 digest is invalid.'
+}
 $backup = Join-Path $UpdateRoot 'backup'
 $configBackup = Join-Path $UpdateRoot 'config-backup.json'
 $transactionId = [Guid]::NewGuid().ToString('N')
@@ -235,6 +256,9 @@ try {
     if (Test-Path -LiteralPath $ConfigPath -PathType Container) {
         throw 'The application configuration path unexpectedly refers to a directory.'
     }
+    if ((Test-Path -LiteralPath $ConfigPath) -and ((Get-Item -LiteralPath $ConfigPath -Force).Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+        throw 'The application configuration path cannot be a symbolic link or junction.'
+    }
     $configExisted = Test-Path -LiteralPath $ConfigPath -PathType Leaf
     if ($configExisted) {
         Copy-Item -LiteralPath $ConfigPath -Destination $configBackup -Force
@@ -246,6 +270,25 @@ try {
     if (-not (Test-Path -LiteralPath $packageExecutable -PathType Leaf)) {
         throw 'The verified update package does not contain AllyBindings.exe.'
     }
+    if (((Get-Item -LiteralPath $packageExecutable -Force).Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+        throw 'The staged update executable cannot be a symbolic link or junction.'
+    }
+    $packageStream = [IO.File]::Open($packageExecutable, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::Read)
+    try {
+        $hasher = [Security.Cryptography.SHA256]::Create()
+        try {
+            $actualExecutableSha256 = ([BitConverter]::ToString($hasher.ComputeHash($packageStream))).Replace('-', '').ToLowerInvariant()
+        } finally {
+            $hasher.Dispose()
+        }
+        if (-not $actualExecutableSha256.Equals($ExecutableSha256, [StringComparison]::OrdinalIgnoreCase)) {
+            throw 'The staged update executable changed after package verification.'
+        }
+        $packageStream.Position = 0
+    } catch {
+        $packageStream.Dispose()
+        throw
+    }
     $target = Join-Path $Destination $relative
     $saved = Join-Path $backup $relative
     $incoming = "$target.allybindings-$transactionId-new"
@@ -253,11 +296,22 @@ try {
     if (Test-Path -LiteralPath $target -PathType Container) {
         throw 'Refusing to replace an AllyBindings.exe directory with the update executable.'
     }
+    if ((Test-Path -LiteralPath $target) -and ((Get-Item -LiteralPath $target -Force).Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+        throw 'The installed executable cannot be a symbolic link or junction.'
+    }
     New-Item -ItemType Directory -Force -Path $Destination | Out-Null
-    Remove-Item -LiteralPath $incoming -Force -ErrorAction SilentlyContinue
-    Remove-Item -LiteralPath $displaced -Force -ErrorAction SilentlyContinue
     $temporaries.Add($incoming)
-    Copy-Item -LiteralPath $packageExecutable -Destination $incoming -Force
+    try {
+        $incomingStream = [IO.File]::Open($incoming, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::None)
+        try {
+            $packageStream.CopyTo($incomingStream)
+            $incomingStream.Flush($true)
+        } finally {
+            $incomingStream.Dispose()
+        }
+    } finally {
+        $packageStream.Dispose()
+    }
     if (Test-Path -LiteralPath $target -PathType Leaf) {
         Copy-Item -LiteralPath $target -Destination $saved -Force
     }
@@ -400,4 +454,8 @@ catch {
 """;
 }
 
-public sealed record PreparedUpdate(UpdateCandidate Candidate, string UpdateRoot, string PackageRoot);
+public sealed record PreparedUpdate(
+    UpdateCandidate Candidate,
+    string UpdateRoot,
+    string PackageRoot,
+    string ExecutableSha256);

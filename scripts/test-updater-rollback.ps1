@@ -69,6 +69,7 @@ try {
 
     Copy-Item -LiteralPath $oldExe -Destination (Join-Path $destination 'AllyBindings.exe')
     Copy-Item -LiteralPath $newExe -Destination (Join-Path $staging 'AllyBindings.exe')
+    $newExeHash = (Get-FileHash (Join-Path $staging 'AllyBindings.exe') -Algorithm SHA256).Hash
     [IO.File]::WriteAllText((Join-Path $destination 'stable.txt'), 'old file')
     [IO.File]::WriteAllText((Join-Path $staging 'stable.txt'), 'new file')
     [IO.File]::WriteAllText($configPath, $oldConfig)
@@ -83,7 +84,7 @@ try {
     $installerProcess = Start-Process -FilePath "$env:SystemRoot/System32/WindowsPowerShell/v1.0/powershell.exe" `
         -ArgumentList @(
             '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', $installerPath,
-            '-ProcessId', $oldProcess.Id, '-PackageRoot', $staging, '-Destination', $destination,
+            '-ProcessId', $oldProcess.Id, '-PackageRoot', $staging, '-ExecutableSha256', $newExeHash, '-Destination', $destination,
             '-UpdateRoot', $updateRoot, '-ConfigPath', $configPath, '-NonInteractive'
         ) -Wait -PassThru
     Remove-Item Env:ALLY_BINDINGS_TEST_CONFIG_PATH -ErrorAction SilentlyContinue

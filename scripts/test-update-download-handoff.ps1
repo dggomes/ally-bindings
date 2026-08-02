@@ -75,6 +75,9 @@ try {
     if (-not (Test-Path -LiteralPath $stagedExe -PathType Leaf)) {
         throw 'Download handoff did not extract the verified application executable.'
     }
+    if ((Get-FileHash $stagedExe -Algorithm SHA256).Hash -ine $prepared.ExecutableSha256) {
+        throw 'Download handoff did not bind the staged executable to its verified archive digest.'
+    }
 
     $downloadedZip = Join-Path $prepared.UpdateRoot 'update.zip'
     $exclusive = [IO.FileStream]::new($downloadedZip, [IO.FileMode]::Open, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)

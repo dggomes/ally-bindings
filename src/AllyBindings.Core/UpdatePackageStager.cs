@@ -9,6 +9,9 @@ public static class UpdatePackageStager
     private const long MaximumExpandedBytes = 512L * 1024 * 1024;
 
     public static string VerifyAndExtract(string zipPath, string stagingDirectory, string expectedSha256)
+        => VerifyExtractAndDescribe(zipPath, stagingDirectory, expectedSha256).PackageRoot;
+
+    public static StagedUpdatePackage VerifyExtractAndDescribe(string zipPath, string stagingDirectory, string expectedSha256)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(zipPath);
         ArgumentException.ThrowIfNullOrWhiteSpace(stagingDirectory);
@@ -31,6 +34,8 @@ public static class UpdatePackageStager
         Directory.CreateDirectory(stagingDirectory);
         var stagingRoot = Path.GetFullPath(stagingDirectory).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
         var seenPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        string? executablePath = null;
+        string? executableSha256 = null;
         long expandedBytes = 0;
 
         try
@@ -69,12 +74,24 @@ public static class UpdatePackageStager
                 }
 
                 Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
+                if (entry.Name.Equals("AllyBindings.exe", StringComparison.OrdinalIgnoreCase))
+                {
+                    if (executablePath is not null)
+                    {
+                        throw new InvalidDataException("The update archive contains more than one AllyBindings.exe.");
+                    }
+                    using var executableStream = entry.Open();
+                    executableSha256 = Convert.ToHexString(SHA256.HashData(executableStream)).ToLowerInvariant();
+                    executablePath = destination;
+                }
                 entry.ExtractToFile(destination, overwrite: false);
             }
 
-            var executable = Directory.EnumerateFiles(stagingDirectory, "AllyBindings.exe", SearchOption.AllDirectories).SingleOrDefault()
-                ?? throw new InvalidDataException("The update archive does not contain exactly one AllyBindings.exe.");
-            return Path.GetDirectoryName(executable)!;
+            if (executablePath is null || executableSha256 is null)
+            {
+                throw new InvalidDataException("The update archive does not contain exactly one AllyBindings.exe.");
+            }
+            return new StagedUpdatePackage(Path.GetDirectoryName(executablePath)!, executableSha256);
         }
         catch
         {
@@ -99,3 +116,5 @@ public static class UpdatePackageStager
         }
     }
 }
+
+public sealed record StagedUpdatePackage(string PackageRoot, string ExecutableSha256);

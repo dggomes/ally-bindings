@@ -40,7 +40,7 @@ try {
     $oldProcess = Start-Process -FilePath "$env:SystemRoot/System32/WindowsPowerShell/v1.0/powershell.exe" `
         -ArgumentList '-NoProfile', '-NonInteractive', '-Command', 'Start-Sleep -Seconds 1' -PassThru
 
-    & $installerPath -ProcessId $oldProcess.Id -PackageRoot $staging -Destination $destination -UpdateRoot $updateRoot -ConfigPath $configPath -NonInteractive
+    & $installerPath -ProcessId $oldProcess.Id -PackageRoot $staging -ExecutableSha256 $packagedExecutableHash -Destination $destination -UpdateRoot $updateRoot -ConfigPath $configPath -NonInteractive
 
     if (-not (Test-Path -LiteralPath (Join-Path $destination 'AllyBindings.exe') -PathType Leaf)) {
         throw 'Updater integration test did not install AllyBindings.exe.'
