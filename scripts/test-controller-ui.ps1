@@ -35,6 +35,7 @@ foreach ($requiredText in @(
     'Choose a button to map',
     'AutomationProperties.Name="Full controller button map"',
     'AutomationProperties.AutomationId="ControllerMapScrollViewer"',
+    'HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch"',
     'x:Key="DiagramHitTarget"',
     'Click="ControllerDiagramButton_Click"',
     'AutomationProperties.AutomationId="Diagram-LeftTrigger"',
@@ -43,7 +44,7 @@ foreach ($requiredText in @(
     'AutomationProperties.AutomationId="ControllerMapHint"',
     'AutomationProperties.AutomationId="ControllerMapReset"',
     'x:Name="ControllerMapSurface" MinWidth="776" MinHeight="350"',
-    '<ColumnDefinition Width="416" />',
+    '<ColumnDefinition Width="3*" MinWidth="416" />',
     '<Setter Property="MinWidth" Value="90" />',
     '<Setter Property="MinHeight" Value="110" />',
     '<Setter Property="IsHitTestVisible" Value="False" />',
@@ -68,6 +69,10 @@ foreach ($requiredText in @(
     if ($xaml.IndexOf($requiredText, [StringComparison]::Ordinal) -lt 0) {
         throw "Controller-first UI is missing required surface: $requiredText"
     }
+}
+if ($windowCode.IndexOf('ApplyResponsiveInitialSize', [StringComparison]::Ordinal) -lt 0 -or
+    $windowCode.IndexOf('SystemParameters.WorkArea', [StringComparison]::Ordinal) -lt 0) {
+    throw 'The main window does not size itself from the current landscape work area.'
 }
 if ($xaml.IndexOf('<DataGrid', [StringComparison]::Ordinal) -ge 0) {
     throw 'The old spreadsheet-style binding editor is still present.'

@@ -9,7 +9,7 @@ A lightweight, local-first Windows controller-profile selector for Xbox Remote P
 
 Ally Bindings lets you save named mappings, rotate them from the controller, and see the pending choice in a small overlay. It is intentionally conservative: the current public build exercises the complete profile-selection experience without hiding the physical controller, creating a virtual controller, or writing unvalidated ASUS controller settings.
 
-> **Project status: preview.** This source tree targets `v0.3.0-preview.4`. Standard-button remapping is preview-only, and M1/M2 writes are locked until passive Armoury Crate capture data has been reviewed on physical hardware. See [Current capabilities](#current-capabilities) before installing.
+> **Project status: preview.** This source tree targets `v0.3.0-preview.5`. Standard-button remapping is preview-only, and M1/M2 writes are locked until passive Armoury Crate capture data has been reviewed on physical hardware. See [Current capabilities](#current-capabilities) before installing.
 
 Ally Bindings is an independent project and is not affiliated with ASUS, ROG, Microsoft or Xbox.
 

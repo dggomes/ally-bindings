@@ -117,6 +117,30 @@ try {
     $selection.Select()
     Start-Sleep -Milliseconds 300
     if ($transform.Current.CanResize) {
+        $transform.Resize(1600, 900)
+        Start-Sleep -Milliseconds 350
+    }
+    $landscapeBounds = $root.Current.BoundingRectangle
+    if ($transform.Current.CanResize -and
+        ([Math]::Abs($landscapeBounds.Width - 1600) -gt 2 -or [Math]::Abs($landscapeBounds.Height - 900) -gt 2)) {
+        throw "Window did not reach the 1600x900 landscape test size; actual size is $([Math]::Round($landscapeBounds.Width))x$([Math]::Round($landscapeBounds.Height))."
+    }
+    $landscapeMap = Wait-ElementById -Root $root -AutomationId 'ControllerMapScrollViewer'
+    $landscapeScroll = [System.Windows.Automation.ScrollPattern]$landscapeMap.GetCurrentPattern([System.Windows.Automation.ScrollPattern]::Pattern)
+    if ($landscapeScroll.Current.HorizontallyScrollable -or $landscapeScroll.Current.VerticallyScrollable) {
+        throw 'Controller map still wastes the landscape viewport behind internal scrolling at 1600x900.'
+    }
+    $landscapeLeftTrigger = Wait-ElementById -Root $root -AutomationId 'Diagram-LeftTrigger'
+    $landscapeRightTrigger = Wait-ElementById -Root $root -AutomationId 'Diagram-RightTrigger'
+    $diagramSpan = $landscapeRightTrigger.Current.BoundingRectangle.Left - $landscapeLeftTrigger.Current.BoundingRectangle.Left
+    if ($diagramSpan -lt 440) {
+        throw "Controller illustration did not expand for landscape; trigger span is only $([Math]::Round($diagramSpan, 2)) DIPs."
+    }
+    $landscapeMapping = Wait-ElementById -Root $root -AutomationId 'Mapping-LeftTrigger'
+    if ($landscapeMapping.Current.BoundingRectangle.Width -lt 210) {
+        throw "Landscape mapping rail stayed cramped at $([Math]::Round($landscapeMapping.Current.BoundingRectangle.Width, 2)) DIPs."
+    }
+    if ($transform.Current.CanResize) {
         $transform.Resize(1040, 736)
         Start-Sleep -Milliseconds 300
     }
