@@ -11,6 +11,7 @@ $phasePath = Join-Path $root 'src/AllyBindings.Core/UsbEtwCapturePhases.cs'
 $boundedReaderPath = Join-Path $root 'src/AllyBindings.Core/BoundedTextLineReader.cs'
 $resetGatePath = Join-Path $root 'src/AllyBindings.Core/CaptureResetGate.cs'
 $candidateAttachmentCoordinatorPath = Join-Path $root 'src/AllyBindings.Core/CandidateAttachmentCoordinator.cs'
+$profileStorePath = Join-Path $root 'src/AllyBindings.Core/JsonProfileStore.cs'
 $discoveryContractPath = Join-Path $root 'src/AllyBindings.Core/UsbEtwSchemaDiscoveryContract.cs'
 $servicePath = Join-Path $root 'src/AllyBindings.Windows/ArmouryCaptureService.cs'
 $helperPath = Join-Path $root 'src/AllyBindings.Windows/ArmouryEtwCaptureHelper.cs'
@@ -34,6 +35,7 @@ $phase = Get-Content -Raw $phasePath
 $boundedReader = Get-Content -Raw $boundedReaderPath
 $resetGate = Get-Content -Raw $resetGatePath
 $candidateAttachmentCoordinator = Get-Content -Raw -LiteralPath $candidateAttachmentCoordinatorPath
+$profileStore = Get-Content -Raw -LiteralPath $profileStorePath
 $discoveryContract = Get-Content -Raw -LiteralPath $discoveryContractPath
 $service = Get-Content -Raw -LiteralPath $servicePath
 $helper = Get-Content -Raw -LiteralPath $helperPath
@@ -600,8 +602,11 @@ foreach ($required in @(
 foreach ($required in @(
     'ArmouryTapTeardownBlockedSinceUtc',
     'ArmouryTapTeardownBootIdentifier',
+    'TapTeardownBarrierRecovery.Evaluate',
+    'TapTeardownBarrierRecoveryDecision.EstablishBootBaseline',
+    'restart Windows once more to prove every affected process exited',
     'NtQuerySystemInformation',
-    'Restart Windows before controller writes can resume',
+    'Restart Windows; restarting Ally Bindings alone is not sufficient',
     '_armouryCaptureTeardownUnconfirmed = true')) {
     if ($app.IndexOf($required, [StringComparison]::Ordinal) -lt 0) {
         throw "The app-wide persisted tap teardown barrier is missing requirement: $required"
@@ -611,6 +616,59 @@ foreach ($required in @('nativeWritesAllowed', '_armouryCaptureBarrierPersistenc
     if ($app.IndexOf($required, [StringComparison]::Ordinal) -lt 0) {
         throw "The persisted teardown barrier does not block startup/exit path: $required"
     }
+}
+if ($app.IndexOf('Environment.TickCount64', [StringComparison]::Ordinal) -ge 0 -or
+    $app.IndexOf('ArmouryTapTeardownBootStartedUtc', [StringComparison]::Ordinal) -ge 0) {
+    throw 'The teardown barrier still infers a reboot from wall-clock or estimated boot timestamps.'
+}
+if ($app -notmatch '_operationGate\.WaitAsync\(cancellationToken\)[\s\S]{0,700}armedBarrierConfiguration = Configuration with[\s\S]{0,900}ArmTapTeardownBarrierAsync\(armedBarrierConfiguration\)[\s\S]{0,400}Configuration = armedBarrierConfiguration[\s\S]{0,400}_operationGate\.Release\(\)[\s\S]{0,400}ThrowIfCancellationRequested\(\)[\s\S]{0,500}captureService\.StartAsync') {
+    throw 'The native tap can start before its crash-durable write-ahead barrier is persisted.'
+}
+if ($app -notmatch 'captureTeardownFailure is null && armedConfiguration is not null[\s\S]{0,1200}ArmouryTapTeardownBlockedSinceUtc = null[\s\S]{0,700}ClearTapTeardownBarrierAsync\(clearedConfiguration\)') {
+    throw 'The native tap barrier can clear before teardown succeeds or without using its explicit lifecycle operation.'
+}
+if ($app -notmatch 'EstablishTapTeardownBootBaselineAsync\(Configuration\)') {
+    throw 'A legacy tap barrier boot baseline is not persisted through its explicit sticky-barrier lifecycle operation.'
+}
+foreach ($required in @(
+    '.tap-barrier',
+    'WriteTapBarrierSentinelAsync',
+    'WriteConfigurationFileAtomicallyAsync($"{_path}.bak"',
+    'File.Delete(_tapBarrierPath)')) {
+    if ($profileStore.IndexOf($required, [StringComparison]::Ordinal) -lt 0) {
+        throw "The crash-atomic tap barrier sentinel is missing requirement: $required"
+    }
+}
+if ([regex]::Matches($profileStore, 'EnsureUncertainRecoveryIsBlocked\(recovered\.Configuration\)').Count -lt 2) {
+    throw 'Missing and corrupt primary recovery can trust a stale unarmed legacy backup instead of failing closed.'
+}
+foreach ($required in @(
+    'LoadLibraryExW(L"hid.dll", nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32)',
+    'g_hookFailureStage',
+    'failure.apiResult = g_hookFailureStage',
+    'tap-pipe-connect-timeout',
+    'tap-ready-timeout',
+    'tap-hook-stage-',
+    'S:(ML;;NW;;;ME)')) {
+    if ($tapNative.IndexOf($required, [StringComparison]::Ordinal) -lt 0 -and
+        $tapHelper.IndexOf($required, [StringComparison]::Ordinal) -lt 0) {
+        throw "The native tap startup diagnostics are missing requirement: $required"
+    }
+}
+foreach ($required in @(
+    'const bool hooksRemoved = DisableHooksAndDrain();',
+    'return hooksRemoved ? 4 : 6;',
+    'switch (workerExitCode)',
+    'Exit 6 and every unknown status are unsafe to unload.')) {
+    if ($tapNative.IndexOf($required, [StringComparison]::Ordinal) -lt 0) {
+        throw "Native hook-install rollback is missing requirement: $required"
+    }
+}
+if ($tapHelper -match 'configLock\s*=\s*new FileStream\(configPath,\s*FileMode\.CreateNew,\s*FileAccess\.Write') {
+    throw 'The tap still holds its config write handle across injection, blocking the native read handshake.'
+}
+if ($tapHelper -notmatch 'configWriter = new FileStream\([\s\S]{0,500}FileAccess\.Write, FileShare\.None[\s\S]{0,700}configLock = new FileStream\([\s\S]{0,200}FileAccess\.Read, FileShare\.Read[\s\S]{0,300}remoteModule = Inject') {
+    throw 'The tap config is not closed after durable write and reopened under a compatible read-only lock before injection.'
 }
 if ($app -notmatch 'if \(_armouryCaptureBarrierPersistenceFailed\)[\s\S]{0,1400}_exiting = false;[\s\S]{0,300}OpenMainWindow\(\);[\s\S]{0,200}return;') {
     throw 'The persistence-failure Stay open path can permanently leak the app exit-intent latch.'
@@ -663,24 +721,26 @@ $xaml = Get-Content -Raw -LiteralPath $xamlPath
 
 foreach ($required in @(
     'one or more verified ASUS Armoury candidate processes',
-    'no more than twelve processes selected from nine exact allowlisted executable names',
+    'enumerates running processes matching nine exact allowlisted executable names',
+    'Capture is rejected if more than twelve candidates pass path, signature and identity verification',
     'may temporarily inject into each verified candidate')) {
     if ($app.IndexOf($required, [StringComparison]::Ordinal) -lt 0) {
-        throw "The in-app consent disclosure understates multi-process injection scope: $required"
+        throw "The in-app consent disclosure understates process enumeration or injection scope: $required"
     }
 }
 foreach ($required in @(
-    'up to twelve processes drawn from nine exact allowlisted executable names',
+    'enumerates running processes matching nine exact allowlisted ASUS Armoury executable names',
+    'Capture is rejected if more than twelve candidates pass path, signature and identity verification',
     'unload from every attached candidate')) {
     if ($tapUserGuide.IndexOf($required, [StringComparison]::Ordinal) -lt 0) {
-        throw "The packaged user guide understates multi-process injection scope: $required"
+        throw "The packaged user guide understates process enumeration or injection scope: $required"
     }
 }
 foreach ($required in @(
-    'one or more verified ASUS Armoury candidate processes',
-    'up to twelve selected from nine exact allowlisted executable names')) {
+    'enumerates running processes matching nine exact allowlisted ASUS Armoury executable names',
+    'capture is rejected if more than twelve candidates pass verification')) {
     if ($readme.IndexOf($required, [StringComparison]::Ordinal) -lt 0) {
-        throw "The packaged README understates multi-process injection scope: $required"
+        throw "The packaged README understates process enumeration or injection scope: $required"
     }
 }
 foreach ($required in @(
@@ -692,8 +752,11 @@ foreach ($required in @(
 }
 $stalePhrases = @(
     @{File='app'; Text='the confirmed ASUS Armoury process'},
+    @{File='app'; Text='examines no more than twelve processes'},
     @{File='tapUserGuide'; Text='only into the confirmed ASUS process'},
+    @{File='tapUserGuide'; Text='up to twelve processes drawn from nine exact allowlisted executable names'},
     @{File='readme'; Text='inside an exact ASUS-signed Armoury process'},
+    @{File='readme'; Text='up to twelve selected from nine exact allowlisted executable names'},
     @{File='xaml'; Text='the confirmed ASUS process'}
 )
 foreach ($entry in $stalePhrases) {

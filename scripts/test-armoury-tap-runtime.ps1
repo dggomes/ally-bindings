@@ -41,6 +41,7 @@ $module = [IntPtr]::Zero
 
 $pipe = $null
 $stop = $null
+$configLock = $null
 try {
     Copy-Item $nativeDll $testDll -Force
     if ([ArmouryTapRuntimeNative]::GetModuleHandleW('hid.dll') -ne [IntPtr]::Zero) {
@@ -53,6 +54,8 @@ try {
     $tokenHex = [BitConverter]::ToString($token).Replace('-', '')
     $config = "pipe=\\.\pipe\$pipeName`ntoken=$tokenHex`nhelper=$PID`n"
     [IO.File]::WriteAllText($configPath, $config, [Text.ASCIIEncoding]::new())
+    $configLock = [IO.File]::Open(
+        $configPath, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::Read)
 
     $assembly = [Reflection.Assembly]::LoadFrom($managedDll)
     Write-Host 'Armoury tap runtime phase: managed Windows assembly loaded.'
@@ -72,12 +75,19 @@ try {
     $stopRva = [uint32]$readExportRva.Invoke($null, $exportArguments)
     Write-Host 'Armoury tap runtime phase: production PE export parser returned.'
 
-    $pipe = [IO.Pipes.NamedPipeServerStream]::new(
-        $pipeName,
-        [IO.Pipes.PipeDirection]::In,
-        1,
-        [IO.Pipes.PipeTransmissionMode]::Byte,
-        [IO.Pipes.PipeOptions]::Asynchronous)
+    $tappedProcessType = $helperType.GetNestedType(
+        'TappedProcess', [Reflection.BindingFlags]'NonPublic')
+    if ($null -eq $tappedProcessType) { throw 'Production tapped-process type was not found.' }
+    $createTapServer = $tappedProcessType.GetMethod('CreateTapServer', $flags)
+    $readTapPipeIntegrityLabel = $tappedProcessType.GetMethod('ReadTapPipeIntegrityLabel', $flags)
+    if ($null -eq $createTapServer -or $null -eq $readTapPipeIntegrityLabel) {
+        throw 'Production tap pipe security methods were not found.'
+    }
+    $pipe = [IO.Pipes.NamedPipeServerStream]$createTapServer.Invoke($null, @([string]$pipeName))
+    $mandatoryLabel = [string]$readTapPipeIntegrityLabel.Invoke($null, @($pipe.SafePipeHandle))
+    if ($mandatoryLabel -notmatch 'S:\(ML;;NW;;;(ME|S-1-16-8192)\)') {
+        throw "Tap pipe is missing the medium-integrity no-write-up label: $mandatoryLabel"
+    }
     $wait = $pipe.WaitForConnectionAsync()
     Write-Host 'Armoury tap runtime phase: loading native module.'
     $module = [ArmouryTapRuntimeNative]::LoadLibraryW($testDll)
@@ -183,6 +193,7 @@ finally {
         finally { [ArmouryTapRuntimeNative]::FreeLibrary($module) | Out-Null }
     }
     if ($null -ne $pipe) { $pipe.Dispose() }
+    if ($null -ne $configLock) { $configLock.Dispose() }
 
     if (Test-Path $tempDirectory) { Remove-Item $tempDirectory -Recurse -Force }
 }
