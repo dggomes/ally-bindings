@@ -84,7 +84,7 @@ Required runtime sequence:
 
 ### Preview application
 
-A clean CI checkout builds a downloadable Windows app; Daniel can create profiles, rotate them with the controller, use chord+RT to open the editor, run a passive Armoury M1/M2 capture, use tray/startup mode and see truthful locked/preview backend status. M1/M2 writes remain unavailable until capture review.
+A clean CI checkout builds a downloadable Windows app; Daniel can create profiles, rotate them with the controller, use chord+RT to open the editor, use tray/startup mode and see truthful locked/preview backend status. Public M1/M2 writes remain unavailable. A standalone controlled artifact performs only the one-shot RC73XA/PID_1B4C validation; it is built manually from an approved main commit and is never shipped in the app package or release.
 
 ### Remapping release
 
