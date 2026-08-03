@@ -69,6 +69,13 @@ try {
     $assembly = [Reflection.Assembly]::LoadFrom($managedDll)
     $helperType = $assembly.GetType('AllyBindings.Windows.ArmouryTapCaptureHelper', $true)
     $flags = [Reflection.BindingFlags]'Static, NonPublic'
+    $bootIdentifierMethod = $assembly.GetType('AllyBindings.Windows.App', $true).GetMethod(
+        'TryGetCurrentBootIdentifier', $flags)
+    if ($null -eq $bootIdentifierMethod) { throw 'Windows boot-identifier probe was not found.' }
+    $bootIdentifier = $bootIdentifierMethod.Invoke($null, @())
+    if ($null -eq $bootIdentifier -or [Guid]$bootIdentifier -eq [Guid]::Empty) {
+        throw 'Windows did not return a non-empty kernel boot identifier.'
+    }
     $readExportRva = $helperType.GetMethod('ReadExportRva', $flags)
     if ($null -eq $readExportRva) { throw 'Production tap export parser was not found.' }
     $stopRva = [uint32]$readExportRva.Invoke($null, @($testDll, 'ArmouryTapStop'))
