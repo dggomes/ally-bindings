@@ -27,6 +27,16 @@ public static class ArmouryTapRuntimeNative
     [DllImport("kernel32.dll", ExactSpelling = true, SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     public static extern bool FreeLibrary(IntPtr module);
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, ExactSpelling = true, SetLastError = true)]
+    public static extern IntPtr CreateFileW(string path, uint access, uint share, IntPtr security,
+        uint creation, uint flags, IntPtr template);
+    [DllImport("kernel32.dll", ExactSpelling = true, SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool DeviceIoControl(IntPtr handle, uint controlCode, byte[] input, uint inputLength,
+        IntPtr output, uint outputLength, IntPtr bytesReturned, IntPtr overlapped);
+    [DllImport("kernel32.dll", ExactSpelling = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool CloseHandle(IntPtr handle);
 }
 [UnmanagedFunctionPointer(CallingConvention.Winapi)]
 public delegate uint ArmouryTapStopDelegate(IntPtr ignored);
@@ -42,6 +52,7 @@ $module = [IntPtr]::Zero
 $pipe = $null
 $stop = $null
 $configLock = $null
+$stopConfirmed = $false
 try {
     Copy-Item $nativeDll $testDll -Force
     if ([ArmouryTapRuntimeNative]::GetModuleHandleW('hid.dll') -ne [IntPtr]::Zero) {
@@ -61,6 +72,22 @@ try {
     Write-Host 'Armoury tap runtime phase: managed Windows assembly loaded.'
     $helperType = $assembly.GetType('AllyBindings.Windows.ArmouryTapCaptureHelper', $true)
     $flags = [Reflection.BindingFlags]'Static, NonPublic'
+    $serviceType = $assembly.GetType('AllyBindings.Windows.ArmouryCaptureService', $true)
+    $assessmentType = $assembly.GetType('AllyBindings.Windows.CaptureAssessment', $true)
+    $assessmentArguments = [object[]]::new(5)
+    $assessmentArguments[0] = $false
+    $assessmentArguments[1] = $false
+    $assessmentArguments[2] = $false
+    $assessmentArguments[3] = $false
+    $assessmentArguments[4] = [string[]]@('runtime-probe')
+    $assessment = [Activator]::CreateInstance($assessmentType, $assessmentArguments)
+    $buildReadme = $serviceType.GetMethod('BuildReadme', $flags)
+    $tapReadme = $buildReadme.Invoke($null, [object[]]@(0, 0, 0, $true, $assessment))
+    $etwReadme = $buildReadme.Invoke($null, [object[]]@(0, 1, 1, $false, $assessment))
+    if ($tapReadme -notmatch 'native Armoury HID write tap' -or
+        $tapReadme -match 'ETW property shapes' -or $etwReadme -notmatch 'ETW property shapes') {
+        throw 'Rendered native/ETW README source labels are not isolated.'
+    }
     $bootIdentifierMethod = $assembly.GetType('AllyBindings.Windows.App', $true).GetMethod(
         'TryGetCurrentBootIdentifier', $flags)
     if ($null -eq $bootIdentifierMethod) { throw 'Windows boot-identifier probe was not found.' }
@@ -137,12 +164,28 @@ try {
         if ($record[28 + $index] -ne $token[$index]) { throw 'Tap ready record capability token mismatch.' }
     }
 
-    Write-Host 'Armoury tap runtime phase: authenticated ready record passed; stopping hooks.'
-    # Arm a read before waiting for Stop: the worker flushes its authenticated summary
-    # before exiting, so waiting first would deadlock against FlushFileBuffers.
+    Write-Host 'Armoury tap runtime phase: authenticated ready record passed; exercising hooked DeviceIoControl.'
+    $probePath = Join-Path $tempDirectory 'device-io-control-probe.bin'
+    $probeHandle = [ArmouryTapRuntimeNative]::CreateFileW(
+        $probePath, 0x40000000, 0, [IntPtr]::Zero, 2, 0x80, [IntPtr]::Zero)
+    if ($probeHandle -eq [IntPtr]::new(-1)) { throw 'Could not create the DeviceIoControl probe handle.' }
+    try
+    {
+        $probe = [byte[]]::new(16)
+        if ([ArmouryTapRuntimeNative]::DeviceIoControl(
+            $probeHandle, 0x000B0191, $probe, [uint32]$probe.Length,
+            [IntPtr]::Zero, 0, [IntPtr]::Zero, [IntPtr]::Zero)) {
+            throw 'Synthetic HID SET_FEATURE unexpectedly succeeded on a regular file.'
+        }
+    }
+    finally { [ArmouryTapRuntimeNative]::CloseHandle($probeHandle) | Out-Null }
+
+    Write-Host 'Armoury tap runtime phase: stopping hooks.'
+    # Arm the terminal read before Stop so teardown and transport are exercised concurrently.
     $summary = [byte[]]::new($wireRecordSize)
     $initialSummaryRead = $pipe.ReadAsync($summary, 0, $summary.Length)
-    if ($stop.Invoke([IntPtr]::Zero) -ne 1) { throw 'ArmouryTapStop did not confirm clean hook teardown.' }
+    $stopConfirmed = $stop.Invoke([IntPtr]::Zero) -eq 1
+    if (-not $stopConfirmed) { throw 'ArmouryTapStop did not confirm clean hook teardown.' }
     if (-not $initialSummaryRead.Wait([TimeSpan]::FromSeconds(10))) {
         throw 'Timed out waiting for the tap diagnostic summary.'
     }
@@ -158,8 +201,24 @@ try {
         throw 'Tap diagnostic summary framing mismatch.'
     }
     if ($summary[60] -ne 1 -or $summary[61] -ne 0) { throw 'Tap diagnostic summary schema mismatch.' }
-    for ($index = 62; $index -lt $summary.Length; $index++) {
-        if ($summary[$index] -ne 0) { throw 'Zero-activity tap diagnostic summary contained a nonzero counter or reserved byte.' }
+    if ([BitConverter]::ToUInt32($summary, 24) -ne 1 -or
+        [BitConverter]::ToUInt32($summary, 84) -lt 1) {
+        throw 'Native summary did not pack the hooked SET_FEATURE/under-length counters as expected.'
+    }
+    $rawSummary = [byte[]]::new(64)
+    [Array]::Copy($summary, 60, $rawSummary, 0, 64)
+    $decodeSummary = $protocolType.GetMethod('DecodeDiagnosticSummary')
+    $decodeArguments = [object[]]::new(6)
+    $decodeArguments[0] = 'runtime-probe'
+    $decodeArguments[1] = [BitConverter]::ToInt64($summary, 12)
+    $decodeArguments[2] = [BitConverter]::ToUInt32($summary, 20)
+    $decodeArguments[3] = [BitConverter]::ToInt32($summary, 24)
+    $decodeArguments[4] = $rawSummary
+    $decodeArguments[5] = 0
+    $diagnostic = $decodeSummary.Invoke($null, $decodeArguments)
+    if ($diagnostic.DeviceIoControlSetFeatureCallCount -ne 1 -or $diagnostic.UnderLengthCount -lt 1 -or
+        $diagnostic.NativeDroppedRecordCount -ne 0) {
+        throw 'Managed wire-v2 decoder did not preserve the native diagnostic summary.'
     }
     Write-Host 'Armoury tap runtime phase: hook teardown passed; unloading native module.'
     if (-not [ArmouryTapRuntimeNative]::FreeLibrary($module)) {
@@ -211,8 +270,16 @@ try {
 }
 finally {
     if ($module -ne [IntPtr]::Zero -and $null -ne $stop) {
-        try { $stop.Invoke([IntPtr]::Zero) | Out-Null }
-        finally { [ArmouryTapRuntimeNative]::FreeLibrary($module) | Out-Null }
+        if (-not $stopConfirmed) {
+            try { $stopConfirmed = $stop.Invoke([IntPtr]::Zero) -eq 1 }
+            catch { $stopConfirmed = $false }
+        }
+        if ($stopConfirmed) {
+            [ArmouryTapRuntimeNative]::FreeLibrary($module) | Out-Null
+        }
+        else {
+            Write-Warning 'Fail-closed cleanup left the native tap loaded because teardown was not positively confirmed.'
+        }
     }
     if ($null -ne $pipe) { $pipe.Dispose() }
     if ($null -ne $configLock) { $configLock.Dispose() }

@@ -68,7 +68,7 @@ A record may leave the target process only when all conditions pass:
 - Second byte is rear-mapping command `0xD1`.
 - Captured bytes are copied before the original call returns.
 
-No device path, arbitrary process memory, keyboard input, XInput history or non-target HID payload may be retained. After hooks are disabled and callbacks drain, each tapped process emits one authenticated aggregate summary of bounded covered-API counts, categorical handle-validation outcomes and target filter-stage counts. It contains no rejected bytes or hashes, exact nonmatching lengths, handles, paths, PIDs or timestamps. `WriteFile` calls used by the tap's own named-pipe transport fail the exact HID-handle gate and are not queued.
+No device path, arbitrary process memory, keyboard input, XInput history or non-target HID payload may be retained. Cheap length and safe-prefix checks run before any HID attribute query; categorical handle validation therefore applies only to readable 50–64-byte `0x5A` candidates, never arbitrary process `WriteFile` handles. After hooks are disabled and callbacks drain, each tapped process emits one authenticated terminal summary of bounded covered-API counts, categorical handle-validation outcomes and target filter-stage counts. It contains no rejected bytes or hashes, exact nonmatching lengths, handles, paths, PIDs or timestamps. The tap's own named-pipe transport is explicitly suppressed from capture accounting.
 
 ## Bounds
 

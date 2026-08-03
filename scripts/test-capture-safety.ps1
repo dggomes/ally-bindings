@@ -184,6 +184,12 @@ if ($service -notmatch 'ally-bindings-\{captureKind\}' -or
     $service -notmatch 'native Armoury HID write tap') {
     throw 'Native tap bundles, evidence files or README text can still be mislabeled as ETW.'
 }
+if ($service -match '\betw\s*=\s*new' -or
+    $service -notmatch 'kind = "armouryHidWriteTap"' -or
+    $service -notmatch 'kind = "windowsUsbEtw"' -or
+    $service -notmatch 'schemaDiscovery = session\.UsesArmouryTap') {
+    throw 'Generated evidence can still label native tap output as ETW/schema discovery.'
+}
 if ($extractor -notmatch '0x5A,\s*0xD1,\s*0x02,\s*0x08,\s*0x2C' -or
     $extractor -notmatch 'AsusRearButtonProtocol\.ReportLength' -or
     $extractor -notmatch 'MaximumWireReportLength') {
@@ -276,7 +282,7 @@ if ($service -notmatch '\.tmp-' -or
 }
 if ($service -notmatch 'captureScopeVerified:\s*false' -or
     $service -notmatch 'hardwareUnlockEvidence\s*=\s*false' -or
-    $service -notmatch 'Discovery metadata is never hardware-unlock evidence' -or
+    $service -notmatch 'Diagnostic metadata is never hardware-unlock evidence' -or
     $app -match 'staleRecoveryMarker\s*&&\s*result\.IsConclusive') {
     throw 'Unvalidated ETW candidates can still become conclusive unlock/recovery evidence.'
 }
@@ -613,6 +619,17 @@ foreach ($required in @(
         throw "The native tap DLL is missing safety requirement: $required"
     }
 }
+$lengthFilter = $tapNative.IndexOf('if (length < kMinReport)', [StringComparison]::Ordinal)
+$safePrefixFilter = $tapNative.IndexOf('if (copy[0] != 0x5A)', [StringComparison]::Ordinal)
+$handleValidation = $tapNative.IndexOf('switch (ClassifyHandle(handle))', [StringComparison]::Ordinal)
+if ($lengthFilter -lt 0 -or $safePrefixFilter -lt $lengthFilter -or $handleValidation -lt $safePrefixFilter) {
+    throw 'The native tap can probe arbitrary WriteFile handles before cheap length and safe-prefix filtering.'
+}
+if ($tapNative -match 'const auto summary = BuildSummaryRecord\(\);[\s\S]{0,300}FlushFileBuffers\(g_pipe\)' -or
+    $tapNative -match 'Api::Overflow' -or $tapHelper -match 'OverflowRecordApi' -or
+    $tapHelper -notmatch '_receivedRecordCount') {
+    throw 'Wire-v2 terminal-summary/drop reconciliation is not authoritative and nonblocking.'
+}
 
 foreach ($required in @(
     'ArmouryTapTeardownBlockedSinceUtc',
@@ -694,6 +711,15 @@ if ($tapRuntime.IndexOf("LoadLibraryW('hid.dll')", [StringComparison]::Ordinal) 
 }
 if ($tapRuntime.IndexOf('tap PE dependency did not cause Windows to map hid.dll', [StringComparison]::Ordinal) -lt 0) {
     throw 'The runtime test does not prove loader-owned hid.dll dependency mapping.'
+}
+foreach ($required in @(
+    '$stopConfirmed',
+    'if ($stopConfirmed)',
+    'DeviceIoControlSetFeatureCallCount',
+    'DecodeDiagnosticSummary')) {
+    if ($tapRuntime.IndexOf($required, [StringComparison]::Ordinal) -lt 0) {
+        throw "The runtime test is missing fail-closed teardown or native-to-managed summary coverage: $required"
+    }
 }
 foreach ($required in @(
     'id: publish',

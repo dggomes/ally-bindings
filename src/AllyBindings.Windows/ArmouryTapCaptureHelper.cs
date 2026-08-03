@@ -662,7 +662,10 @@ internal static class ArmouryTapCaptureHelper
         private int _detachState;
         public string ProcessName => _identity.ExactName;
         public List<RawTapRecord> Records { get; } = [];
-        public int DroppedRecordCount { get; private set; }
+        private int _receivedRecordCount;
+        private int _managedDroppedRecordCount;
+        public int DroppedRecordCount => checked(_managedDroppedRecordCount +
+            (int)(Diagnostics?.NativeDroppedRecordCount ?? 0));
         public ArmouryTapPreFilterDiagnostics? Diagnostics { get; private set; }
 
         private TappedProcess(VerifiedProcess identity, string dllPath, byte[] token, NamedPipeServerStream pipe,
@@ -761,24 +764,21 @@ internal static class ArmouryTapCaptureHelper
                     if (wire is null) return;
                     if (wire.ProcessId != _identity.ProcessId || !CryptographicOperations.FixedTimeEquals(wire.Token, _token))
                         throw new InvalidDataException("An unauthenticated tap record was rejected.");
-                    if (wire.Api == ArmouryTapProtocol.OverflowRecordApi)
-                    {
-                        DroppedRecordCount += checked((int)wire.ApiResult);
-                        continue;
-                    }
+                    if (Diagnostics is not null)
+                        throw new InvalidDataException("Tap evidence followed the terminal diagnostic summary.");
                     if (wire.Api == ArmouryTapProtocol.SummaryRecordApi)
                     {
                         if (wire.Report.Length != 0) throw new InvalidDataException("Tap diagnostic summary exposed report bytes.");
-                        if (Diagnostics is not null) throw new InvalidDataException("Duplicate tap diagnostic summary.");
                         Diagnostics = ArmouryTapProtocol.DecodeDiagnosticSummary(
-                            ProcessName, wire.Qpc, wire.ApiResult, wire.LastError, wire.RawReport, Records.Count);
+                            ProcessName, wire.Qpc, wire.ApiResult, wire.LastError, wire.RawReport, _receivedRecordCount);
                         continue;
                     }
                     if (wire.Api is < 1 or > 5 || !ArmouryTapProtocol.IsRetainableReport(wire.Report))
                         throw new InvalidDataException("Unknown or malformed tap evidence record.");
+                    _receivedRecordCount++;
                     lock (Records)
                     {
-                        if (Records.Count == ArmouryTapProtocol.MaximumRecords) { DroppedRecordCount++; continue; }
+                        if (Records.Count == ArmouryTapProtocol.MaximumRecords) { _managedDroppedRecordCount++; continue; }
                         Records.Add(new(wire.ProcessId, (ArmouryTapApi)wire.Api, wire.Qpc,
                             wire.ApiResult != 0, wire.LastError, wire.Report));
                     }
@@ -798,25 +798,32 @@ internal static class ArmouryTapCaptureHelper
                 if (processWait == 0)
                 {
                     _remoteModule = IntPtr.Zero;
-                    _readerCancellation.Cancel();
-                    Volatile.Write(ref _detachState, 2);
-                    return;
                 }
-                if (processWait != 258) throw new System.ComponentModel.Win32Exception();
-                if (_remoteModule != IntPtr.Zero)
+                else
                 {
-                    if (!Revalidate(_identity)) throw new InvalidOperationException("The tapped ASUS process identity changed before hook teardown.");
-                    StopAndUnload(_identity, _dllPath, _remoteModule);
-                    _remoteModule = IntPtr.Zero;
+                    if (processWait != 258) throw new System.ComponentModel.Win32Exception();
+                    if (_remoteModule != IntPtr.Zero)
+                    {
+                        if (!Revalidate(_identity)) throw new InvalidOperationException("The tapped ASUS process identity changed before hook teardown.");
+                        StopAndUnload(_identity, _dllPath, _remoteModule);
+                        _remoteModule = IntPtr.Zero;
+                    }
                 }
-                await _readerTask.WaitAsync(TimeSpan.FromSeconds(10)).ConfigureAwait(false);
-                _readerCancellation.Cancel();
                 Volatile.Write(ref _detachState, 2);
             }
             catch (Exception ex)
             {
                 Volatile.Write(ref _detachState, 0);
                 throw new InvalidOperationException("Native hook unload could not be confirmed; teardown remains retryable.", ex);
+            }
+
+            try
+            {
+                await _readerTask.WaitAsync(TimeSpan.FromSeconds(10)).ConfigureAwait(false);
+            }
+            finally
+            {
+                _readerCancellation.Cancel();
             }
         }
 

@@ -27,7 +27,7 @@ constexpr wchar_t kConfigSuffix[] = L".config";
 enum class Api : uint8_t {
     HidDSetFeature = 1, KernelBaseWriteFile = 2, HidDSetOutputReport = 3,
     DeviceIoControlSetFeature = 4, DeviceIoControlSetOutputReport = 5,
-    Summary = 0xFE, Overflow = 0xFF
+    Summary = 0xFE
 };
 #pragma pack(push, 1)
 struct WireRecord {
@@ -109,14 +109,8 @@ HandleClassification ClassifyHandle(HANDLE handle) {
 bool PrepareRecord(Api api, HANDLE handle, const void* buffer, size_t length, WireRecord& record) {
     if (g_stopping.load(std::memory_order_relaxed)) return false;
     const auto apiIndex = static_cast<size_t>(api) - 1;
-    if (apiIndex < g_apiCalls.size()) SaturatingIncrement(g_apiCalls[apiIndex]);
-    switch (ClassifyHandle(handle)) {
-        case HandleClassification::Invalid: SaturatingIncrement(g_invalidHandle); return false;
-        case HandleClassification::AttributeReadFailure: SaturatingIncrement(g_attributeReadFailure); return false;
-        case HandleClassification::NonAsusDevice: SaturatingIncrement(g_nonAsusDevice); return false;
-        case HandleClassification::OtherAsusProduct: SaturatingIncrement(g_otherAsusProduct); return false;
-        case HandleClassification::Target: break;
-    }
+    if (apiIndex >= g_apiCalls.size()) return false;
+    SaturatingIncrement(g_apiCalls[apiIndex]);
     if (length < kMinReport) { SaturatingIncrement(g_underLength); return false; }
     if (length > kMaxReport || length > kMaximumInspectedLength) { SaturatingIncrement(g_overLength); return false; }
     SaturatingIncrement(g_boundedLength);
@@ -129,6 +123,13 @@ bool PrepareRecord(Api api, HANDLE handle, const void* buffer, size_t length, Wi
     }
     if (copy[0] != 0x5A) return false;
     SaturatingIncrement(g_reportId5A);
+    switch (ClassifyHandle(handle)) {
+        case HandleClassification::Invalid: SaturatingIncrement(g_invalidHandle); return false;
+        case HandleClassification::AttributeReadFailure: SaturatingIncrement(g_attributeReadFailure); return false;
+        case HandleClassification::NonAsusDevice: SaturatingIncrement(g_nonAsusDevice); return false;
+        case HandleClassification::OtherAsusProduct: SaturatingIncrement(g_otherAsusProduct); return false;
+        case HandleClassification::Target: break;
+    }
     if (copy[1] != kRearMappingCommand) return false;
     SaturatingIncrement(g_prefix5AD1);
 
@@ -482,19 +483,7 @@ DWORD WINAPI WorkerMain(void* parameter) {
     }
     const auto summary = BuildSummaryRecord();
     if (!WritePipeRecord(summary)) transportFailure = true;
-    const uint32_t dropped = g_droppedRecords.load(std::memory_order_relaxed);
-    if (dropped != 0) {
-        WireRecord overflow{};
-        overflow.magic = kMagic;
-        overflow.version = kVersion;
-        overflow.api = static_cast<uint8_t>(Api::Overflow);
-        overflow.processId = GetCurrentProcessId();
-        overflow.apiResult = dropped;
-        memcpy(overflow.token, g_token.data(), g_token.size());
-        if (!WritePipeRecord(overflow))
-            transportFailure = true;
-    }
-    if (!FlushFileBuffers(g_pipe)) transportFailure = true;
+
     CloseHandle(g_pipe);
     g_pipe = INVALID_HANDLE_VALUE;
     const DWORD exitCode = transportFailure ? 7 : 0;

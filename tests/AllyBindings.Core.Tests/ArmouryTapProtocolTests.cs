@@ -89,7 +89,6 @@ public sealed class ArmouryTapProtocolTests
         Assert.Equal(124, ArmouryTapProtocol.WireRecordSize);
         Assert.Equal(256, ArmouryTapProtocol.MaximumRecords);
         Assert.Equal(0xFE, ArmouryTapProtocol.SummaryRecordApi);
-        Assert.Equal(0xFF, ArmouryTapProtocol.OverflowRecordApi);
     }
 
     [Fact]
@@ -152,6 +151,22 @@ public sealed class ArmouryTapProtocolTests
         var saturatedResult = ArmouryTapProtocol.DecodeDiagnosticSummary(
             "ArmouryCrateSE.Service", ArmouryTapProtocol.MaximumDiagnosticCounter, 0, 0, saturated, 0);
         Assert.True(saturatedResult.CounterSaturated);
+    }
+
+    [Fact]
+    public void Diagnostic_summary_reconciles_transported_and_native_dropped_records()
+    {
+        var nativeDrop = BuildSummary(0, 0, 0, 0, 0, 0, 257, 0, 0, 257, 257, 257, 1);
+        var nativeDropResult = ArmouryTapProtocol.DecodeDiagnosticSummary(
+            "ArmouryCrateSE.Service", 257L << 32, 0, 0, nativeDrop, 256);
+        Assert.Equal((uint)257, nativeDropResult.RetainedRecordCount);
+        Assert.Equal((uint)1, nativeDropResult.NativeDroppedRecordCount);
+
+        var managedDrop = BuildSummary(0, 0, 0, 0, 0, 0, 257, 0, 0, 257, 257, 257, 0);
+        var managedDropResult = ArmouryTapProtocol.DecodeDiagnosticSummary(
+            "ArmouryCrateSE.Service", 257L << 32, 0, 0, managedDrop, 257);
+        Assert.Equal((uint)257, managedDropResult.RetainedRecordCount);
+        Assert.Equal((uint)0, managedDropResult.NativeDroppedRecordCount);
     }
 
     private static byte[] BuildSummary(params uint[] counters)
