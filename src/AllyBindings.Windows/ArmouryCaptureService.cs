@@ -287,12 +287,22 @@ internal sealed class ArmouryCaptureService
                 throw new ArmouryCaptureTeardownException(failure.Message, failure);
             if (envelope.ErrorCode == ArmouryTapCaptureHelper.EvidenceInvalidCleanupConfirmedErrorCode)
             {
-                await WaitForHelperExitAsync(session.HelperProcess, cancellationToken).ConfigureAwait(false);
+                // The authenticated terminal envelope commits the teardown outcome. Caller cancellation
+                // must not interrupt the bounded exit-code confirmation that makes that outcome atomic.
+                await WaitForHelperExitAsync(
+                    session.HelperProcess,
+                    expectedExitCode: 1,
+                    cancellationToken: CancellationToken.None)
+                    .ConfigureAwait(false);
                 session.MarkNativeTeardownConfirmed();
             }
             throw new ArmouryCaptureException(session.SessionId, failure.Message, failure);
         }
-        await WaitForHelperExitAsync(session.HelperProcess, cancellationToken).ConfigureAwait(false);
+        await WaitForHelperExitAsync(
+            session.HelperProcess,
+            expectedExitCode: 0,
+            cancellationToken: CancellationToken.None)
+            .ConfigureAwait(false);
         if (session.UsesArmouryTap) session.MarkNativeTeardownConfirmed();
         var output = envelope.Output;
         session.RecordAction("capture-stopped");
@@ -531,6 +541,7 @@ internal sealed class ArmouryCaptureService
 
     private static async Task WaitForHelperExitAsync(
         Process helper,
+        int expectedExitCode,
         CancellationToken cancellationToken)
     {
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
@@ -544,10 +555,11 @@ internal sealed class ArmouryCaptureService
             StopHelper(helper);
             throw new TimeoutException("The in-app USB ETW helper did not stop within 30 seconds.");
         }
-        if (helper.ExitCode != 0)
+        if (helper.ExitCode != expectedExitCode)
         {
             throw new InvalidOperationException(
-                $"The in-app USB ETW helper failed while completing capture (exit code {helper.ExitCode}).");
+                $"The in-app USB ETW helper returned exit code {helper.ExitCode}; expected {expectedExitCode} " +
+                "for the authenticated terminal outcome.");
         }
     }
 

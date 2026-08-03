@@ -735,9 +735,12 @@ foreach ($required in @(
 if ($app -notmatch '!session\.NativeTeardownConfirmed' -or
     $app -match 'CompleteAsync\(session, cancellationToken\);\s*cancellationToken\.ThrowIfCancellationRequested' -or
     $service -notmatch 'EvidenceInvalidCleanupConfirmedErrorCode' -or
+    $service -notmatch 'expectedExitCode:\s*1,[\s\S]{0,100}cancellationToken:\s*CancellationToken\.None' -or
+    $service -notmatch 'expectedExitCode:\s*0,[\s\S]{0,100}cancellationToken:\s*CancellationToken\.None' -or
+    $service -notmatch 'helper\.ExitCode != expectedExitCode' -or
     $service -notmatch 'session\.MarkNativeTeardownConfirmed\(\)' -or
     $service -notmatch 'session\.MarkCompletionCommitted\(\)') {
-    throw 'Cleanup-confirmed protocol failures or late cancellation can still arm the reboot barrier or delete committed evidence.'
+    throw 'Terminal outcomes, cleanup-confirmed protocol failures, or late cancellation can still arm the reboot barrier or delete committed evidence.'
 }
 foreach ($required in @(
     'id: publish',
