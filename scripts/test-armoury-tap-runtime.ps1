@@ -34,6 +34,10 @@ public static class ArmouryTapRuntimeNative
     [return: MarshalAs(UnmanagedType.Bool)]
     public static extern bool DeviceIoControl(IntPtr handle, uint controlCode, byte[] input, uint inputLength,
         IntPtr output, uint outputLength, IntPtr bytesReturned, IntPtr overlapped);
+    [DllImport("kernel32.dll", ExactSpelling = true, SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool WriteFile(IntPtr handle, byte[] buffer, uint bytesToWrite,
+        out uint bytesWritten, IntPtr overlapped);
     [DllImport("kernel32.dll", ExactSpelling = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     public static extern bool CloseHandle(IntPtr handle);
@@ -177,6 +181,15 @@ try {
             [IntPtr]::Zero, 0, [IntPtr]::Zero, [IntPtr]::Zero)) {
             throw 'Synthetic HID SET_FEATURE unexpectedly succeeded on a regular file.'
         }
+        $writeProbe = [byte[]]::new(50)
+        $writeProbe[0] = 0x5A
+        $writeProbe[1] = 0xD1
+        $bytesWritten = [uint32]0
+        if (-not [ArmouryTapRuntimeNative]::WriteFile(
+            $probeHandle, $writeProbe, [uint32]$writeProbe.Length,
+            [ref]$bytesWritten, [IntPtr]::Zero) -or $bytesWritten -ne $writeProbe.Length) {
+            throw 'The bounded 0x5A regular-file WriteFile probe failed.'
+        }
     }
     finally { [ArmouryTapRuntimeNative]::CloseHandle($probeHandle) | Out-Null }
 
@@ -200,14 +213,18 @@ try {
         [BitConverter]::ToUInt16($summary, 4) -ne 2 -or $summary[6] -ne 0xFE -or $summary[7] -ne 0) {
         throw 'Tap diagnostic summary framing mismatch.'
     }
-    if ($summary[60] -ne 1 -or $summary[61] -ne 0) { throw 'Tap diagnostic summary schema mismatch.' }
+    if ($summary[60] -ne 2 -or $summary[61] -ne 0) { throw 'Tap diagnostic summary schema mismatch.' }
     if ([BitConverter]::ToUInt32($summary, 24) -ne 1 -or
-        [BitConverter]::ToUInt32($summary, 84) -lt 1) {
+        [BitConverter]::ToUInt32($summary, 88) -lt 1) {
         throw 'Native summary did not pack the hooked SET_FEATURE/under-length counters as expected.'
+    }
+    if ([BitConverter]::ToUInt32($summary, 84) -ne 1 -or
+        [BitConverter]::ToUInt32($summary, 72) -ne 0) {
+        throw 'A bounded regular-file WriteFile probe reached HID attribute validation.'
     }
     $rawSummary = [byte[]]::new(64)
     [Array]::Copy($summary, 60, $rawSummary, 0, 64)
-    $decodeSummary = $protocolType.GetMethod('DecodeDiagnosticSummary')
+    $decodeSummary = $protocolType.GetMethod('DecodeDiagnosticSummaryBytes')
     $decodeArguments = [object[]]::new(6)
     $decodeArguments[0] = 'runtime-probe'
     $decodeArguments[1] = [BitConverter]::ToInt64($summary, 12)
@@ -217,6 +234,7 @@ try {
     $decodeArguments[5] = 0
     $diagnostic = $decodeSummary.Invoke($null, $decodeArguments)
     if ($diagnostic.DeviceIoControlSetFeatureCallCount -ne 1 -or $diagnostic.UnderLengthCount -lt 1 -or
+        $diagnostic.UnvalidatedWriteHandleCount -ne 1 -or $diagnostic.AttributeReadFailureCount -ne 0 -or
         $diagnostic.NativeDroppedRecordCount -ne 0) {
         throw 'Managed wire-v2 decoder did not preserve the native diagnostic summary.'
     }

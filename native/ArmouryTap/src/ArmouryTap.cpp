@@ -18,6 +18,7 @@ constexpr size_t kMinReport = 50;
 constexpr size_t kMaxReport = 64;
 constexpr uint8_t kRearMappingCommand = 0xD1;
 constexpr size_t kQueueCapacity = 256;
+constexpr size_t kMaximumValidatedHandles = 16;
 constexpr size_t kMaximumInspectedLength = 4096;
 constexpr uint32_t kCounterMaximum = 1'000'000;
 constexpr DWORD kIoctlHidSetFeature = 0x000B0191;
@@ -49,10 +50,12 @@ using HidDSetFeatureFn = BOOLEAN(__stdcall*)(HANDLE, PVOID, ULONG);
 using HidDSetOutputReportFn = BOOLEAN(__stdcall*)(HANDLE, PVOID, ULONG);
 using WriteFileFn = BOOL(WINAPI*)(HANDLE, LPCVOID, DWORD, LPDWORD, LPOVERLAPPED);
 using DeviceIoControlFn = BOOL(WINAPI*)(HANDLE, DWORD, LPVOID, DWORD, LPVOID, DWORD, LPDWORD, LPOVERLAPPED);
+using CompareObjectHandlesFn = BOOL(WINAPI*)(HANDLE, HANDLE);
 HidDSetFeatureFn g_originalSetFeature = nullptr;
 HidDSetOutputReportFn g_originalSetOutputReport = nullptr;
 WriteFileFn g_originalWriteFile = nullptr;
 DeviceIoControlFn g_originalDeviceIoControl = nullptr;
+CompareObjectHandlesFn g_compareObjectHandles = nullptr;
 HANDLE g_stopEvent = nullptr;
 HANDLE g_queueEvent = nullptr;
 HANDLE g_worker = nullptr;
@@ -75,11 +78,15 @@ std::atomic<uint32_t> g_droppedRecords{0};
 std::array<std::atomic<uint32_t>, 5> g_apiCalls{};
 std::atomic<uint32_t> g_invalidHandle{0}, g_attributeReadFailure{0};
 std::atomic<uint32_t> g_nonAsusDevice{0}, g_otherAsusProduct{0};
+std::atomic<uint32_t> g_unvalidatedWriteHandle{0};
 std::atomic<uint32_t> g_underLength{0}, g_boundedLength{0}, g_overLength{0};
 std::atomic<uint32_t> g_unreadableBuffer{0}, g_reportId5A{0}, g_prefix5AD1{0}, g_retained{0};
 std::atomic<bool> g_counterSaturated{false};
 thread_local uint32_t g_hidWrapperDepth = 0;
 thread_local uint32_t g_internalIoDepth = 0;
+SRWLOCK g_validatedHandleLock = SRWLOCK_INIT;
+std::array<HANDLE, kMaximumValidatedHandles> g_validatedHandles{};
+size_t g_validatedHandleCount = 0;
 
 class CallbackLease {
 public:
@@ -106,6 +113,48 @@ HandleClassification ClassifyHandle(HANDLE handle) {
     return HandleClassification::Target;
 }
 
+bool IsKnownTargetHandle(HANDLE candidate) {
+    if (!g_compareObjectHandles || candidate == nullptr || candidate == INVALID_HANDLE_VALUE) return false;
+    AcquireSRWLockShared(&g_validatedHandleLock);
+    bool found = false;
+    for (size_t index = 0; index < g_validatedHandleCount && !found; ++index)
+        found = g_compareObjectHandles(candidate, g_validatedHandles[index]) != FALSE;
+    ReleaseSRWLockShared(&g_validatedHandleLock);
+    return found;
+}
+
+void RememberTargetHandle(HANDLE candidate) {
+    if (!g_compareObjectHandles || candidate == nullptr || candidate == INVALID_HANDLE_VALUE) return;
+    AcquireSRWLockExclusive(&g_validatedHandleLock);
+    for (size_t index = 0; index < g_validatedHandleCount; ++index) {
+        if (g_compareObjectHandles(candidate, g_validatedHandles[index]) != FALSE) {
+            ReleaseSRWLockExclusive(&g_validatedHandleLock);
+            return;
+        }
+    }
+    HANDLE duplicate = nullptr;
+    if (g_validatedHandleCount < g_validatedHandles.size() &&
+        DuplicateHandle(GetCurrentProcess(), candidate, GetCurrentProcess(), &duplicate,
+            0, FALSE, DUPLICATE_SAME_ACCESS)) {
+        g_validatedHandles[g_validatedHandleCount++] = duplicate;
+    }
+    ReleaseSRWLockExclusive(&g_validatedHandleLock);
+}
+
+bool ReleaseValidatedHandles() {
+    AcquireSRWLockExclusive(&g_validatedHandleLock);
+    size_t failures = 0;
+    for (size_t index = 0; index < g_validatedHandleCount; ++index) {
+        const HANDLE handle = g_validatedHandles[index];
+        if (!CloseHandle(handle)) g_validatedHandles[failures++] = handle;
+    }
+    for (size_t index = failures; index < g_validatedHandleCount; ++index)
+        g_validatedHandles[index] = nullptr;
+    g_validatedHandleCount = failures;
+    ReleaseSRWLockExclusive(&g_validatedHandleLock);
+    return failures == 0;
+}
+
 bool PrepareRecord(Api api, HANDLE handle, const void* buffer, size_t length, WireRecord& record) {
     if (g_stopping.load(std::memory_order_relaxed)) return false;
     const auto apiIndex = static_cast<size_t>(api) - 1;
@@ -123,12 +172,19 @@ bool PrepareRecord(Api api, HANDLE handle, const void* buffer, size_t length, Wi
     }
     if (copy[0] != 0x5A) return false;
     SaturatingIncrement(g_reportId5A);
-    switch (ClassifyHandle(handle)) {
-        case HandleClassification::Invalid: SaturatingIncrement(g_invalidHandle); return false;
-        case HandleClassification::AttributeReadFailure: SaturatingIncrement(g_attributeReadFailure); return false;
-        case HandleClassification::NonAsusDevice: SaturatingIncrement(g_nonAsusDevice); return false;
-        case HandleClassification::OtherAsusProduct: SaturatingIncrement(g_otherAsusProduct); return false;
-        case HandleClassification::Target: break;
+    if (api == Api::KernelBaseWriteFile) {
+        if (!IsKnownTargetHandle(handle)) {
+            SaturatingIncrement(g_unvalidatedWriteHandle);
+            return false;
+        }
+    } else {
+        switch (ClassifyHandle(handle)) {
+            case HandleClassification::Invalid: SaturatingIncrement(g_invalidHandle); return false;
+            case HandleClassification::AttributeReadFailure: SaturatingIncrement(g_attributeReadFailure); return false;
+            case HandleClassification::NonAsusDevice: SaturatingIncrement(g_nonAsusDevice); return false;
+            case HandleClassification::OtherAsusProduct: SaturatingIncrement(g_otherAsusProduct); return false;
+            case HandleClassification::Target: RememberTargetHandle(handle); break;
+        }
     }
     if (copy[1] != kRearMappingCommand) return false;
     SaturatingIncrement(g_prefix5AD1);
@@ -342,29 +398,34 @@ bool InstallHooks() {
     auto setOutputReport = reinterpret_cast<LPVOID>(GetProcAddress(hid, "HidD_SetOutputReport"));
     auto writeFile = reinterpret_cast<LPVOID>(GetProcAddress(kernelBase, "WriteFile"));
     auto deviceIoControl = reinterpret_cast<LPVOID>(GetProcAddress(kernelBase, "DeviceIoControl"));
+    const auto compareObjectHandles = reinterpret_cast<LPVOID>(
+        GetProcAddress(kernelBase, "CompareObjectHandles"));
+    static_assert(sizeof(g_compareObjectHandles) == sizeof(compareObjectHandles));
+    memcpy(&g_compareObjectHandles, &compareObjectHandles, sizeof(g_compareObjectHandles));
     if (!setFeature) return fail(4, GetLastError());
     if (!setOutputReport) return fail(5, GetLastError());
     if (!writeFile) return fail(6, GetLastError());
     if (!deviceIoControl) return fail(7, GetLastError());
+    if (!g_compareObjectHandles) return fail(8, GetLastError());
 
     auto status = MH_CreateHook(setFeature, reinterpret_cast<void*>(&HookSetFeature),
         reinterpret_cast<void**>(&g_originalSetFeature));
-    if (status != MH_OK) return fail(8, static_cast<DWORD>(status));
+    if (status != MH_OK) return fail(9, static_cast<DWORD>(status));
     status = MH_CreateHook(setOutputReport, reinterpret_cast<void*>(&HookSetOutputReport),
         reinterpret_cast<void**>(&g_originalSetOutputReport));
-    if (status != MH_OK) return fail(9, static_cast<DWORD>(status));
+    if (status != MH_OK) return fail(10, static_cast<DWORD>(status));
     status = MH_CreateHook(writeFile, reinterpret_cast<void*>(&HookWriteFile),
         reinterpret_cast<void**>(&g_originalWriteFile));
-    if (status != MH_OK) return fail(10, static_cast<DWORD>(status));
+    if (status != MH_OK) return fail(11, static_cast<DWORD>(status));
     status = MH_CreateHook(deviceIoControl, reinterpret_cast<void*>(&HookDeviceIoControl),
         reinterpret_cast<void**>(&g_originalDeviceIoControl));
-    if (status != MH_OK) return fail(11, static_cast<DWORD>(status));
+    if (status != MH_OK) return fail(12, static_cast<DWORD>(status));
     for (const auto hook : {setFeature, setOutputReport, writeFile, deviceIoControl}) {
         status = MH_QueueEnableHook(hook);
-        if (status != MH_OK) return fail(12, static_cast<DWORD>(status));
+        if (status != MH_OK) return fail(13, static_cast<DWORD>(status));
     }
     status = MH_ApplyQueued();
-    if (status != MH_OK) return fail(13, static_cast<DWORD>(status));
+    if (status != MH_OK) return fail(14, static_cast<DWORD>(status));
     return true;
 }
 
@@ -392,6 +453,7 @@ bool DisableHooksAndDrain() {
         if (MH_Uninitialize() != MH_OK) return false;
         g_minHookInitialized = false;
     }
+    if (!ReleaseValidatedHandles()) return false;
     if (g_loadedHidModule) {
         if (!FreeLibrary(g_loadedHidModule)) return false;
         g_loadedHidModule = nullptr;
@@ -411,12 +473,12 @@ WireRecord BuildSummaryRecord() {
     summary.apiResult = g_apiCalls[2].load(std::memory_order_relaxed);
     summary.lastError = static_cast<int32_t>(g_apiCalls[3].load(std::memory_order_relaxed));
     memcpy(summary.token, g_token.data(), g_token.size());
-    summary.report[0] = 1; // Summary schema version.
+    summary.report[0] = 2; // Summary schema version.
     summary.report[1] = g_counterSaturated.load(std::memory_order_relaxed) ? 1 : 0;
-    const std::array<uint32_t, 13> values{
+    const std::array<uint32_t, 14> values{
         g_apiCalls[4].load(), g_invalidHandle.load(), g_attributeReadFailure.load(),
-        g_nonAsusDevice.load(), g_otherAsusProduct.load(), g_underLength.load(),
-        g_boundedLength.load(), g_overLength.load(), g_unreadableBuffer.load(),
+        g_nonAsusDevice.load(), g_otherAsusProduct.load(), g_unvalidatedWriteHandle.load(),
+        g_underLength.load(), g_boundedLength.load(), g_overLength.load(), g_unreadableBuffer.load(),
         g_reportId5A.load(), g_prefix5AD1.load(), g_retained.load(), g_droppedRecords.load()
     };
     memcpy(summary.report + 4, values.data(), values.size() * sizeof(uint32_t));

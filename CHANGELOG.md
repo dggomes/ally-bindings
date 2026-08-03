@@ -19,6 +19,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Thi
 - Replace ETW-specific completion wording with source-neutral capture evidence status and explain zero-record native runs using the deepest safe aggregate filter stage reached.
 - Make the authenticated terminal summary authoritative for native queue drops, reconcile it against every transported matching record, and keep managed evidence-parser faults distinct from positively confirmed native unload state.
 - Make the Windows runtime test consume terminal evidence concurrently, exercise the direct HID IOCTL hook through the production wire decoder, and refuse DLL unload unless teardown is positively confirmed.
+- Gate direct `WriteFile` retention on object identity with a bounded duplicate-handle allowlist populated only by HID-specific calls; unvalidated regular-file writes are counted without any HID attribute query and owned duplicate references must close before unload.
+- Preserve a completed bundle across late cancellation, distinguish cleanup-confirmed evidence failures from unconfirmed native teardown, and mark saturated diagnostics incomplete even when reports were retained.
 
 ### Security
 

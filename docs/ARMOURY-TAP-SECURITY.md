@@ -68,12 +68,13 @@ A record may leave the target process only when all conditions pass:
 - Second byte is rear-mapping command `0xD1`.
 - Captured bytes are copied before the original call returns.
 
-No device path, arbitrary process memory, keyboard input, XInput history or non-target HID payload may be retained. Cheap length and safe-prefix checks run before any HID attribute query; categorical handle validation therefore applies only to readable 50–64-byte `0x5A` candidates, never arbitrary process `WriteFile` handles. After hooks are disabled and callbacks drain, each tapped process emits one authenticated terminal summary of bounded covered-API counts, categorical handle-validation outcomes and target filter-stage counts. It contains no rejected bytes or hashes, exact nonmatching lengths, handles, paths, PIDs or timestamps. The tap's own named-pipe transport is explicitly suppressed from capture accounting.
+No device path, arbitrary process memory, keyboard input, XInput history or non-target HID payload may be retained. Cheap length and safe-prefix checks run first. HID-specific APIs may then validate a candidate handle and store only a bounded duplicate handle reference; direct `WriteFile` capture accepts only an object-identical handle previously validated by a HID-specific call. Unvalidated `WriteFile` handles are counted categorically and never passed to `HidD_GetAttributes`, including readable 50–64-byte `0x5A` regular-file writes. Stable duplicate references prevent stale numeric-handle reuse and are positively closed during teardown. After hooks are disabled and callbacks drain, each tapped process emits one authenticated terminal summary of bounded covered-API counts, categorical handle-validation outcomes and target filter-stage counts. It contains no rejected bytes or hashes, exact nonmatching lengths, handles, paths, PIDs or timestamps. The tap's own named-pipe transport is explicitly suppressed from capture accounting.
 
 ## Bounds
 
 - Maximum candidate processes: 12.
 - Maximum reports per process: 256.
+- Maximum simultaneously retained target-handle identity references per process: 16.
 - Maximum report bytes: 64.
 - Maximum capture duration: 10 minutes.
 - Maximum control-message length: 4 KiB.

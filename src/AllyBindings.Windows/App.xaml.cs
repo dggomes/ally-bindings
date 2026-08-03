@@ -1001,7 +1001,6 @@ public partial class App : System.Windows.Application
 
             cancellationToken.ThrowIfCancellationRequested();
             var result = await captureService.CompleteAsync(session, cancellationToken);
-            cancellationToken.ThrowIfCancellationRequested();
             session = null;
             _mainWindow.SetArmouryCaptureStatus(
                 $"Capture complete — review required: {result.FeatureReportCount} report 0x5A candidate(s), {result.RearMappingReportCount} structurally valid candidate(s). Bundle SHA-256: {result.BundleSha256}. Bundle: {result.BundlePath}");
@@ -1017,7 +1016,8 @@ public partial class App : System.Windows.Application
         catch (Exception ex)
         {
             if (ex is ArmouryCaptureTeardownException ||
-                (session?.UsesArmouryTap == true && ex is not OperationCanceledException))
+                (session?.UsesArmouryTap == true && !session.NativeTeardownConfirmed &&
+                    ex is not OperationCanceledException))
             {
                 captureTeardownFailure = ex;
             }

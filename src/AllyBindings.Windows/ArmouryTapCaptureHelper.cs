@@ -21,6 +21,7 @@ internal static class ArmouryTapCaptureHelper
     internal const string NativeResourceName = "AllyBindings.Windows.Native.AllyBindings.ArmouryTap.dll";
     internal const string TapUnavailableErrorCode = "tap-unavailable";
     internal const string TeardownUnconfirmedErrorCode = "teardown-unconfirmed";
+    internal const string EvidenceInvalidCleanupConfirmedErrorCode = "evidence-invalid-cleanup-confirmed";
     private static readonly TimeSpan MaximumCaptureDuration = TimeSpan.FromMinutes(10);
     private const int MaximumCandidateProcesses = ArmouryTapProtocol.MaximumCandidateProcesses;
     private static readonly JsonSerializerOptions JsonOptions = new();
@@ -60,6 +61,7 @@ internal static class ArmouryTapCaptureHelper
                     {
                         TapUnavailableException => TapUnavailableErrorCode,
                         TapTeardownUnconfirmedException => TeardownUnconfirmedErrorCode,
+                        TapEvidenceInvalidException => EvidenceInvalidCleanupConfirmedErrorCode,
                         _ => null,
                     };
                     await writer.WriteLineAsync(JsonSerializer.Serialize(
@@ -194,7 +196,8 @@ internal static class ArmouryTapCaptureHelper
                 return 2;
             }
             if (targets.Any(target => target.Diagnostics is null))
-                throw new InvalidDataException("A tapped Armoury process did not return authenticated pre-filter diagnostics.");
+                throw new TapEvidenceInvalidException(
+                    "A tapped Armoury process did not return authenticated pre-filter diagnostics.");
 
             var rawRecords = targets
                 .SelectMany(target => target.Records.Select(record => new NamedRawRecord(target.ProcessName, record)))
@@ -821,6 +824,11 @@ internal static class ArmouryTapCaptureHelper
             {
                 await _readerTask.WaitAsync(TimeSpan.FromSeconds(10)).ConfigureAwait(false);
             }
+            catch (Exception ex) when (ex is InvalidDataException or EndOfStreamException or TimeoutException)
+            {
+                throw new TapEvidenceInvalidException(
+                    "Native teardown was confirmed, but authenticated tap evidence was invalid or incomplete.", ex);
+            }
             finally
             {
                 _readerCancellation.Cancel();
@@ -1198,4 +1206,6 @@ internal static class ArmouryTapCaptureHelper
     }
     private sealed class TapTeardownUnconfirmedException(string message, Exception? innerException = null)
         : InvalidOperationException(message, innerException);
+    private sealed class TapEvidenceInvalidException(string message, Exception? innerException = null)
+        : IOException(message, innerException);
 }

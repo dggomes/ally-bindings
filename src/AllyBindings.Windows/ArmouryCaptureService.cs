@@ -285,9 +285,15 @@ internal sealed class ArmouryCaptureService
             ArmouryCaptureDiagnostics.Record(session.SessionId, "parent-result-rejected", failure, TryGetExitCode(session.HelperProcess));
             if (envelope.ErrorCode == ArmouryTapCaptureHelper.TeardownUnconfirmedErrorCode)
                 throw new ArmouryCaptureTeardownException(failure.Message, failure);
+            if (envelope.ErrorCode == ArmouryTapCaptureHelper.EvidenceInvalidCleanupConfirmedErrorCode)
+            {
+                await WaitForHelperExitAsync(session.HelperProcess, cancellationToken).ConfigureAwait(false);
+                session.MarkNativeTeardownConfirmed();
+            }
             throw new ArmouryCaptureException(session.SessionId, failure.Message, failure);
         }
         await WaitForHelperExitAsync(session.HelperProcess, cancellationToken).ConfigureAwait(false);
+        if (session.UsesArmouryTap) session.MarkNativeTeardownConfirmed();
         var output = envelope.Output;
         session.RecordAction("capture-stopped");
 
@@ -303,7 +309,7 @@ internal sealed class ArmouryCaptureService
             : ArmouryEtwCapturePipe.ResultFileName;
         var reportBytes = SerializeJson(new
         {
-            schemaVersion = 8,
+            schemaVersion = 9,
             actions = output.TapRecords is null
                 ? (object)session.Actions
                 : session.Actions.Select((marker, index) => new { ordinal = index + 1, marker.Action }).ToArray(),
@@ -352,7 +358,7 @@ internal sealed class ArmouryCaptureService
         });
         var manifestBytes = SerializeJson(new
         {
-            schemaVersion = 8,
+            schemaVersion = 9,
             capturedAtUtc = DateTimeOffset.UtcNow,
             applicationVersion = GetApplicationVersion(),
             source = output.TapRecords is null
@@ -419,6 +425,7 @@ internal sealed class ArmouryCaptureService
             ("feature-reports.json", reportBytes),
             ("manifest.json", manifestBytes),
             ("README.txt", readmeBytes));
+        session.MarkCompletionCommitted();
         session.Dispose();
         ArmouryCaptureDiagnostics.Delete(session.SessionId);
         return new(
@@ -655,16 +662,20 @@ internal sealed class ArmouryCaptureService
             new ArmouryCaptureStepWindow("Reset to Default", PhaseStart(3), PhaseStart(3).AddSeconds(9),
                 ArmouryCaptureExpectedReport.NativeReset),
         };
+        var diagnosticsSaturated = output.TapDiagnostics?.Any(item => item.CounterSaturated) == true;
         var captureFailure = output.EventsLost != 0 || output.OversizedEventCount != 0 ||
             output.PayloadDecodeFailureCount != 0 || output.AmbiguousCandidateCount != 0 ||
-            output.DroppedMatchingReportCount != 0 || output.AggregateLimitExceeded;
+            output.DroppedMatchingReportCount != 0 || output.AggregateLimitExceeded || diagnosticsSaturated;
         var validation = ArmouryCaptureSequenceValidator.Validate(
             evidence, windows, captureFailure ? 1 : 0,
             captureScopeVerified: false,
             targetIdentityStable,
             schemaDiscoveryIncomplete: false);
         var reasons = validation.Reasons.ToList();
-        if (reports.Count == 0) reasons.Add(DescribeTapDiagnostics(output.TapDiagnostics));
+        if (diagnosticsSaturated)
+            reasons.Add("Native tap pre-filter diagnostics saturated their bounded counters; review is inconclusive.");
+        else if (reports.Count == 0)
+            reasons.Add(DescribeTapDiagnostics(output.TapDiagnostics));
         return new(validation.IsConclusive, validation.FirstMappingMatched, validation.SecondMappingMatched,
             validation.NativeResetMatched, reasons);
     }
@@ -694,9 +705,11 @@ internal sealed class ArmouryCaptureService
         var attributes = diagnostics.Aggregate(0UL, (sum, item) => sum + item.AttributeReadFailureCount);
         var nonAsus = diagnostics.Aggregate(0UL, (sum, item) => sum + item.NonAsusDeviceCount);
         var otherAsus = diagnostics.Aggregate(0UL, (sum, item) => sum + item.OtherAsusProductCount);
-        var validatedTargetReportIds = reportId - invalid - attributes - nonAsus - otherAsus;
+        var unvalidatedWriteHandles = diagnostics.Aggregate(
+            0UL, (sum, item) => sum + item.UnvalidatedWriteHandleCount);
+        var validatedTargetReportIds = reportId - invalid - attributes - nonAsus - otherAsus - unvalidatedWriteHandles;
         if (validatedTargetReportIds == 0)
-            return $"The expanded native hooks observed {reportId} bounded 0x5A candidates but no positively identified Ally handle: invalid={invalid}, attribute-read-failure={attributes}, non-ASUS={nonAsus}, other-ASUS-product={otherAsus}.";
+            return $"The expanded native hooks observed {reportId} bounded 0x5A candidates but no positively identified Ally handle: invalid={invalid}, attribute-read-failure={attributes}, non-ASUS={nonAsus}, other-ASUS-product={otherAsus}, WriteFile-not-previously-validated-by-HID-API={unvalidatedWriteHandles}.";
         var prefix = diagnostics.Aggregate(0UL, (sum, item) => sum + item.Prefix5AD1Count);
         if (prefix == 0)
             return $"The expanded native hooks observed {validatedTargetReportIds} report-ID 0x5A writes to the Ally, but none used command 0xD1.";
@@ -871,6 +884,8 @@ internal sealed class ArmouryCaptureSession(
     string? tapUnavailableReason) : IDisposable
 {
     private int _disposed;
+    private int _nativeTeardownConfirmed;
+    private int _completionCommitted;
 
     public Guid SessionId { get; } = sessionId;
     public Process HelperProcess { get; } = helperProcess;
@@ -883,7 +898,12 @@ internal sealed class ArmouryCaptureSession(
     public string? TapUnavailableReason { get; } = tapUnavailableReason;
     public bool UsesArmouryTap { get; } = enabledProviders.Any(provider =>
         provider.Equals("AllyBindings native user-mode HID write tap", StringComparison.Ordinal));
+    public bool NativeTeardownConfirmed => Volatile.Read(ref _nativeTeardownConfirmed) != 0;
+    public bool CompletionCommitted => Volatile.Read(ref _completionCommitted) != 0;
     public List<CaptureActionMarker> Actions { get; } = [];
+
+    internal void MarkNativeTeardownConfirmed() => Volatile.Write(ref _nativeTeardownConfirmed, 1);
+    internal void MarkCompletionCommitted() => Volatile.Write(ref _completionCommitted, 1);
 
     public void RecordAction(string action, long? qpcOverride = null)
     {
@@ -904,9 +924,15 @@ internal sealed class ArmouryCaptureSession(
 
     public void CancelAndDelete()
     {
+        if (CompletionCommitted)
+        {
+            Dispose();
+            ArmouryCaptureDiagnostics.Delete(SessionId);
+            return;
+        }
         Exception? terminationFailure = null;
         Exception? cleanupFailure = null;
-        var helperExitVerified = false;
+        var helperExitVerified = NativeTeardownConfirmed;
         try
         {
             try
@@ -918,7 +944,8 @@ internal sealed class ArmouryCaptureSession(
                 // Continue to the mandatory process-termination check.
             }
 
-            helperExitVerified = HelperProcess.HasExited || HelperProcess.WaitForExit(5_000);
+            if (!helperExitVerified)
+                helperExitVerified = HelperProcess.HasExited || HelperProcess.WaitForExit(5_000);
         }
         catch (Exception ex)
         {
@@ -948,7 +975,7 @@ internal sealed class ArmouryCaptureSession(
         {
             terminationFailure = new InvalidOperationException("The elevated ETW helper exit could not be verified.");
         }
-        if (helperExitVerified && UsesArmouryTap && HelperProcess.ExitCode != 2)
+        if (helperExitVerified && UsesArmouryTap && !NativeTeardownConfirmed && HelperProcess.ExitCode != 2)
         {
             var unexpectedExit = new InvalidOperationException(
                 $"The tap helper exited with code {HelperProcess.ExitCode} instead of the cleanup-confirmed cancellation code 2.");

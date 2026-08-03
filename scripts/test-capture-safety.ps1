@@ -176,8 +176,8 @@ if ($service -notmatch 'Stopwatch\.GetTimestamp\(\)' -or
     $extractor -notmatch 'PerformanceCounterTimestamp') {
     throw 'Action markers and ETW reports are not correlated on the shared QPC clock.'
 }
-if (($service | Select-String -Pattern 'schemaVersion\s*=\s*8' -AllMatches).Matches.Count -ne 2) {
-    throw 'Capture report and manifest are not both stamped with tap-diagnostic schema version 8.'
+if ([regex]::Matches($service, 'schemaVersion\s*=\s*9').Count -ne 2) {
+    throw 'Capture report and manifest are not both stamped with tap-diagnostic schema version 9.'
 }
 if ($service -notmatch 'ally-bindings-\{captureKind\}' -or
     $service -notmatch 'armoury-tap-evidence\.json' -or
@@ -587,6 +587,11 @@ foreach ($required in @(
     'g_hidWrapperDepth',
     'g_internalIoDepth',
     'HandleClassification',
+    'CompareObjectHandles',
+    'IsKnownTargetHandle',
+    'RememberTargetHandle',
+    'ReleaseValidatedHandles',
+    'g_unvalidatedWriteHandle',
     'AttributeReadFailure',
     'BuildSummaryRecord',
     'MH_Initialize',
@@ -624,6 +629,10 @@ $safePrefixFilter = $tapNative.IndexOf('if (copy[0] != 0x5A)', [StringComparison
 $handleValidation = $tapNative.IndexOf('switch (ClassifyHandle(handle))', [StringComparison]::Ordinal)
 if ($lengthFilter -lt 0 -or $safePrefixFilter -lt $lengthFilter -or $handleValidation -lt $safePrefixFilter) {
     throw 'The native tap can probe arbitrary WriteFile handles before cheap length and safe-prefix filtering.'
+}
+if ($tapNative -notmatch 'if \(api == Api::KernelBaseWriteFile\)[\s\S]{0,250}!IsKnownTargetHandle\(handle\)[\s\S]{0,350}else \{[\s\S]{0,100}switch \(ClassifyHandle\(handle\)\)' -or
+    $tapNative -notmatch 'if \(!ReleaseValidatedHandles\(\)\) return false;') {
+    throw 'WriteFile retention is not restricted to object-identical HID-validated handles with confirmed owned-handle release.'
 }
 if ($tapNative -match 'const auto summary = BuildSummaryRecord\(\);[\s\S]{0,300}FlushFileBuffers\(g_pipe\)' -or
     $tapNative -match 'Api::Overflow' -or $tapHelper -match 'OverflowRecordApi' -or
@@ -716,10 +725,19 @@ foreach ($required in @(
     '$stopConfirmed',
     'if ($stopConfirmed)',
     'DeviceIoControlSetFeatureCallCount',
-    'DecodeDiagnosticSummary')) {
+    'DecodeDiagnosticSummaryBytes',
+    'UnvalidatedWriteHandleCount',
+    'bounded 0x5A regular-file WriteFile probe')) {
     if ($tapRuntime.IndexOf($required, [StringComparison]::Ordinal) -lt 0) {
         throw "The runtime test is missing fail-closed teardown or native-to-managed summary coverage: $required"
     }
+}
+if ($app -notmatch '!session\.NativeTeardownConfirmed' -or
+    $app -match 'CompleteAsync\(session, cancellationToken\);\s*cancellationToken\.ThrowIfCancellationRequested' -or
+    $service -notmatch 'EvidenceInvalidCleanupConfirmedErrorCode' -or
+    $service -notmatch 'session\.MarkNativeTeardownConfirmed\(\)' -or
+    $service -notmatch 'session\.MarkCompletionCommitted\(\)') {
+    throw 'Cleanup-confirmed protocol failures or late cancellation can still arm the reboot barrier or delete committed evidence.'
 }
 foreach ($required in @(
     'id: publish',
