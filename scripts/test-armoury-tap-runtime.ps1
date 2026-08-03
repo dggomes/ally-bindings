@@ -27,7 +27,7 @@ public static class ArmouryTapRuntimeNative
     public static extern bool FreeLibrary(IntPtr module);
 }
 [UnmanagedFunctionPointer(CallingConvention.Winapi)]
-public delegate uint ArmouryTapStopDelegate();
+public delegate uint ArmouryTapStopDelegate(IntPtr ignored);
 '@
 
 $tempDirectory = Join-Path ([IO.Path]::GetTempPath()) (
@@ -91,7 +91,7 @@ try {
         if ($record[28 + $index] -ne $token[$index]) { throw 'Tap ready record capability token mismatch.' }
     }
 
-    if ($stop.Invoke() -ne 1) { throw 'ArmouryTapStop did not confirm clean hook teardown.' }
+    if ($stop.Invoke([IntPtr]::Zero) -ne 1) { throw 'ArmouryTapStop did not confirm clean hook teardown.' }
     if (-not [ArmouryTapRuntimeNative]::FreeLibrary($module)) {
         throw "FreeLibrary failed: $([Runtime.InteropServices.Marshal]::GetLastWin32Error())"
     }
@@ -139,7 +139,7 @@ try {
 }
 finally {
     if ($module -ne [IntPtr]::Zero -and $null -ne $stop) {
-        try { $stop.Invoke() | Out-Null }
+        try { $stop.Invoke([IntPtr]::Zero) | Out-Null }
         finally { [ArmouryTapRuntimeNative]::FreeLibrary($module) | Out-Null }
     }
     if ($null -ne $pipe) { $pipe.Dispose() }

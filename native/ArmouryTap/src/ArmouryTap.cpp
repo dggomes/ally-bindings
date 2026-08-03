@@ -187,9 +187,9 @@ bool LoadConfig(HMODULE module) {
     constexpr std::string_view pipePrefix = "pipe=";
     constexpr std::string_view tokenPrefix = "token=";
     if (!pipeLine.starts_with(pipePrefix) || !tokenLine.starts_with(tokenPrefix)) return false;
-    const std::string pipeName = pipeLine.substr(std::size(pipePrefix) - 1);
+    const std::string pipeName = pipeLine.substr(pipePrefix.size());
     g_pipeName.assign(pipeName.begin(), pipeName.end());
-    return !g_pipeName.empty() && ParseHexToken(tokenLine.substr(std::size(tokenPrefix) - 1));
+    return !g_pipeName.empty() && ParseHexToken(tokenLine.substr(tokenPrefix.size()));
 }
 
 bool InstallHooks() {
