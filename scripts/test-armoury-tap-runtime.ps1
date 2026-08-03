@@ -36,16 +36,19 @@ $tempDirectory = Join-Path ([IO.Path]::GetTempPath()) (
 $testDll = Join-Path $tempDirectory 'AllyBindings.ArmouryTap.dll'
 $configPath = "$testDll.config"
 $module = [IntPtr]::Zero
+$hidModule = [IntPtr]::Zero
 $pipe = $null
 $stop = $null
 try {
     Copy-Item $nativeDll $testDll -Force
+    $hidModule = [ArmouryTapRuntimeNative]::LoadLibraryW('hid.dll')
+    if ($hidModule -eq [IntPtr]::Zero) { throw 'The runtime test could not load hid.dll for the complete two-hook contract.' }
     $pipeName = 'ally-bindings-armoury-runtime-' + [Guid]::NewGuid().ToString('N')
     $token = New-Object byte[] 32
     $rng = [Security.Cryptography.RandomNumberGenerator]::Create()
     try { $rng.GetBytes($token) } finally { $rng.Dispose() }
     $tokenHex = [BitConverter]::ToString($token).Replace('-', '')
-    $config = "pipe=\\.\pipe\$pipeName`ntoken=$tokenHex`n"
+    $config = "pipe=\\.\pipe\$pipeName`ntoken=$tokenHex`nhelper=$PID`n"
     [IO.File]::WriteAllText($configPath, $config, [Text.ASCIIEncoding]::new())
 
     $pipe = [IO.Pipes.NamedPipeServerStream]::new(
@@ -59,8 +62,20 @@ try {
     if ($module -eq [IntPtr]::Zero) {
         throw "LoadLibraryW failed: $([Runtime.InteropServices.Marshal]::GetLastWin32Error())"
     }
-    $stopAddress = [ArmouryTapRuntimeNative]::GetProcAddress($module, 'ArmouryTapStop')
-    if ($stopAddress -eq [IntPtr]::Zero) { throw 'ArmouryTapStop export was not found.' }
+    $systemStopAddress = [ArmouryTapRuntimeNative]::GetProcAddress($module, 'ArmouryTapStop')
+    if ($systemStopAddress -eq [IntPtr]::Zero) { throw 'ArmouryTapStop export was not found.' }
+    $stop = [Runtime.InteropServices.Marshal]::GetDelegateForFunctionPointer(
+        $systemStopAddress, [type][ArmouryTapStopDelegate])
+    $assembly = [Reflection.Assembly]::LoadFrom($managedDll)
+    $helperType = $assembly.GetType('AllyBindings.Windows.ArmouryTapCaptureHelper', $true)
+    $flags = [Reflection.BindingFlags]'Static, NonPublic'
+    $readExportRva = $helperType.GetMethod('ReadExportRva', $flags)
+    if ($null -eq $readExportRva) { throw 'Production tap export parser was not found.' }
+    $stopRva = [uint32]$readExportRva.Invoke($null, @($testDll, 'ArmouryTapStop'))
+    $stopAddress = [IntPtr]::new($module.ToInt64() + [int64]$stopRva)
+    if ($stopAddress -ne $systemStopAddress) {
+        throw 'Production tap export parser did not match GetProcAddress.'
+    }
     $stop = [Runtime.InteropServices.Marshal]::GetDelegateForFunctionPointer(
         $stopAddress, [type][ArmouryTapStopDelegate])
     if (-not $wait.Wait([TimeSpan]::FromSeconds(10))) { throw 'Tap DLL did not connect to its configured pipe.' }
@@ -97,9 +112,6 @@ try {
     }
     $module = [IntPtr]::Zero
 
-    $assembly = [Reflection.Assembly]::LoadFrom($managedDll)
-    $helperType = $assembly.GetType('AllyBindings.Windows.ArmouryTapCaptureHelper', $true)
-    $flags = [Reflection.BindingFlags]'Static, NonPublic'
     $openToken = $helperType.GetMethod('OpenParentImpersonationToken', $flags)
     $maximumAccess = $helperType.GetMethod('GetMaximumAllowedAccess', $flags)
     if ($null -eq $openToken -or $null -eq $maximumAccess) { throw 'ACL verification methods were not found.' }
@@ -143,6 +155,7 @@ finally {
         finally { [ArmouryTapRuntimeNative]::FreeLibrary($module) | Out-Null }
     }
     if ($null -ne $pipe) { $pipe.Dispose() }
+    if ($hidModule -ne [IntPtr]::Zero) { [ArmouryTapRuntimeNative]::FreeLibrary($hidModule) | Out-Null }
     if (Test-Path $tempDirectory) { Remove-Item $tempDirectory -Recurse -Force }
 }
 

@@ -50,7 +50,7 @@ It does not contain general USB traffic, keyboard input, XInput history, arbitra
 - **Signature rejected:** update/repair Armoury rather than bypassing the check.
 - **Target architecture rejected:** the diagnostic supports x64 Armoury processes only.
 - **No matching writes:** keep Armoury open and apply each requested change; the process boundary may need further review.
-- **TEARDOWN UNCONFIRMED:** close Armoury and restart Ally Bindings. Do not start another capture or any native reset/write operation in that app session.
+- **TEARDOWN UNCONFIRMED:** restart Windows. Restarting Ally Bindings alone does not clear the persisted native-write barrier.
 - **Cancelled:** partial artifacts are deleted and cannot be accepted as evidence.
 
 Every result remains **REVIEW REQUIRED**. Captured bytes never unlock hardware writes automatically.

@@ -73,6 +73,19 @@ public sealed class ConfigurationValidatorTests
     }
 
     [Fact]
+    public void Normalize_preserves_persisted_tap_teardown_barrier()
+    {
+        var blockedSince = DateTimeOffset.Parse("2026-08-03T01:00:00Z");
+
+        var result = ConfigurationValidator.Normalize(AppConfiguration.CreateDefault() with
+        {
+            ArmouryTapTeardownBlockedSinceUtc = blockedSince,
+        });
+
+        Assert.Equal(blockedSince, result.Configuration.ArmouryTapTeardownBlockedSinceUtc);
+    }
+
+    [Fact]
     public void Rear_sources_accept_controller_outputs_but_standard_sources_cannot_target_rear_buttons()
     {
         var custom = new MappingProfile

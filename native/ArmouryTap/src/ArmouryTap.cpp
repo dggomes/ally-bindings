@@ -45,6 +45,7 @@ HANDLE g_stopEvent = nullptr;
 HANDLE g_queueEvent = nullptr;
 HANDLE g_worker = nullptr;
 HANDLE g_pipe = INVALID_HANDLE_VALUE;
+HANDLE g_helperProcess = nullptr;
 CRITICAL_SECTION g_queueLock{};
 std::array<WireRecord, kQueueCapacity> g_queue{};
 size_t g_head = 0;
@@ -72,9 +73,12 @@ bool IsTargetHandle(HANDLE handle) {
 
 bool PrepareRecord(Api api, HANDLE handle, const void* buffer, size_t length, WireRecord& record) {
     if (g_stopping.load(std::memory_order_relaxed) || buffer == nullptr ||
-        length < kMinReport || length > kMaxReport ||
-        static_cast<const uint8_t*>(buffer)[0] != 0x5A ||
-        static_cast<const uint8_t*>(buffer)[1] != kRearMappingCommand || !IsTargetHandle(handle)) return false;
+        length < kMinReport || length > kMaxReport) return false;
+    std::array<uint8_t, kMaxReport> copy{};
+    SIZE_T bytesRead = 0;
+    if (!ReadProcessMemory(GetCurrentProcess(), buffer, copy.data(), length, &bytesRead) ||
+        bytesRead != length || copy[0] != 0x5A || copy[1] != kRearMappingCommand ||
+        !IsTargetHandle(handle)) return false;
 
     record = {};
     record.magic = kMagic;
@@ -86,7 +90,7 @@ bool PrepareRecord(Api api, HANDLE handle, const void* buffer, size_t length, Wi
     QueryPerformanceCounter(&qpc);
     record.qpc = qpc.QuadPart;
     memcpy(record.token, g_token.data(), g_token.size());
-    memcpy(record.report, buffer, length);
+    memcpy(record.report, copy.data(), length);
     return true;
 }
 
@@ -178,39 +182,49 @@ bool LoadConfig(HMODULE module) {
     const size_t firstEnd = text.find('\n');
     if (firstEnd == std::string::npos) return false;
     const size_t secondEnd = text.find('\n', firstEnd + 1);
+    if (secondEnd == std::string::npos) return false;
+    const size_t thirdEnd = text.find('\n', secondEnd + 1);
     std::string pipeLine = text.substr(0, firstEnd);
-    std::string tokenLine = text.substr(firstEnd + 1,
-        secondEnd == std::string::npos ? std::string::npos : secondEnd - firstEnd - 1);
+    std::string tokenLine = text.substr(firstEnd + 1, secondEnd - firstEnd - 1);
+    std::string helperLine = text.substr(secondEnd + 1,
+        thirdEnd == std::string::npos ? std::string::npos : thirdEnd - secondEnd - 1);
     if (!pipeLine.empty() && pipeLine.back() == '\r') pipeLine.pop_back();
     if (!tokenLine.empty() && tokenLine.back() == '\r') tokenLine.pop_back();
-    if (secondEnd != std::string::npos && text.find_first_not_of("\r\n", secondEnd) != std::string::npos) return false;
+    if (!helperLine.empty() && helperLine.back() == '\r') helperLine.pop_back();
+    if (thirdEnd != std::string::npos && text.find_first_not_of("\r\n", thirdEnd) != std::string::npos) return false;
     constexpr std::string_view pipePrefix = "pipe=";
     constexpr std::string_view tokenPrefix = "token=";
-    if (!pipeLine.starts_with(pipePrefix) || !tokenLine.starts_with(tokenPrefix)) return false;
+    constexpr std::string_view helperPrefix = "helper=";
+    if (!pipeLine.starts_with(pipePrefix) || !tokenLine.starts_with(tokenPrefix) ||
+        !helperLine.starts_with(helperPrefix)) return false;
+    char* helperEnd = nullptr;
+    const auto helperPid = strtoul(helperLine.c_str() + helperPrefix.size(), &helperEnd, 10);
+    if (!helperEnd || *helperEnd != '\0' || helperPid == 0 || helperPid > MAXDWORD) return false;
     const std::string pipeName = pipeLine.substr(pipePrefix.size());
     g_pipeName.assign(pipeName.begin(), pipeName.end());
-    return !g_pipeName.empty() && ParseHexToken(tokenLine.substr(tokenPrefix.size()));
+    g_helperProcess = OpenProcess(SYNCHRONIZE, FALSE, static_cast<DWORD>(helperPid));
+    return !g_pipeName.empty() && g_helperProcess != nullptr &&
+        ParseHexToken(tokenLine.substr(tokenPrefix.size()));
 }
 
 bool InstallHooks() {
     if (MH_Initialize() != MH_OK) return false;
-    size_t installed = 0;
-    if (HMODULE hid = GetModuleHandleW(L"hid.dll")) {
-        if (auto target = reinterpret_cast<LPVOID>(GetProcAddress(hid, "HidD_SetFeature")); target &&
-            MH_CreateHook(target, reinterpret_cast<void*>(&HookSetFeature),
-                reinterpret_cast<void**>(&g_originalSetFeature)) == MH_OK &&
-            MH_EnableHook(target) == MH_OK) ++installed;
-    }
-    if (HMODULE kernelBase = GetModuleHandleW(L"KernelBase.dll")) {
-        if (auto target = reinterpret_cast<LPVOID>(GetProcAddress(kernelBase, "WriteFile")); target &&
-            MH_CreateHook(target, reinterpret_cast<void*>(&HookWriteFile),
-                reinterpret_cast<void**>(&g_originalWriteFile)) == MH_OK &&
-            MH_EnableHook(target) == MH_OK) ++installed;
-    }
-    if (installed == 0) {
+    const auto rollback = []() {
+        MH_DisableHook(MH_ALL_HOOKS);
         MH_Uninitialize();
         return false;
-    }
+    };
+    HMODULE hid = GetModuleHandleW(L"hid.dll");
+    HMODULE kernelBase = GetModuleHandleW(L"KernelBase.dll");
+    if (!hid || !kernelBase) return rollback();
+    auto setFeature = reinterpret_cast<LPVOID>(GetProcAddress(hid, "HidD_SetFeature"));
+    auto writeFile = reinterpret_cast<LPVOID>(GetProcAddress(kernelBase, "WriteFile"));
+    if (!setFeature || !writeFile) return rollback();
+    if (MH_CreateHook(setFeature, reinterpret_cast<void*>(&HookSetFeature),
+        reinterpret_cast<void**>(&g_originalSetFeature)) != MH_OK) return rollback();
+    if (MH_CreateHook(writeFile, reinterpret_cast<void*>(&HookWriteFile),
+        reinterpret_cast<void**>(&g_originalWriteFile)) != MH_OK) return rollback();
+    if (MH_EnableHook(setFeature) != MH_OK || MH_EnableHook(writeFile) != MH_OK) return rollback();
     return true;
 }
 
@@ -239,14 +253,14 @@ bool DisableHooksAndDrain() {
 
 DWORD WINAPI WorkerMain(void* parameter) {
     const auto module = static_cast<HMODULE>(parameter);
-    if (!LoadConfig(module)) return 2;
+    if (!LoadConfig(module)) FreeLibraryAndExitThread(module, 2);
     g_pipe = CreateFileW(g_pipeName.c_str(), GENERIC_WRITE, 0, nullptr, OPEN_EXISTING,
         FILE_ATTRIBUTE_NORMAL, nullptr);
-    if (g_pipe == INVALID_HANDLE_VALUE) return 3;
+    if (g_pipe == INVALID_HANDLE_VALUE) FreeLibraryAndExitThread(module, 3);
     if (!InstallHooks()) {
         CloseHandle(g_pipe);
         g_pipe = INVALID_HANDLE_VALUE;
-        return 4;
+        FreeLibraryAndExitThread(module, 4);
     }
     WireRecord ready{};
     ready.magic = kMagic;
@@ -258,12 +272,18 @@ DWORD WINAPI WorkerMain(void* parameter) {
         const bool hooksRemoved = DisableHooksAndDrain();
         CloseHandle(g_pipe);
         g_pipe = INVALID_HANDLE_VALUE;
-        return hooksRemoved ? 5 : 6;
+        if (hooksRemoved) FreeLibraryAndExitThread(module, 5);
+        return 6;
     }
 
     bool transportFailure = false;
-    HANDLE waits[]{g_stopEvent, g_queueEvent};
-    while (WaitForMultipleObjects(2, waits, FALSE, INFINITE) != WAIT_OBJECT_0) {
+    bool helperExited = false;
+    HANDLE waits[]{g_stopEvent, g_queueEvent, g_helperProcess};
+    for (;;) {
+        const DWORD wait = WaitForMultipleObjects(3, waits, FALSE, INFINITE);
+        if (wait == WAIT_OBJECT_0) break;
+        if (wait == WAIT_OBJECT_0 + 2) { helperExited = true; break; }
+        if (wait != WAIT_OBJECT_0 + 1) { transportFailure = true; break; }
         WireRecord record{};
         while (Pop(record)) {
             DWORD written = 0;
@@ -299,7 +319,9 @@ DWORD WINAPI WorkerMain(void* parameter) {
     if (!FlushFileBuffers(g_pipe)) transportFailure = true;
     CloseHandle(g_pipe);
     g_pipe = INVALID_HANDLE_VALUE;
-    return transportFailure ? 7 : 0;
+    const DWORD exitCode = transportFailure ? 7 : 0;
+    if (helperExited) FreeLibraryAndExitThread(module, exitCode);
+    return exitCode;
 }
 }
 
@@ -308,7 +330,7 @@ extern "C" __declspec(dllexport) DWORD WINAPI ArmouryTapStop(void*) {
     SetEvent(g_stopEvent);
     if (WaitForSingleObject(g_worker, 10'000) != WAIT_OBJECT_0) return 0;
     DWORD workerExitCode = 1;
-    return GetExitCodeThread(g_worker, &workerExitCode) && workerExitCode == 0 ? 1u : 0u;
+    return GetExitCodeThread(g_worker, &workerExitCode) && workerExitCode != 6 ? 1u : 0u;
 }
 
 BOOL WINAPI DllMain(HINSTANCE instance, DWORD reason, LPVOID) {
@@ -325,6 +347,7 @@ BOOL WINAPI DllMain(HINSTANCE instance, DWORD reason, LPVOID) {
         g_stopping.store(true, std::memory_order_relaxed);
         if (g_stopEvent) SetEvent(g_stopEvent);
         if (g_worker) CloseHandle(g_worker);
+        if (g_helperProcess) CloseHandle(g_helperProcess);
         if (g_queueEvent) CloseHandle(g_queueEvent);
         if (g_stopEvent) CloseHandle(g_stopEvent);
         DeleteCriticalSection(&g_queueLock);

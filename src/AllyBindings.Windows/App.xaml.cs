@@ -201,6 +201,31 @@ public partial class App : System.Windows.Application
             Configuration = loaded.Configuration;
             _configurationWarnings = loaded.Warnings;
 
+            if (Configuration.ArmouryTapTeardownBlockedSinceUtc is { } blockedSince)
+            {
+                var estimatedBootUtc = DateTimeOffset.UtcNow - TimeSpan.FromMilliseconds(Environment.TickCount64);
+                if (estimatedBootUtc > blockedSince)
+                {
+                    Configuration = Configuration with { ArmouryTapTeardownBlockedSinceUtc = null };
+                    await _profileStore.SaveAsync(Configuration);
+                    _configurationWarnings = _configurationWarnings
+                        .Append("Cleared the persisted Armoury tap write barrier after a Windows restart proved the affected processes exited.")
+                        .ToList();
+                }
+                else
+                {
+                    _armouryCaptureTeardownUnconfirmed = true;
+                    _armouryCaptureInProgress = true;
+                    _armouryCaptureCompletion = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                    _armouryCaptureCompletion.SetException(new InvalidOperationException(
+                        "A previous native tap unload was not confirmed. Restart Windows before controller writes can resume."));
+                    _ = _armouryCaptureCompletion.Task.Exception;
+                    _configurationWarnings = _configurationWarnings
+                        .Append("Controller writes remain blocked because a previous native tap unload was not confirmed. Restart Windows; restarting Ally Bindings alone is not sufficient.")
+                        .ToList();
+                }
+            }
+
             if (Configuration.EnableAsusRearButtonMappings && !ArmouryProtocolValidation.IsOperationApproved(isRecoveryReset: false))
             {
                 Configuration = Configuration with { EnableAsusRearButtonMappings = false };
@@ -224,7 +249,8 @@ public partial class App : System.Windows.Application
                 _configurationWarnings = _configurationWarnings.Append("Run-at-login preference was reconciled with the current Windows registration.").ToList();
             }
 
-            var recoveryWasPending = Configuration.AsusRearButtonMappingActive;
+            var recoveryWasPending = Configuration.AsusRearButtonMappingActive &&
+                !_armouryCaptureTeardownUnconfirmed;
             var backendStatus = await ReplaceBackendAsync(
                 Configuration.EnableAsusRearButtonMappings || recoveryWasPending,
                 restoreCurrent: false,
@@ -927,6 +953,16 @@ public partial class App : System.Windows.Application
                 else
                 {
                     _armouryCaptureTeardownUnconfirmed = true;
+                    Configuration = Configuration with
+                    {
+                        ArmouryTapTeardownBlockedSinceUtc =
+                            Configuration.ArmouryTapTeardownBlockedSinceUtc ?? DateTimeOffset.UtcNow,
+                    };
+                    try { await _profileStore.SaveAsync(Configuration); }
+                    catch (Exception persistenceFailure)
+                    {
+                        captureTeardownFailure = new AggregateException(captureTeardownFailure, persistenceFailure);
+                    }
                 }
             }
             finally
@@ -940,10 +976,10 @@ public partial class App : System.Windows.Application
             else
             {
                 captureCompletion?.TrySetException(new InvalidOperationException(
-                    "The elevated ETW helper exit could not be confirmed. Native controller resets remain blocked until Ally Bindings restarts.",
+                    "The native tap unload could not be confirmed. Native controller resets remain blocked until Windows restarts.",
                     captureTeardownFailure));
                 _mainWindow.SetArmouryCaptureStatus(
-                    "CAPTURE TEARDOWN UNCONFIRMED — native controller resets are blocked. Restart Ally Bindings before continuing.");
+                    "CAPTURE TEARDOWN UNCONFIRMED — native controller resets are blocked. Restart Windows before continuing.");
             }
         }
         if (deferredFailureMessage is not null && !cancellationToken.IsCancellationRequested)
@@ -1177,8 +1213,8 @@ public partial class App : System.Windows.Application
         {
             var exitWithoutReset = await _mainWindow.ShowControllerDialogAsync(
                 "ETW capture teardown unconfirmed",
-                "The elevated capture helper did not confirm exit, so Ally Bindings will not issue any controller reset or backend shutdown write. Exiting now severs the capture pipe so Windows can tear the helper down.\n\n" +
-                $"Details: {ex.Message}\n\nExit Ally Bindings now?",
+                "A native tap unload was not confirmed, so Ally Bindings will not issue any controller reset or backend shutdown write. The fail-closed barrier is persisted across app restarts.\n\n" +
+                $"Details: {ex.Message}\n\nExit without reset now? Restart Windows before reopening Ally Bindings or using native controller writes.",
                 primaryLabel: "Exit without reset",
                 secondaryLabel: "Stay open");
             if (!exitWithoutReset)

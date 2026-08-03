@@ -135,6 +135,7 @@ jobs:
             "artifacts/AllyBindings-$tag-win-x64.exe#Standalone Windows x64 executable" `
             "artifacts/AllyBindings-$tag-win-x64.exe.sha256#Standalone executable SHA-256"
       - name: Verify uploaded draft assets and publish
+        id: publish
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
@@ -174,8 +175,9 @@ jobs:
               -not $release.isDraft -or -not $release.isPrerelease) {
             throw "Draft release metadata verification failed"
           }
-          gh release edit $tag --repo $env:GITHUB_REPOSITORY --draft=false --prerelease
           try {
+            gh release edit $tag --repo $env:GITHUB_REPOSITORY --draft=false --prerelease
+            if ($LASTEXITCODE -ne 0) { throw "Release publication failed" }
             $publicVerify = Join-Path $PWD 'artifacts/public-release-verification'
             New-Item -ItemType Directory -Force -Path $publicVerify | Out-Null
             gh release download $tag --repo $env:GITHUB_REPOSITORY --dir $publicVerify
@@ -216,3 +218,44 @@ jobs:
             }
             throw $verificationError
           }
+      - name: Fail-closed public release auditor
+        if: always()
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PUBLISH_OUTCOME: ${{ steps.publish.outcome }}
+        run: |
+          $tag = $env:GITHUB_REF_NAME
+          $json = gh release view $tag --repo $env:GITHUB_REPOSITORY --json isDraft 2>$null
+          if ($LASTEXITCODE -ne 0) { exit 0 }
+          $release = $json | ConvertFrom-Json
+          if (-not $release.isDraft -and $env:PUBLISH_OUTCOME -ne 'success') {
+            Write-Warning "Withdrawing unverified public release $tag after publish-step outcome '$env:PUBLISH_OUTCOME'."
+            gh release edit $tag --repo $env:GITHUB_REPOSITORY --draft=true
+            if ($LASTEXITCODE -ne 0) {
+              gh release delete $tag --repo $env:GITHUB_REPOSITORY --yes --cleanup-tag=false
+              if ($LASTEXITCODE -ne 0) { throw "Could not withdraw unverified public release $tag" }
+            }
+          }
+
+  public-release-auditor:
+    name: Withdraw any unverified public release
+    needs: release
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Enforce fail-closed publication boundary
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_JOB_RESULT: ${{ needs.release.result }}
+        run: |
+          set -euo pipefail
+          tag="$GITHUB_REF_NAME"
+          release_json="$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json isDraft 2>/dev/null || true)"
+          if [ -z "$release_json" ]; then exit 0; fi
+          is_draft="$(printf '%s' "$release_json" | jq -r '.isDraft')"
+          if [ "$is_draft" = false ] && [ "$RELEASE_JOB_RESULT" != success ]; then
+            echo "Withdrawing unverified public release $tag after release job result '$RELEASE_JOB_RESULT'."
+            gh release edit "$tag" --repo "$GITHUB_REPOSITORY" --draft=true ||
+              gh release delete "$tag" --repo "$GITHUB_REPOSITORY" --yes --cleanup-tag=false
+          fi

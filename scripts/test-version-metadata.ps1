@@ -22,8 +22,10 @@ $actual = [Diagnostics.FileVersionInfo]::GetVersionInfo($resolvedExecutable)
 if ($actual.FileVersion -cne $expectedFile) {
     throw "Built FileVersion '$($actual.FileVersion)' does not match '$expectedFile'."
 }
-if (-not $actual.ProductVersion.StartsWith($expectedProduct, [StringComparison]::Ordinal)) {
-    throw "Built ProductVersion '$($actual.ProductVersion)' does not start with '$expectedProduct'."
+$productPattern = '^' + [Regex]::Escape($expectedProduct) +
+    '(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$'
+if ($actual.ProductVersion -cnotmatch $productPattern) {
+    throw "Built ProductVersion '$($actual.ProductVersion)' is neither exactly '$expectedProduct' nor that version with valid build metadata."
 }
 
 Write-Output "Windows version metadata validated: ProductVersion=$($actual.ProductVersion); FileVersion=$($actual.FileVersion)."

@@ -36,6 +36,7 @@ public sealed record AppConfiguration
     public DateTimeOffset? LastUpdateCheckUtc { get; init; }
     public bool EnableAsusRearButtonMappings { get; init; }
     public bool AsusRearButtonMappingActive { get; init; }
+    public DateTimeOffset? ArmouryTapTeardownBlockedSinceUtc { get; init; }
     public ShortcutSettings Shortcut { get; init; } = new();
     public List<MappingProfile> Profiles { get; init; } = [MappingProfile.Default];
 

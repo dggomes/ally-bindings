@@ -27,7 +27,7 @@ Every condition must pass or capture stops before injection:
    - `ArmouryCrate.Service.exe`
    - `ArmouryCrateSE.exe`
    - `AsusOptimization.exe`
-5. Every selected executable has a valid embedded Authenticode signature with the exact approved publisher name `ASUSTeK COMPUTER INC.`.
+5. Every selected executable has a valid embedded Authenticode signature with whole-chain, cache-only revocation checking; unknown/offline revocation state fails closed to ETW. The leaf requires exact ASUS common-name and organisation RDNs, code-signing EKU and digital-signature key usage.
 6. Every selected process is under a trusted Windows, Program Files or Program Files (x86) root; reparse traversal is rejected, and Windows `AccessCheck` against an impersonation copy of the unelevated parent token must show no content-write, create, delete, DACL-change or ownership-change access on the executable or its ancestor chain up to that trusted root. The verified image file is hash-bound and held without write/delete sharing through injection and unload.
 7. At most four exact candidates may be selected; excess or ambiguous process inventory fails closed.
 8. The user confirms the displayed controller target and the injection/process risk before UAC and is told to close games and anti-cheat software.
@@ -112,10 +112,11 @@ A capture can inform a later source change but cannot mutate `ArmouryProtocolVal
 ## Teardown
 
 - Completion and cancellation send an authenticated stop request to every tap.
+- Every DLL holds a synchronized handle to the exact elevated helper process; helper death independently triggers hook disable/drain and `FreeLibraryAndExitThread` self-unload.
 - Each DLL disables hooks, waits for active callbacks to drain, closes IPC and unloads itself.
 - The helper positively verifies target-module unload and its own exit.
 - The helper overwrites no target or application file and deletes the random extraction directory.
-- Failure to confirm hook unload, helper exit or temporary-file deletion is prominently reported as `TEARDOWN UNCONFIRMED`; the run is rejected and no native reset/write may start until Ally Bindings restarts.
+- Failure to confirm hook unload, helper exit or temporary-file deletion is prominently reported as `TEARDOWN UNCONFIRMED`; the run is rejected and a persisted write barrier survives app restarts. Only a Windows restart, which proves the affected process objects exited, clears it.
 - A target-process exit is safe: the DLL and hooks disappear with the process and the capture records that termination.
 
 ## Release gates

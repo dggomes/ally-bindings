@@ -473,6 +473,12 @@ foreach ($required in @(
     'FreeLibrary',
     'FindRemoteModule',
     'FindRemoteModuleByPathWithRetry',
+    'GetModuleHandleExW',
+    'LifecycleHandle',
+    'helper={Environment.ProcessId}',
+    'RevocationChecks = 1',
+    'firstError == 18',
+    'teardown remains retryable',
     'ReadExportRva',
     'ArmouryTapStop',
     'MaximumCaptureDuration',
@@ -512,6 +518,10 @@ foreach ($required in @(
     'MH_Uninitialize',
     'DisableHooksAndDrain',
     'transportFailure',
+    'g_helperProcess',
+    'helperPrefix',
+    'FreeLibraryAndExitThread',
+    'ReadProcessMemory',
     'SetLastError(incomingError)',
     'SetLastError(error)',
     'g_activeCallbacks',
@@ -528,6 +538,24 @@ foreach ($required in @(
     'kQueueCapacity')) {
     if ($tapNative.IndexOf($required, [StringComparison]::Ordinal) -lt 0) {
         throw "The native tap DLL is missing safety requirement: $required"
+    }
+}
+
+foreach ($required in @(
+    'ArmouryTapTeardownBlockedSinceUtc',
+    'Restart Windows before controller writes can resume',
+    '_armouryCaptureTeardownUnconfirmed = true')) {
+    if ($app.IndexOf($required, [StringComparison]::Ordinal) -lt 0) {
+        throw "The app-wide persisted tap teardown barrier is missing requirement: $required"
+    }
+}
+foreach ($required in @(
+    'id: publish',
+    'Fail-closed public release auditor',
+    'public-release-auditor',
+    'needs.release.result')) {
+    if ($releaseWorkflow.IndexOf($required, [StringComparison]::Ordinal) -lt 0) {
+        throw "The release publication boundary is missing fail-closed control: $required"
     }
 }
 
