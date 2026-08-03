@@ -61,6 +61,7 @@ try {
         [IO.Pipes.PipeTransmissionMode]::Byte,
         [IO.Pipes.PipeOptions]::Asynchronous)
     $wait = $pipe.WaitForConnectionAsync()
+    Write-Host 'Armoury tap runtime phase: loading native module.'
     $module = [ArmouryTapRuntimeNative]::LoadLibraryW($testDll)
     if ($module -eq [IntPtr]::Zero) {
         throw "LoadLibraryW failed: $([Runtime.InteropServices.Marshal]::GetLastWin32Error())"
@@ -68,6 +69,7 @@ try {
     if ([ArmouryTapRuntimeNative]::GetModuleHandleW('hid.dll') -eq [IntPtr]::Zero) {
         throw 'The tap PE dependency did not cause Windows to map hid.dll before hook installation.'
     }
+    Write-Host 'Armoury tap runtime phase: native module and HID dependency loaded.'
     $systemStopAddress = [ArmouryTapRuntimeNative]::GetProcAddress($module, 'ArmouryTapStop')
     if ($systemStopAddress -eq [IntPtr]::Zero) { throw 'ArmouryTapStop export was not found.' }
     $stop = [Runtime.InteropServices.Marshal]::GetDelegateForFunctionPointer(
@@ -89,6 +91,7 @@ try {
     if ($stopAddress -ne $systemStopAddress) {
         throw 'Production tap export parser did not match GetProcAddress.'
     }
+    Write-Host 'Armoury tap runtime phase: managed probes and export resolution passed.'
     $stop = [Runtime.InteropServices.Marshal]::GetDelegateForFunctionPointer(
         $stopAddress, [type][ArmouryTapStopDelegate])
     if (-not $wait.Wait([TimeSpan]::FromSeconds(10))) { throw 'Tap DLL did not connect to its configured pipe.' }
@@ -119,7 +122,9 @@ try {
         if ($record[28 + $index] -ne $token[$index]) { throw 'Tap ready record capability token mismatch.' }
     }
 
+    Write-Host 'Armoury tap runtime phase: authenticated ready record passed; stopping hooks.'
     if ($stop.Invoke([IntPtr]::Zero) -ne 1) { throw 'ArmouryTapStop did not confirm clean hook teardown.' }
+    Write-Host 'Armoury tap runtime phase: hook teardown passed; unloading native module.'
     if (-not [ArmouryTapRuntimeNative]::FreeLibrary($module)) {
         throw "FreeLibrary failed: $([Runtime.InteropServices.Marshal]::GetLastWin32Error())"
     }
@@ -127,6 +132,7 @@ try {
     if ([ArmouryTapRuntimeNative]::GetModuleHandleW('hid.dll') -ne [IntPtr]::Zero) {
         throw 'The tap did not release the system hid.dll reference it acquired for hook installation.'
     }
+    Write-Host 'Armoury tap runtime phase: native module and HID dependency unloaded; checking ACLs.'
 
     $openToken = $helperType.GetMethod('OpenParentImpersonationToken', $flags)
     $maximumAccess = $helperType.GetMethod('GetMaximumAllowedAccess', $flags)
@@ -164,6 +170,7 @@ try {
         if (($writeGranted -band $dangerous) -eq 0) { throw 'Writable ACL was not classified as writable.' }
     }
     finally { $accessToken.Dispose() }
+    Write-Host 'Armoury tap runtime phase: ACL checks passed.'
 }
 finally {
     if ($module -ne [IntPtr]::Zero -and $null -ne $stop) {
