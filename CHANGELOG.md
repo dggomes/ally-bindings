@@ -6,6 +6,27 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Thi
 
 ## [Unreleased]
 
+## [v0.3.0-preview.17] - 2026-08-03
+
+### Fixed
+
+- Prevented **Start capture** from silently returning after a native-tap teardown barrier: the capture controls now remain visibly blocked and instruct the operator to restart Windows.
+- Clear exit intent when a non-persisted teardown barrier forces **Stay open**, so later exit and capture-state feedback remain operable.
+- Require explicit consent before starting the metadata-only system-wide ETW fallback; declining now starts no ETW session and retains the native-tap rejection reason.
+- Bound each candidate tap handshake and remote lifecycle call to five seconds and derive the elevated-helper deadline from the complete load/handshake/rollback budget across all twelve candidates plus cleanup margin, preventing the parent from killing a helper mid-attachment.
+- Updated the packaged tap security contract for the current nine-name allowlist and twelve-process cap.
+- Expanded the exact Armoury process allowlist to current ASUS Armoury components, including the user-session helper and control-interface processes that can own controller HID writes.
+- Treat safely rolled-back attachment rejection per candidate so one non-writer Armoury component cannot prevent another verified component from capturing; any unconfirmed rollback still aborts fail-closed.
+
+### Changed
+
+- Report bounded per-process discovery outcomes when the native tap cannot attach, without exposing process IDs or executable paths.
+- Surface native-tap rejection details before the metadata-only ETW fallback and require explicit confirmation before continuing a fallback that may not contain payload bytes.
+
+### Security
+
+- Preserve the existing trusted-root, reparse, unelevated-token writability, native-x64, ASUS Authenticode, image-lock/hash and lifecycle gates for every added exact process name; the bounded candidate cap is twelve.
+
 ## [v0.3.0-preview.16] - 2026-08-03
 
 ### Added
@@ -341,3 +362,4 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Thi
 [v0.3.0-preview.14]: https://github.com/dggomes/ally-bindings/releases/tag/v0.3.0-preview.14
 [v0.3.0-preview.15]: https://github.com/dggomes/ally-bindings/releases/tag/v0.3.0-preview.15
 [v0.3.0-preview.16]: https://github.com/dggomes/ally-bindings/releases/tag/v0.3.0-preview.16
+[v0.3.0-preview.17]: https://github.com/dggomes/ally-bindings/releases/tag/v0.3.0-preview.17

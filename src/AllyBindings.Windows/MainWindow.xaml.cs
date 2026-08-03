@@ -65,6 +65,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private string _editingProfileName = string.Empty;
     private bool _workspaceInteractive = true;
     private bool _updateBusy;
+    private bool _armouryCaptureBlocked;
     private readonly SemaphoreSlim _dialogGate = new(1, 1);
     private TaskCompletionSource<bool>? _dialogCompletion;
     private Point? _diagramMouseDownPosition;
@@ -199,8 +200,20 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     public void SetRearButtonSnapshotStatus(string message) => RearButtonSnapshotStatusText.Text = message;
     public void SetArmouryCaptureBusy(bool isBusy)
     {
-        ArmouryCaptureButton.IsEnabled = !isBusy;
-        RearButtonSnapshotButton.IsEnabled = !isBusy;
+        ArmouryCaptureButton.IsEnabled = !isBusy && !_armouryCaptureBlocked;
+        RearButtonSnapshotButton.IsEnabled = !isBusy && !_armouryCaptureBlocked;
+    }
+    public void SetArmouryCaptureBlocked(bool isBlocked, string? message = null)
+    {
+        _armouryCaptureBlocked = isBlocked;
+        ArmouryCaptureButton.IsEnabled = !isBlocked;
+        RearButtonSnapshotButton.IsEnabled = !isBlocked;
+        ArmouryCaptureButton.Content = isBlocked ? "Restart Windows" : "Start capture";
+        if (!string.IsNullOrWhiteSpace(message))
+        {
+            SetArmouryCaptureStatus(message);
+            SetRearButtonSnapshotStatus(message);
+        }
     }
     public void AllowClose() => _allowClose = true;
     public void CancelControllerDialog() => CompleteControllerDialog(false);

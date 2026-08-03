@@ -46,6 +46,8 @@ It does not contain general USB traffic, keyboard input, XInput history, arbitra
 
 ## Failure states
 
+If the native tap is unavailable, Ally Bindings shows the bounded rejection reason before starting anything else. The metadata-only, system-wide ETW fallback starts only after you explicitly choose **Start ETW fallback**; cancelling that dialog starts no ETW session.
+
 - **No ASUS process found:** launch Armoury Crate SE, leave it open and retry.
 - **Signature rejected:** update/repair Armoury rather than bypassing the check.
 - **Target architecture rejected:** the diagnostic supports x64 Armoury processes only.

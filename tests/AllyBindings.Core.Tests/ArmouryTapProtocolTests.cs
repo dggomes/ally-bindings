@@ -3,18 +3,29 @@ namespace AllyBindings.Core.Tests;
 public sealed class ArmouryTapProtocolTests
 {
     [Fact]
-    public void Candidate_process_names_include_armoury_services()
+    public void Candidate_process_names_include_current_armoury_components()
     {
-        Assert.Contains("ArmouryCrateSE.Service", ArmouryTapProtocol.ExactCandidateProcessNames);
-        Assert.Contains("ArmouryCrate.Service", ArmouryTapProtocol.ExactCandidateProcessNames);
-        Assert.Contains("ArmouryCrateSE", ArmouryTapProtocol.ExactCandidateProcessNames);
-        Assert.Contains("AsusOptimization", ArmouryTapProtocol.ExactCandidateProcessNames);
+        var expected = new[]
+        {
+            "ArmouryCrateSE.Service",
+            "ArmouryCrate.Service",
+            "ArmouryCrateSE",
+            "ArmouryCrate.UserSessionHelper",
+            "ArmouryCrateControlInterface",
+            "ArmourySocketServer",
+            "ArmourySwAgent",
+            "ArmouryCrateKeyControl",
+            "AsusOptimization",
+        };
+
+        Assert.Equal(expected, ArmouryTapProtocol.ExactCandidateProcessNames);
     }
 
     [Fact]
     public void IsExactCandidateProcessName_is_case_insensitive()
     {
         Assert.True(ArmouryTapProtocol.IsExactCandidateProcessName("armourycratese.service"));
+        Assert.True(ArmouryTapProtocol.IsExactCandidateProcessName("ARMOURYCRATE.USERSESSIONHELPER"));
         Assert.True(ArmouryTapProtocol.IsExactCandidateProcessName("ASUSOPTIMIZATION"));
     }
 
@@ -75,5 +86,19 @@ public sealed class ArmouryTapProtocolTests
         Assert.Equal(1, ArmouryTapProtocol.WireVersion);
         Assert.Equal(124, ArmouryTapProtocol.WireRecordSize);
         Assert.Equal(256, ArmouryTapProtocol.MaximumRecords);
+    }
+
+    [Fact]
+    public void Startup_deadline_covers_every_bounded_candidate_lifecycle()
+    {
+        var perCandidateLifecycleBudget =
+            ArmouryTapProtocol.CandidateHandshakeStepTimeout * 2 +
+            ArmouryTapProtocol.CandidateRemoteCallTimeout * 3;
+        var allCandidatesLifecycleBudget =
+            ArmouryTapProtocol.MaximumCandidateProcesses * perCandidateLifecycleBudget;
+
+        Assert.Equal(perCandidateLifecycleBudget, ArmouryTapProtocol.CandidateWorstCaseStartupDuration);
+        Assert.True(
+            ArmouryTapProtocol.CaptureStartupTimeout >= allCandidatesLifecycleBudget + TimeSpan.FromSeconds(60));
     }
 }
