@@ -8,11 +8,11 @@ if (-not (Test-Path -LiteralPath $ExecutablePath -PathType Leaf)) {
 }
 
 $auditRoot = Join-Path $env:ProgramData 'AllyBindings/HardwareValidator'
-$before = if (Test-Path -LiteralPath $auditRoot) {
-    @(Get-ChildItem -LiteralPath $auditRoot -File | Select-Object -ExpandProperty FullName)
-}
-else {
-    @()
+$before = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+if (Test-Path -LiteralPath $auditRoot) {
+    foreach ($file in Get-ChildItem -LiteralPath $auditRoot -File) {
+        [void]$before.Add($file.FullName)
+    }
 }
 
 $output = @(& $ExecutablePath inspect 2>&1 | ForEach-Object { $_.ToString() })
@@ -32,13 +32,13 @@ if ($exitCode -eq 3 -and $joined.IndexOf('No hardware write was attempted.', [St
     throw 'Rejected inspect did not make its no-write result explicit.'
 }
 
-$after = if (Test-Path -LiteralPath $auditRoot) {
-    @(Get-ChildItem -LiteralPath $auditRoot -File | Select-Object -ExpandProperty FullName)
+$after = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+if (Test-Path -LiteralPath $auditRoot) {
+    foreach ($file in Get-ChildItem -LiteralPath $auditRoot -File) {
+        [void]$after.Add($file.FullName)
+    }
 }
-else {
-    @()
-}
-if (@(Compare-Object -ReferenceObject $before -DifferenceObject $after).Count -ne 0) {
+if (-not $before.SetEquals($after)) {
     throw 'Read-free inspect unexpectedly created or removed a hardware audit file.'
 }
 
