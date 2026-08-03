@@ -75,6 +75,7 @@ try {
     $stop = [Runtime.InteropServices.Marshal]::GetDelegateForFunctionPointer(
         $systemStopAddress, [type][ArmouryTapStopDelegate])
     $assembly = [Reflection.Assembly]::LoadFrom($managedDll)
+    Write-Host 'Armoury tap runtime phase: managed Windows assembly loaded.'
     $helperType = $assembly.GetType('AllyBindings.Windows.ArmouryTapCaptureHelper', $true)
     $flags = [Reflection.BindingFlags]'Static, NonPublic'
     $bootIdentifierMethod = $assembly.GetType('AllyBindings.Windows.App', $true).GetMethod(
@@ -84,9 +85,11 @@ try {
     if ($null -eq $bootIdentifier -or [Guid]$bootIdentifier -eq [Guid]::Empty) {
         throw 'Windows did not return a non-empty kernel boot identifier.'
     }
+    Write-Host 'Armoury tap runtime phase: kernel boot identifier passed.'
     $readExportRva = $helperType.GetMethod('ReadExportRva', $flags)
     if ($null -eq $readExportRva) { throw 'Production tap export parser was not found.' }
     $stopRva = [uint32]$readExportRva.Invoke($null, @($testDll, 'ArmouryTapStop'))
+    Write-Host 'Armoury tap runtime phase: production PE export parser returned.'
     $stopAddress = [IntPtr]::new($module.ToInt64() + [int64]$stopRva)
     if ($stopAddress -ne $systemStopAddress) {
         throw 'Production tap export parser did not match GetProcAddress.'
