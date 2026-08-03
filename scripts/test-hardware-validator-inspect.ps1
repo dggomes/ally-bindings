@@ -43,3 +43,4 @@ if (-not $before.SetEquals($after)) {
 }
 
 Write-Output "Hardware validator inspect smoke passed with exit code $exitCode and no audit mutation."
+exit 0
