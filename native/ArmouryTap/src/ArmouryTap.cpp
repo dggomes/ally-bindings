@@ -46,6 +46,7 @@ HANDLE g_queueEvent = nullptr;
 HANDLE g_worker = nullptr;
 HANDLE g_pipe = INVALID_HANDLE_VALUE;
 HANDLE g_helperProcess = nullptr;
+HMODULE g_ownedHidModule = nullptr;
 CRITICAL_SECTION g_queueLock{};
 std::array<WireRecord, kQueueCapacity> g_queue{};
 size_t g_head = 0;
@@ -212,9 +213,17 @@ bool InstallHooks() {
     const auto rollback = []() {
         MH_DisableHook(MH_ALL_HOOKS);
         MH_Uninitialize();
+        if (g_ownedHidModule) {
+            FreeLibrary(g_ownedHidModule);
+            g_ownedHidModule = nullptr;
+        }
         return false;
     };
     HMODULE hid = GetModuleHandleW(L"hid.dll");
+    if (!hid) {
+        hid = LoadLibraryExW(L"hid.dll", nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32);
+        g_ownedHidModule = hid;
+    }
     HMODULE kernelBase = GetModuleHandleW(L"KernelBase.dll");
     if (!hid || !kernelBase) return rollback();
     auto setFeature = reinterpret_cast<LPVOID>(GetProcAddress(hid, "HidD_SetFeature"));
@@ -248,19 +257,24 @@ bool DisableHooksAndDrain() {
         Sleep(10);
     }
     if (g_activeCallbacks.load(std::memory_order_acquire) != 0) return false;
-    return MH_Uninitialize() == MH_OK;
+    if (MH_Uninitialize() != MH_OK) return false;
+    if (g_ownedHidModule) {
+        FreeLibrary(g_ownedHidModule);
+        g_ownedHidModule = nullptr;
+    }
+    return true;
 }
 
 DWORD WINAPI WorkerMain(void* parameter) {
     const auto module = static_cast<HMODULE>(parameter);
-    if (!LoadConfig(module)) FreeLibraryAndExitThread(module, 2);
+    if (!LoadConfig(module)) return 2;
     g_pipe = CreateFileW(g_pipeName.c_str(), GENERIC_WRITE, 0, nullptr, OPEN_EXISTING,
         FILE_ATTRIBUTE_NORMAL, nullptr);
-    if (g_pipe == INVALID_HANDLE_VALUE) FreeLibraryAndExitThread(module, 3);
+    if (g_pipe == INVALID_HANDLE_VALUE) return 3;
     if (!InstallHooks()) {
         CloseHandle(g_pipe);
         g_pipe = INVALID_HANDLE_VALUE;
-        FreeLibraryAndExitThread(module, 4);
+        return 4;
     }
     WireRecord ready{};
     ready.magic = kMagic;
@@ -272,8 +286,7 @@ DWORD WINAPI WorkerMain(void* parameter) {
         const bool hooksRemoved = DisableHooksAndDrain();
         CloseHandle(g_pipe);
         g_pipe = INVALID_HANDLE_VALUE;
-        if (hooksRemoved) FreeLibraryAndExitThread(module, 5);
-        return 6;
+        return hooksRemoved ? 5 : 6;
     }
 
     bool transportFailure = false;

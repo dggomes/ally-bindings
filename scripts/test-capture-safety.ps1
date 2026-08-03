@@ -519,6 +519,8 @@ foreach ($required in @(
     'DisableHooksAndDrain',
     'transportFailure',
     'g_helperProcess',
+    'LoadLibraryExW',
+    'LOAD_LIBRARY_SEARCH_SYSTEM32',
     'helperPrefix',
     'FreeLibraryAndExitThread',
     'ReadProcessMemory',
@@ -551,11 +553,22 @@ foreach ($required in @(
         throw "The app-wide persisted tap teardown barrier is missing requirement: $required"
     }
 }
+foreach ($required in @('nativeWritesAllowed', '_armouryCaptureBarrierPersistenceFailed', 'Ordinary app exit is blocked')) {
+    if ($app.IndexOf($required, [StringComparison]::Ordinal) -lt 0) {
+        throw "The persisted teardown barrier does not block startup/exit path: $required"
+    }
+}
+$tapRuntime = Get-Content -Raw -LiteralPath (Join-Path $root 'scripts/test-armoury-tap-runtime.ps1')
+if ($tapRuntime.IndexOf("LoadLibraryW('hid.dll')", [StringComparison]::Ordinal) -ge 0) {
+    throw 'The runtime test still masks production hid.dll loading by preloading it.'
+}
 foreach ($required in @(
     'id: publish',
     'Fail-closed public release auditor',
     'public-release-auditor',
-    'needs.release.result')) {
+    'needs.release.result',
+    'for ($attempt = 1; $attempt -le 3; $attempt++)',
+    'Could not determine or enforce fail-closed release state')) {
     if ($releaseWorkflow.IndexOf($required, [StringComparison]::Ordinal) -lt 0) {
         throw "The release publication boundary is missing fail-closed control: $required"
     }

@@ -18,7 +18,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Thi
 - Restrict retained tap evidence to 50–64-byte `5A D1` writes for `VID_0B05&PID_1B4C`, exporting only allowlisted process name, capture phase, per-phase ordinal, API result/error and bounded report bytes—never PID, QPC, device path or unrelated HID data.
 - Require exact process-name, x64, trusted-root, reparse, ASUS Authenticode, image-lock/hash and Windows `AccessCheck` gates before injection; cap the candidate set at four and hash-lock the embedded DLL from extraction through unload.
 - Create each extraction directory atomically under Windows Temp with a cryptographically random name and protected Administrators-owned ACL; hold DLL/config bytes against replacement and require confirmed hook drain, unload, lock release and directory deletion before returning success.
-- Distinguish genuine pre-injection tap unavailability from teardown uncertainty in structured IPC. Unknown helper crashes, forced termination, transport failure, callback-drain failure or non-clean tap exit latch the app-wide reset/write barrier until restart; ETW fallback is allowed only before injection is possible.
+- Distinguish genuine pre-injection tap unavailability from teardown uncertainty in structured IPC. Unknown helper crashes, forced termination, transport failure, callback-drain failure or non-clean tap exit latch an app-wide persisted reset/write barrier until Windows restarts; restarting Ally Bindings alone cannot clear it, and failure to persist the barrier blocks ordinary app exit.
+- Enclose public release publication inside rollback handling and add same-runner plus independent fail-closed auditors that retry inspection and withdrawal instead of treating GitHub API failures as proof that no release exists.
 
 ### Tests
 

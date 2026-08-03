@@ -20,6 +20,8 @@ public static class ArmouryTapRuntimeNative
 {
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode, ExactSpelling = true, SetLastError = true)]
     public static extern IntPtr LoadLibraryW(string path);
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, ExactSpelling = true)]
+    public static extern IntPtr GetModuleHandleW(string name);
     [DllImport("kernel32.dll", CharSet = CharSet.Ansi, ExactSpelling = true, SetLastError = true)]
     public static extern IntPtr GetProcAddress(IntPtr module, string name);
     [DllImport("kernel32.dll", ExactSpelling = true, SetLastError = true)]
@@ -36,13 +38,14 @@ $tempDirectory = Join-Path ([IO.Path]::GetTempPath()) (
 $testDll = Join-Path $tempDirectory 'AllyBindings.ArmouryTap.dll'
 $configPath = "$testDll.config"
 $module = [IntPtr]::Zero
-$hidModule = [IntPtr]::Zero
+
 $pipe = $null
 $stop = $null
 try {
     Copy-Item $nativeDll $testDll -Force
-    $hidModule = [ArmouryTapRuntimeNative]::LoadLibraryW('hid.dll')
-    if ($hidModule -eq [IntPtr]::Zero) { throw 'The runtime test could not load hid.dll for the complete two-hook contract.' }
+    if ([ArmouryTapRuntimeNative]::GetModuleHandleW('hid.dll') -ne [IntPtr]::Zero) {
+        throw 'The runtime process unexpectedly preloaded hid.dll; the production system-load path was not tested.'
+    }
     $pipeName = 'ally-bindings-armoury-runtime-' + [Guid]::NewGuid().ToString('N')
     $token = New-Object byte[] 32
     $rng = [Security.Cryptography.RandomNumberGenerator]::Create()
@@ -118,6 +121,9 @@ try {
         throw "FreeLibrary failed: $([Runtime.InteropServices.Marshal]::GetLastWin32Error())"
     }
     $module = [IntPtr]::Zero
+    if ([ArmouryTapRuntimeNative]::GetModuleHandleW('hid.dll') -ne [IntPtr]::Zero) {
+        throw 'The tap did not release the system hid.dll reference it acquired for hook installation.'
+    }
 
     $openToken = $helperType.GetMethod('OpenParentImpersonationToken', $flags)
     $maximumAccess = $helperType.GetMethod('GetMaximumAllowedAccess', $flags)
@@ -162,7 +168,7 @@ finally {
         finally { [ArmouryTapRuntimeNative]::FreeLibrary($module) | Out-Null }
     }
     if ($null -ne $pipe) { $pipe.Dispose() }
-    if ($hidModule -ne [IntPtr]::Zero) { [ArmouryTapRuntimeNative]::FreeLibrary($hidModule) | Out-Null }
+
     if (Test-Path $tempDirectory) { Remove-Item $tempDirectory -Recurse -Force }
 }
 

@@ -226,16 +226,39 @@ jobs:
           PUBLISH_OUTCOME: ${{ steps.publish.outcome }}
         run: |
           $tag = $env:GITHUB_REF_NAME
-          $json = gh release view $tag --repo $env:GITHUB_REPOSITORY --json isDraft 2>$null
-          if ($LASTEXITCODE -ne 0) { exit 0 }
-          $release = $json | ConvertFrom-Json
+          function Invoke-ReleaseWithdrawal {
+            for ($attempt = 1; $attempt -le 3; $attempt++) {
+              gh release edit $tag --repo $env:GITHUB_REPOSITORY --draft=true | Out-Null
+              if ($LASTEXITCODE -eq 0) { return $true }
+              if ($attempt -lt 3) { Start-Sleep -Seconds (2 * $attempt) }
+            }
+            for ($attempt = 1; $attempt -le 3; $attempt++) {
+              gh release delete $tag --repo $env:GITHUB_REPOSITORY --yes --cleanup-tag=false | Out-Null
+              if ($LASTEXITCODE -eq 0) { return $true }
+              if ($attempt -lt 3) { Start-Sleep -Seconds (2 * $attempt) }
+            }
+            return $false
+          }
+          $release = $null
+          for ($attempt = 1; $attempt -le 3; $attempt++) {
+            $viewOutput = gh release view $tag --repo $env:GITHUB_REPOSITORY --json isDraft 2>&1
+            if ($LASTEXITCODE -eq 0) {
+              $release = ($viewOutput -join "`n") | ConvertFrom-Json
+              break
+            }
+            $viewError = $viewOutput -join "`n"
+            if ($viewError -match '(?i)release not found') { exit 0 }
+            if ($attempt -lt 3) { Start-Sleep -Seconds (2 * $attempt) }
+          }
+          if ($null -eq $release) {
+            if ($env:PUBLISH_OUTCOME -ne 'success') {
+              if (Invoke-ReleaseWithdrawal) { exit 0 }
+            }
+            throw "Could not determine or enforce fail-closed release state for $tag after retries: $viewError"
+          }
           if (-not $release.isDraft -and $env:PUBLISH_OUTCOME -ne 'success') {
             Write-Warning "Withdrawing unverified public release $tag after publish-step outcome '$env:PUBLISH_OUTCOME'."
-            gh release edit $tag --repo $env:GITHUB_REPOSITORY --draft=true
-            if ($LASTEXITCODE -ne 0) {
-              gh release delete $tag --repo $env:GITHUB_REPOSITORY --yes --cleanup-tag=false
-              if ($LASTEXITCODE -ne 0) { throw "Could not withdraw unverified public release $tag" }
-            }
+            if (-not (Invoke-ReleaseWithdrawal)) { throw "Could not withdraw unverified public release $tag" }
           }
 
   public-release-auditor:
@@ -251,11 +274,39 @@ jobs:
         run: |
           set -euo pipefail
           tag="$GITHUB_REF_NAME"
-          release_json="$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json isDraft 2>/dev/null || true)"
-          if [ -z "$release_json" ]; then exit 0; fi
+          withdraw_release() {
+            for attempt in 1 2 3; do
+              gh release edit "$tag" --repo "$GITHUB_REPOSITORY" --draft=true && return 0
+              if [ "$attempt" != 3 ]; then sleep $((2 * attempt)); fi
+            done
+            for attempt in 1 2 3; do
+              gh release delete "$tag" --repo "$GITHUB_REPOSITORY" --yes --cleanup-tag=false && return 0
+              if [ "$attempt" != 3 ]; then sleep $((2 * attempt)); fi
+            done
+            return 1
+          }
+          release_json=""
+          view_error=""
+          for attempt in 1 2 3; do
+            if release_json="$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json isDraft 2>&1)"; then
+              break
+            fi
+            view_error="$release_json"
+            case "$view_error" in
+              *"release not found"*) exit 0 ;;
+            esac
+            release_json=""
+            if [ "$attempt" != 3 ]; then sleep $((2 * attempt)); fi
+          done
+          if [ -z "$release_json" ]; then
+            if [ "$RELEASE_JOB_RESULT" != success ]; then
+              withdraw_release && exit 0
+            fi
+            echo "Could not determine or enforce fail-closed release state for $tag after retries: $view_error" >&2
+            exit 1
+          fi
           is_draft="$(printf '%s' "$release_json" | jq -r '.isDraft')"
           if [ "$is_draft" = false ] && [ "$RELEASE_JOB_RESULT" != success ]; then
             echo "Withdrawing unverified public release $tag after release job result '$RELEASE_JOB_RESULT'."
-            gh release edit "$tag" --repo "$GITHUB_REPOSITORY" --draft=true ||
-              gh release delete "$tag" --repo "$GITHUB_REPOSITORY" --yes --cleanup-tag=false
+            withdraw_release
           fi

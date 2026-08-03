@@ -35,6 +35,7 @@ public partial class App : System.Windows.Application
     private bool _updateCheckInProgress;
     private volatile bool _armouryCaptureInProgress;
     private volatile bool _armouryCaptureTeardownUnconfirmed;
+    private volatile bool _armouryCaptureBarrierPersistenceFailed;
     private CancellationTokenSource? _armouryCaptureCancellation;
     private TaskCompletionSource? _armouryCaptureCompletion;
     private bool _allowExitWithPendingRearMapping;
@@ -257,13 +258,15 @@ public partial class App : System.Windows.Application
 
             var recoveryWasPending = Configuration.AsusRearButtonMappingActive &&
                 !_armouryCaptureTeardownUnconfirmed;
+            var nativeWritesAllowed = !_armouryCaptureTeardownUnconfirmed;
             var backendStatus = await ReplaceBackendAsync(
-                Configuration.EnableAsusRearButtonMappings || recoveryWasPending,
+                nativeWritesAllowed && (Configuration.EnableAsusRearButtonMappings || recoveryWasPending),
                 restoreCurrent: false,
                 allowUnverifiedRecoveryReset:
                     recoveryWasPending && ArmouryProtocolValidation.RecoveryWritesApproved);
             _backendNeedsRestore = Configuration.AsusRearButtonMappingActive;
-            if (Configuration.AsusRearButtonMappingActive && ArmouryProtocolValidation.RecoveryWritesApproved)
+            if (nativeWritesAllowed && Configuration.AsusRearButtonMappingActive &&
+                ArmouryProtocolValidation.RecoveryWritesApproved)
             {
                 var recovery = await _backend.RestoreDefaultAsync();
                 if (recovery.CommandAccepted)
@@ -969,6 +972,7 @@ public partial class App : System.Windows.Application
                     try { await _profileStore.SaveAsync(Configuration); }
                     catch (Exception persistenceFailure)
                     {
+                        _armouryCaptureBarrierPersistenceFailed = true;
                         captureTeardownFailure = new AggregateException(captureTeardownFailure, persistenceFailure);
                     }
                 }
@@ -1219,6 +1223,15 @@ public partial class App : System.Windows.Application
         }
         catch (Exception ex) when (_armouryCaptureTeardownUnconfirmed)
         {
+            if (_armouryCaptureBarrierPersistenceFailed)
+            {
+                await _mainWindow.ShowControllerDialogAsync(
+                    "Restart Windows required",
+                    "A native tap unload was not confirmed and Ally Bindings could not persist its write barrier. Ordinary app exit is blocked because reopening could enable writes. Restart Windows from the Start menu; Windows session shutdown is allowed.",
+                    primaryLabel: "Stay open",
+                    secondaryLabel: "Stay open");
+                return;
+            }
             var exitWithoutReset = await _mainWindow.ShowControllerDialogAsync(
                 "ETW capture teardown unconfirmed",
                 "A native tap unload was not confirmed, so Ally Bindings will not issue any controller reset or backend shutdown write. The fail-closed barrier is persisted across app restarts.\n\n" +
