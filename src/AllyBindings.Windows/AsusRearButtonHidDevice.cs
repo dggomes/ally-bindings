@@ -166,6 +166,7 @@ public sealed class AsusRearButtonHidDevice : IAsusRearButtonDevice
 
         cancellationToken.ThrowIfCancellationRequested();
         var immutableReport = report.ToArray();
+        var expectedInterfaceIdentityKeys = _snapshotInterfaceIdentityKeys.ToArray();
         var lease = new HidOperationLease();
         var operation = Task.Run(() =>
         {
@@ -176,7 +177,7 @@ public sealed class AsusRearButtonHidDevice : IAsusRearButtonDevice
                 {
                     return (Attempted: 0, Succeeded: 0, DeviceIds: Array.Empty<string>(), Message: "Cancelled before the HID write began.");
                 }
-                return WriteFeatureReport(immutableReport);
+                return WriteFeatureReport(immutableReport, expectedInterfaceIdentityKeys);
             }
             finally
             {
@@ -209,9 +210,23 @@ public sealed class AsusRearButtonHidDevice : IAsusRearButtonDevice
         return new(_status.DeviceIds.Count, 0, timeoutMessage);
     }
 
-    private static (int Attempted, int Succeeded, string[] DeviceIds, string Message) WriteFeatureReport(byte[] report)
+    private static (int Attempted, int Succeeded, string[] DeviceIds, string Message) WriteFeatureReport(
+        byte[] report,
+        IReadOnlyList<string> expectedInterfaceIdentityKeys)
     {
         var devices = FindCompatibleDevices();
+        var currentInterfaceIdentityKeys = devices.Select(BuildInterfaceIdentityKey).ToArray();
+        if (!AsusRearButtonLabValidation.IsExactInterfaceSnapshot(
+                expectedInterfaceIdentityKeys,
+                currentInterfaceIdentityKeys))
+        {
+            return (
+                Attempted: 0,
+                Succeeded: 0,
+                DeviceIds: Array.Empty<string>(),
+                Message: "The compatible ASUS interface set changed after validation; no hardware write was attempted.");
+        }
+
         var succeeded = 0;
         var errors = new List<string>();
         foreach (var device in devices)

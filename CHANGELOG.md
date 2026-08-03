@@ -6,6 +6,21 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Thi
 
 ## [Unreleased]
 
+### Added
+
+- Add a separately packaged, private `AllyBindings.HardwareValidator` for the first controlled RC73XA write test. It supports only read-free target inspection and one fixed interactive `M1=A/M2=B` operation, emits a local audit record, and is excluded from the public Ally Bindings package.
+- Add a physical validation runbook that makes Armoury Crate—not a guessed reset packet—the recovery authority.
+
+### Security
+
+- Keep both public application write gates locked; the lab artifact cannot enable normal profile writes.
+- Require exactly one compatible interface and revalidate the exact inspected HID interface identity set immediately before any lab write.
+- Reject redirected confirmation, changed/ambiguous device topology, unsupported models, and missing pre-write audit storage.
+
+### Changed
+
+- Park further passive Armoury-capture expansion by default. Preview.20's nine oversized writes are documented as ambiguous routing evidence, not HID protocol proof.
+
 ## [v0.3.0-preview.20] - 2026-08-03
 
 ### Added

@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0-windows10.0.19041.0</TargetFramework>
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>AllyBindings.HardwareValidator</AssemblyName>
+    <RootNamespace>AllyBindings.HardwareValidator</RootNamespace>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <PublishSingleFile>true</PublishSingleFile>
+    <SelfContained>true</SelfContained>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\AllyBindings.Core\AllyBindings.Core.csproj" />
+    <PackageReference Include="HidSharp" Version="2.6.4" />
+    <Compile Include="..\AllyBindings.Windows\AsusRearButtonHidDevice.cs" Link="Hardware\AsusRearButtonHidDevice.cs" />
+  </ItemGroup>
+</Project>

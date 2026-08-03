@@ -19,14 +19,14 @@ This supports a narrow direct-write backend; it does **not** make M1/M2 readable
 
 Implementation safety gates:
 
-1. Both custom and recovery writes are source locked until the passive Armoury capture below is reviewed.
-2. The app must confirm the supported ROG Ally model and compatible ASUS feature-report interfaces before starting Windows USB ETW, then revalidate that identity after capture.
-3. The real-time ETW filter retains only exact metadata-decoded 50–64-byte fields containing the ASUS `5A D1 02 08 2C` rear-mapping prefix plus bounded metadata-only UCX control-transfer field shapes/counts; generic transfer values are never serialized, zero padding in exact candidates is preserved, non-zero trailing bytes fail validation, and no raw ETL is written.
-4. Before a later build can unlock writes, Armoury's `M1=A/M2=B`, `M1=X/M2=Y`, and Reset-to-Default reports must be compared byte-for-byte with the clean-room builder.
-5. The later write path must still require exact DMI manufacturer/model, known ASUS VID/PID, an openable report `0x5A`, and mapping zone `0x08`.
+1. The public application's custom and recovery writes remain source locked until the private physical validator below succeeds and its result is reviewed.
+2. The private validator is a separate executable. It supports only inspection and one fixed `M1=A/M2=B` packet; it is never included in the normal Ally Bindings package or release.
+3. A lab write requires exact DMI manufacturer/model, known ASUS VID/PID, exactly one openable report-`0x5A` interface, an unchanged interface identity set, an interactive console and an exact typed confirmation.
+4. The lab utility has no reset command, no arbitrary mapping parser and no retry loop. Armoury Crate remains the recovery authority for the photographed/exported assignment.
+5. API acceptance must be followed by physical M1/M2 verification in a safe controller tester and then verified restoration through Armoury.
 6. Standard mappings remain preview-only and are labelled as such.
 
-Known limitation: feature report `0x5A` readback is now implemented as a discovery instrument but has not yet been physically validated. The run deliberately changes mappings through Armoury and finishes with Armoury's own reset. Photograph/export custom assignments first. Successful readbacks are private controller-configuration bytes; they remain review-required and cannot unlock writes.
+Known limitation: feature report `0x5A` behaves as a last-command/status mailbox, not a dependable state backup. The lab run therefore requires a photograph/export before writing and restores through Armoury rather than sending a guessed reset packet.
 
 ## Armoury protocol evidence gate
 
@@ -70,16 +70,23 @@ Known limitation: feature report `0x5A` readback is now implemented as a discove
 - Data-bearing completion events 22 and 25 were absent from every phase. Therefore neither `fid_URB_TransferDataLength` nor `fid_URB_TransferData` was available to the decoder. This is provider behaviour, not priority starvation.
 - Real manifest leaves `fid_URB_TransferBuffer`, `fid_URB_TransferBufferMDL` and `fid_URB_ReservedHcd_*` bypassed the intended nested deny tokens and wasted framing quota. Preview.15 rejects those exact patterns.
 
-Conclusion: keep both write gates locked. Do not spend another physical run reshuffling ETW quotas. Public G-Helper captures establish the transport as HID Feature `SET_REPORT` (`0x21/0x09`, `wValue=0x035A`) and show that `GET_FEATURE 0x5A` behaves as a last-command/status mailbox rather than a reliable state mirror, so the read-only snapshot is retired as protocol authority.
+### Physical capture 6 — native tap is healthy but still not protocol evidence (2026-08-03)
 
-The preferred next experiment is the self-contained Armoury HID write tap:
+- Preview.20 attached to the verified Armoury candidates, completed every action window and tore down cleanly with no drops or saturation.
+- `ArmouryCrateSE.Service` made nine `WriteFile` calls, all larger than the bounded 64-byte report window. No covered HID feature/output API retained a target `5A D1` packet.
+- Those writes may be IPC or a driver route; their size does not prove they target the controller.
 
-1. Run **Capture Armoury M1/M2** and accept the explicit injection/process-risk disclosure and UAC prompt. Close games and anti-cheat software first.
-2. Ally Bindings enumerates running processes across nine exact allowlisted ASUS Armoury executable names, then extracts and hash-verifies its embedded capture-only x64 DLL. Capture is rejected if more than twelve candidates independently pass the signature, path, architecture, token and identity gates; otherwise, every verified candidate may be injected.
-3. Follow the prompts for `M1=A/M2=B`, `M1=X/M2=Y`, and Armoury Reset to Default. The tap copies only 50–64-byte `5A D1` rear-mapping writes on `VID_0B05&PID_1B4C` handles and leaves each original API call unchanged.
-4. Retain the single ZIP, record its displayed SHA-256 separately, and verify the manifest says `rawSystemTraceWritten: false` and `hardwareUnlockEvidence: false`.
-5. Exported tap evidence contains only allowlisted process name, phase, ordinal, API result/error and exact bounded report bytes—no raw PID, path, timestamp, QPC, pointer or handle.
-6. Require at least two independent matching physical runs plus human review before proposing any protocol change. A result never changes either source-level write gate automatically.
+Conclusion: keep both public write gates locked, but stop expanding passive capture by default. ETW and native-tap experiments have provided transport diagnostics rather than the required product proof. Public G-Helper and Handheld Companion implementations independently establish a narrow candidate report; the next useful evidence is whether that fixed packet works and can be recovered safely on this physical RC73XA.
+
+The preferred next experiment is the private one-shot hardware validator:
+
+1. Build/download the private `AllyBindings.HardwareValidator` CI artifact. It is not a GitHub release and is not bundled with Ally Bindings.
+2. Follow [`lab/HARDWARE-VALIDATOR-RUNBOOK.md`](../lab/HARDWARE-VALIDATOR-RUNBOOK.md): photograph/export the current Armoury assignments, close Armoury/games/anti-cheat, and run `inspect` first.
+3. Continue only for the exact supported model and exactly one compatible, openable report-`0x5A` interface.
+4. Run the fixed `write-m1-a-m2-b` command and type the displayed confirmation. The exact packet and SHA-256 are shown before the single HID call.
+5. Verify M1→A and M2→B in `joy.cpl` or another safe local tester.
+6. Restore through Armoury using the photographed assignment, then verify both paddles again.
+7. Review the local audit JSON and physical observations before any second packet or application unlock is considered.
 
 Research references:
 
