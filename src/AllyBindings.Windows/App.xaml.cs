@@ -898,7 +898,7 @@ public partial class App : System.Windows.Application
             cancellationToken.ThrowIfCancellationRequested();
             var proceed = await _mainWindow.ShowControllerDialogAsync(
                 "Capture Armoury M1/M2 protocol",
-                "This starts a temporary user-mode capture inside Ally Bindings. Close games and anti-cheat software before continuing. Windows will request administrator approval to inject a capture-only DLL into the confirmed ASUS Armoury process. No driver, Wireshark, USBPcap, WinDbg, Frida or separate tool is installed. The tap observes Armoury's HID writes without altering them.\n\n" +
+                "This starts a temporary user-mode capture inside Ally Bindings. Close games and anti-cheat software before continuing. Windows will request administrator approval to inject a capture-only DLL into one or more verified ASUS Armoury candidate processes. Ally Bindings examines no more than twelve processes selected from nine exact allowlisted executable names and may temporarily inject into each verified candidate to locate the component that owns the HID writes. No driver, Wireshark, USBPcap, WinDbg, Frida or separate tool is installed. The tap observes Armoury's HID writes without altering them.\n\n" +
                 "You will deliberately change M1/M2 three times through Armoury Crate so we can collect exact wire payloads for hardware review. Ally Bindings will send no HID reports, cannot clear recovery state from this capture, and its ASUS write backend remains source locked.\n\nContinue?",
                 primaryLabel: "Continue");
             if (!proceed) return;

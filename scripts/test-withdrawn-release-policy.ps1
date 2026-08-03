@@ -8,7 +8,7 @@ if ($releaseWorkflow -notmatch 'git show origin/main:\.github/withdrawn-release-
     throw 'Release automation does not enforce the authoritative current-branch withdrawal policy.'
 }
 
-foreach ($tag in @('v0.3.0-preview.5', 'v0.3.0-preview.7', 'v0.3.0-preview.11')) {
+foreach ($tag in @('v0.3.0-preview.5', 'v0.3.0-preview.7', 'v0.3.0-preview.11', 'v0.3.0-preview.17')) {
     $withdrawnRejected = $false
     try {
         & $assertScript -Tag $tag -DenylistPath $denylist
@@ -22,5 +22,5 @@ foreach ($tag in @('v0.3.0-preview.5', 'v0.3.0-preview.7', 'v0.3.0-preview.11'))
     }
 }
 
-& $assertScript -Tag 'v0.3.0-preview.14' -DenylistPath $denylist
-Write-Output 'Withdrawn-release policy passed: preview.5, preview.7, and preview.11 rejected; preview.14 accepted.'
+& $assertScript -Tag 'v0.3.0-preview.18' -DenylistPath $denylist
+Write-Output 'Withdrawn-release policy passed: preview.5, preview.7, preview.11, and preview.17 rejected; preview.18 accepted.'
