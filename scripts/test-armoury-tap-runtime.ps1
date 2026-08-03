@@ -131,7 +131,7 @@ try {
         $offset += $read
     }
     if ([BitConverter]::ToUInt32($record, 0) -ne 0x31544241) { throw 'Tap ready record magic mismatch.' }
-    if ([BitConverter]::ToUInt16($record, 4) -ne 1) { throw 'Tap ready record version mismatch.' }
+    if ([BitConverter]::ToUInt16($record, 4) -ne 2) { throw 'Tap ready record version mismatch.' }
     if ($record[6] -ne 0 -or $record[7] -ne 0) { throw 'Tap ready record API/report-length fields must both be zero.' }
     for ($index = 0; $index -lt $token.Length; $index++) {
         if ($record[28 + $index] -ne $token[$index]) { throw 'Tap ready record capability token mismatch.' }
@@ -139,6 +139,21 @@ try {
 
     Write-Host 'Armoury tap runtime phase: authenticated ready record passed; stopping hooks.'
     if ($stop.Invoke([IntPtr]::Zero) -ne 1) { throw 'ArmouryTapStop did not confirm clean hook teardown.' }
+    $summary = [byte[]]::new($wireRecordSize)
+    $offset = 0
+    while ($offset -lt $summary.Length) {
+        $read = $pipe.Read($summary, $offset, $summary.Length - $offset)
+        if ($read -eq 0) { throw 'Tap DLL closed the pipe before its diagnostic summary.' }
+        $offset += $read
+    }
+    if ([BitConverter]::ToUInt32($summary, 0) -ne 0x31544241 -or
+        [BitConverter]::ToUInt16($summary, 4) -ne 2 -or $summary[6] -ne 0xFE -or $summary[7] -ne 0) {
+        throw 'Tap diagnostic summary framing mismatch.'
+    }
+    if ($summary[60] -ne 1 -or $summary[61] -ne 0) { throw 'Tap diagnostic summary schema mismatch.' }
+    for ($index = 62; $index -lt $summary.Length; $index++) {
+        if ($summary[$index] -ne 0) { throw 'Zero-activity tap diagnostic summary contained a nonzero counter or reserved byte.' }
+    }
     Write-Host 'Armoury tap runtime phase: hook teardown passed; unloading native module.'
     if (-not [ArmouryTapRuntimeNative]::FreeLibrary($module)) {
         throw "FreeLibrary failed: $([Runtime.InteropServices.Marshal]::GetLastWin32Error())"

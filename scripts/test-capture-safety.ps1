@@ -176,8 +176,13 @@ if ($service -notmatch 'Stopwatch\.GetTimestamp\(\)' -or
     $extractor -notmatch 'PerformanceCounterTimestamp') {
     throw 'Action markers and ETW reports are not correlated on the shared QPC clock.'
 }
-if (($service | Select-String -Pattern 'schemaVersion\s*=\s*7' -AllMatches).Matches.Count -ne 2) {
-    throw 'Capture report and manifest are not both stamped with focused UCX URB schema version 7.'
+if (($service | Select-String -Pattern 'schemaVersion\s*=\s*8' -AllMatches).Matches.Count -ne 2) {
+    throw 'Capture report and manifest are not both stamped with tap-diagnostic schema version 8.'
+}
+if ($service -notmatch 'ally-bindings-\{captureKind\}' -or
+    $service -notmatch 'armoury-tap-evidence\.json' -or
+    $service -notmatch 'native Armoury HID write tap') {
+    throw 'Native tap bundles, evidence files or README text can still be mislabeled as ETW.'
 }
 if ($extractor -notmatch '0x5A,\s*0xD1,\s*0x02,\s*0x08,\s*0x2C' -or
     $extractor -notmatch 'AsusRearButtonProtocol\.ReportLength' -or
@@ -346,7 +351,7 @@ if ($service -notmatch 'BoundedTextLineReader' -or $helper -notmatch 'BoundedTex
     $boundedReader -notmatch 'Array\.IndexOf' -or $boundedReader -notmatch '_offset') {
     throw 'The ETW IPC protocol does not bound both command and response messages.'
 }
-foreach ($forbidden in @('TraceEventSession(sessionName,', 'data.EventData()', 'USBPcapCMD', 'logman.exe', 'tracerpt.exe', 'File.WriteAllBytes', 'SetFeature', 'WriteFeatureReport', 'IControllerBackend')) {
+foreach ($forbidden in @('TraceEventSession(sessionName,', 'data.EventData()', 'USBPcapCMD', 'logman.exe', 'tracerpt.exe', 'File.WriteAllBytes', 'stream.SetFeature(', 'WriteFeatureReport', 'IControllerBackend')) {
     foreach ($source in @($service, $helper, $extractor)) {
         if ($source.IndexOf($forbidden, [StringComparison]::OrdinalIgnoreCase) -ge 0) {
             throw "The integrated capture path contains forbidden raw-capture/write token: $forbidden"
@@ -426,7 +431,7 @@ foreach ($required in @(
     'CandidateWorstCaseStartupDuration * MaximumCandidateProcesses + TimeSpan.FromSeconds(60)',
     'WireRecordSize = 124',
     'WireMagic = 0x31544241',
-    'WireVersion = 1',
+    'WireVersion = 2',
     'ArmouryCrateSE.Service',
     'ArmouryCrate.Service',
     'ArmouryCrateSE',
@@ -568,10 +573,20 @@ foreach ($required in @('ProcessName', 'Phase', 'Ordinal')) {
 # Native DLL must hook the right APIs, preserve return/LastError, and drain callbacks
 foreach ($required in @(
     'HidD_SetFeature',
+    'HidD_SetOutputReport',
     'WriteFile',
+    'DeviceIoControl',
+    'kIoctlHidSetFeature = 0x000B0191',
+    'kIoctlHidSetOutputReport = 0x000B0195',
+    'g_hidWrapperDepth',
+    'g_internalIoDepth',
+    'HandleClassification',
+    'AttributeReadFailure',
+    'BuildSummaryRecord',
     'MH_Initialize',
     'MH_CreateHook',
-    'MH_EnableHook',
+    'MH_QueueEnableHook',
+    'MH_ApplyQueued',
     'MH_DisableHook',
     'MH_Uninitialize',
     'DisableHooksAndDrain',

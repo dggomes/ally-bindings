@@ -47,7 +47,9 @@ PID `0x1B6E` is not an Ally controller identifier and must not pass the rear-but
 - The tap has a static Windows `hid.dll` import for target-handle validation, so the Windows PE loader maps the system HID module before tap entry; CI proves it was absent before tap load and released after tap unload.
 - The hook DLL may hook only:
   - `hid.dll!HidD_SetFeature`
-  - the effective `WriteFile` implementation used by the target process.
+  - `hid.dll!HidD_SetOutputReport`
+  - the effective `WriteFile` implementation used by the target process;
+  - the effective `DeviceIoControl` implementation, inspecting input only for `IOCTL_HID_SET_FEATURE` and `IOCTL_HID_SET_OUTPUT_REPORT`.
 - Hook installation failure is reported; it never falls back to broader API hooks or arbitrary process memory scanning.
 - Original API arguments are never modified.
 - The original API is called exactly once.
@@ -66,7 +68,7 @@ A record may leave the target process only when all conditions pass:
 - Second byte is rear-mapping command `0xD1`.
 - Captured bytes are copied before the original call returns.
 
-No device path, arbitrary process memory, keyboard input, XInput history or non-target HID payload may be retained. `WriteFile` calls used by the tap's own named-pipe transport fail the exact HID-handle gate and are not queued.
+No device path, arbitrary process memory, keyboard input, XInput history or non-target HID payload may be retained. After hooks are disabled and callbacks drain, each tapped process emits one authenticated aggregate summary of bounded covered-API counts, categorical handle-validation outcomes and target filter-stage counts. It contains no rejected bytes or hashes, exact nonmatching lengths, handles, paths, PIDs or timestamps. `WriteFile` calls used by the tap's own named-pipe transport fail the exact HID-handle gate and are not queued.
 
 ## Bounds
 

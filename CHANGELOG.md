@@ -6,6 +6,22 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Thi
 
 ## [Unreleased]
 
+## [v0.3.0-preview.20] - 2026-08-03
+
+### Added
+
+- Expand the capture-only native tap to observe `HidD_SetOutputReport` and only the two HID SET `DeviceIoControl` codes alongside `HidD_SetFeature` and `WriteFile`, with nested-wrapper suppression so one Armoury operation is not duplicated.
+- Export one authenticated, bounded pre-filter summary per verified Armoury process after checked hook teardown, containing aggregate covered-API counts, categorical handle-validation outcomes and target-handle funnel counts—never rejected payload bytes, hashes, exact nonmatching lengths, handles, paths, PIDs or timestamps.
+
+### Fixed
+
+- Name native-tap evidence `ally-bindings-armoury-tap-…zip` while retaining `ally-bindings-armoury-etw-…zip` for explicit ETW fallback.
+- Replace ETW-specific completion wording with source-neutral capture evidence status and explain zero-record native runs using the deepest safe aggregate filter stage reached.
+
+### Security
+
+- Keep byte retention target-scoped to exact `VID_0B05`/`PID_1B4C` handles and all expanded metadata counter-bounded, categorical, diagnostic-only and permanently incapable of approving custom or recovery writes.
+
 ## [v0.3.0-preview.19] - 2026-08-03
 
 ### Fixed
@@ -399,3 +415,4 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Thi
 [v0.3.0-preview.17]: https://github.com/dggomes/ally-bindings/releases/tag/v0.3.0-preview.17
 [v0.3.0-preview.18]: https://github.com/dggomes/ally-bindings/releases/tag/v0.3.0-preview.18
 [v0.3.0-preview.19]: https://github.com/dggomes/ally-bindings/releases/tag/v0.3.0-preview.19
+[v0.3.0-preview.20]: https://github.com/dggomes/ally-bindings/releases/tag/v0.3.0-preview.20

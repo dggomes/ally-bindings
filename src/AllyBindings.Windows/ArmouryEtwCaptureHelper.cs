@@ -771,7 +771,8 @@ internal sealed record EtwCaptureOutput(
     IReadOnlyList<UsbEtwFeatureReport> Reports,
     IReadOnlyList<UsbEtwSchemaShape> SchemaShapes,
     IReadOnlyList<UsbEtwMarkerShape> MarkerShapes,
-    IReadOnlyList<ArmouryTapRecord>? TapRecords = null);
+    IReadOnlyList<ArmouryTapRecord>? TapRecords = null,
+    IReadOnlyList<ArmouryTapPreFilterDiagnostics>? TapDiagnostics = null);
 internal sealed record EtwSchemaShapeKey(
     int Phase,
     string ProviderName,

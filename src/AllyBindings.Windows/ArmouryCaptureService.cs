@@ -298,9 +298,12 @@ internal sealed class ArmouryCaptureService
         var assessment = AssessCapture(session, output, reports, targetIdentityStable);
         var outputBytes = SerializeJson(output);
         var evidenceHash = Convert.ToHexString(SHA256.HashData(outputBytes)).ToLowerInvariant();
+        var evidenceFileName = session.UsesArmouryTap
+            ? "armoury-tap-evidence.json"
+            : ArmouryEtwCapturePipe.ResultFileName;
         var reportBytes = SerializeJson(new
         {
-            schemaVersion = 7,
+            schemaVersion = 8,
             actions = output.TapRecords is null
                 ? (object)session.Actions
                 : session.Actions.Select((marker, index) => new { ordinal = index + 1, marker.Action }).ToArray(),
@@ -330,14 +333,15 @@ internal sealed class ArmouryCaptureService
                 retainedMarkerShapeCount = output.MarkerShapes.Count,
                 fullDataBusTraceKeyword = $"0x{ArmouryEtwCaptureHelper.FullDataTraceKeywords:X}",
                 tapRecords = output.TapRecords,
+                tapDiagnostics = output.TapDiagnostics,
                 privacy = output.TapRecords is null
                     ? "A system-wide USB ETW stream was inspected in memory. Schema discovery contains only bounded event/property/framing metadata grouped by action phase; it contains no generic payload bytes, payload hashes, raw ETL, timestamps, process IDs, device paths, pointers or scalar values."
-                    : "Only exact 50-64 byte 5A D1 rear-mapping writes to VID 0B05 PID 1B4C handles were copied before the original ASUS API returned. Exported records contain an allowlisted process name, phase and ordinal but no raw PID, path, timestamp, QPC, pointer or handle. Return values and GetLastError are evidence only; no call or buffer was altered.",
+                    : "Only exact 50-64 byte 5A D1 rear-mapping writes to VID 0B05 PID 1B4C handles were copied before the original ASUS API returned. Pre-filter diagnostics contain bounded aggregate API-call, categorical handle-validation and target filter-stage counts. No rejected bytes, hashes, exact nonmatching lengths, raw PID, path, timestamp, QPC, pointer or handle are exported; no call or buffer was altered.",
             },
         });
         var manifestBytes = SerializeJson(new
         {
-            schemaVersion = 7,
+            schemaVersion = 8,
             capturedAtUtc = DateTimeOffset.UtcNow,
             applicationVersion = GetApplicationVersion(),
             source = output.TapRecords is null
@@ -346,7 +350,7 @@ internal sealed class ArmouryCaptureService
             selectedAsusHid = session.Target,
             evidence = new
             {
-                file = ArmouryEtwCapturePipe.ResultFileName,
+                file = evidenceFileName,
                 sha256 = evidenceHash,
                 bytes = outputBytes.Length,
                 rawSystemTraceWritten = false,
@@ -370,6 +374,7 @@ internal sealed class ArmouryCaptureService
                     resetToDefault = 3,
                 },
             },
+            tapDiagnostics = output.TapDiagnostics,
             expectedProtocol = new
             {
                 rearMappingPrefix = "5A D1 02 08 2C",
@@ -389,13 +394,15 @@ internal sealed class ArmouryCaptureService
             reports.Count,
             output.SchemaShapes.Count,
             output.MarkerShapes.Count,
+            session.UsesArmouryTap,
             assessment));
 
+        var captureKind = session.UsesArmouryTap ? "armoury-tap" : "armoury-etw";
         var bundlePath = Path.Combine(
             session.Directory,
-            $"ally-bindings-armoury-etw-{DateTimeOffset.UtcNow:yyyyMMdd-HHmmss}.zip");
+            $"ally-bindings-{captureKind}-{DateTimeOffset.UtcNow:yyyyMMdd-HHmmss}.zip");
         var bundleSha256 = CreateBundle(bundlePath,
-            (ArmouryEtwCapturePipe.ResultFileName, outputBytes),
+            (evidenceFileName, outputBytes),
             ("feature-reports.json", reportBytes),
             ("manifest.json", manifestBytes),
             ("README.txt", readmeBytes));
@@ -643,8 +650,40 @@ internal sealed class ArmouryCaptureService
             captureScopeVerified: false,
             targetIdentityStable,
             schemaDiscoveryIncomplete: false);
+        var reasons = validation.Reasons.ToList();
+        if (reports.Count == 0) reasons.Add(DescribeTapDiagnostics(output.TapDiagnostics));
         return new(validation.IsConclusive, validation.FirstMappingMatched, validation.SecondMappingMatched,
-            validation.NativeResetMatched, validation.Reasons);
+            validation.NativeResetMatched, reasons);
+    }
+
+    private static string DescribeTapDiagnostics(IReadOnlyList<ArmouryTapPreFilterDiagnostics>? diagnostics)
+    {
+        if (diagnostics is null || diagnostics.Count == 0)
+            return "Native tap pre-filter diagnostics were unavailable.";
+        if (diagnostics.Any(item => item.CounterSaturated))
+            return "Native tap pre-filter diagnostics saturated their bounded counters; review is inconclusive.";
+        var allCalls = diagnostics.Aggregate(0UL, (sum, item) => sum + item.HidDSetFeatureCallCount +
+            item.WriteFileCallCount + item.HidDSetOutputReportCallCount +
+            item.DeviceIoControlSetFeatureCallCount + item.DeviceIoControlSetOutputReportCallCount);
+        if (allCalls == 0)
+            return "The expanded native hooks observed no covered HID write calls in the verified Armoury processes; the writer is outside this user-mode API surface or process set.";
+        var targetCalls = diagnostics.Aggregate(0UL, (sum, item) => sum + item.UnderLengthCount +
+            item.BoundedLengthCount + item.OverLengthCount);
+        if (targetCalls == 0)
+        {
+            var invalid = diagnostics.Aggregate(0UL, (sum, item) => sum + item.InvalidHandleCount);
+            var attributes = diagnostics.Aggregate(0UL, (sum, item) => sum + item.AttributeReadFailureCount);
+            var nonAsus = diagnostics.Aggregate(0UL, (sum, item) => sum + item.NonAsusDeviceCount);
+            var otherAsus = diagnostics.Aggregate(0UL, (sum, item) => sum + item.OtherAsusProductCount);
+            return $"The expanded native hooks observed {allCalls} calls but no positively identified Ally handle: invalid={invalid}, attribute-read-failure={attributes}, non-ASUS={nonAsus}, other-ASUS-product={otherAsus}.";
+        }
+        var bounded = diagnostics.Aggregate(0UL, (sum, item) => sum + item.BoundedLengthCount);
+        if (bounded == 0) return $"The expanded native hooks observed {targetCalls} target writes, but none were 50-64 bytes.";
+        var reportId = diagnostics.Aggregate(0UL, (sum, item) => sum + item.ReportId5ACount);
+        if (reportId == 0) return $"The expanded native hooks observed {bounded} bounded target writes, but none used report ID 0x5A.";
+        var prefix = diagnostics.Aggregate(0UL, (sum, item) => sum + item.Prefix5AD1Count);
+        if (prefix == 0) return $"The expanded native hooks observed {reportId} report-ID 0x5A target writes, but none used command 0xD1.";
+        return "Native tap counters reached the expected 5A D1 prefix without producing a retained record; the capture is internally inconsistent.";
     }
 
     private async Task<bool> IsTargetIdentityStableAsync(
@@ -784,8 +823,9 @@ internal sealed class ArmouryCaptureService
         int reportCount,
         int schemaShapeCount,
         int markerShapeCount,
+        bool usesArmouryTap,
         CaptureAssessment assessment) =>
-        $"Ally Bindings integrated Windows USB ETW Armoury capture{Environment.NewLine}" +
+        $"Ally Bindings {(usesArmouryTap ? "native Armoury HID write tap" : "integrated Windows USB ETW Armoury capture")}{Environment.NewLine}" +
         $"Retained ASUS rear-mapping report candidates: {reportCount}{Environment.NewLine}{Environment.NewLine}" +
         $"Retained metadata-only ETW property shapes: {schemaShapeCount}{Environment.NewLine}" +
         $"Retained metadata-only ASUS marker shapes: {markerShapeCount}{Environment.NewLine}{Environment.NewLine}" +
@@ -793,7 +833,10 @@ internal sealed class ArmouryCaptureService
         (assessment.Reasons.Count == 0
             ? string.Empty
             : string.Join(Environment.NewLine, assessment.Reasons.Select(reason => $"- {reason}")) + Environment.NewLine) +
-        "Windows' built-in USB ETW providers were consumed in real time with FullDataBusTrace. No USBPcap/Wireshark driver, raw ETL, or raw PCAP was written. Schema discovery contains only bounded event/property/framing metadata grouped by action phase: no generic payload bytes, payload hashes, raw timestamps, process IDs, device paths, pointers or scalar values. Discovery metadata is never hardware-unlock evidence. Exact target-device SET_REPORT scope and vectors still require physical review. Ally Bindings sent no HID write and cannot clear recovery state from this capture. Hardware writes remain source locked.";
+        (usesArmouryTap
+            ? "The capture-only DLL observed covered HID write APIs inside verified ASUS Armoury processes. It retained bytes only for exact target 5A D1 writes and exported bounded aggregate API, handle-validation and target filter-stage counts without rejected payloads, hashes, exact nonmatching lengths, PIDs, paths, handles or timestamps."
+            : "Windows' built-in USB ETW providers were consumed in real time with FullDataBusTrace. No USBPcap/Wireshark driver, raw ETL, or raw PCAP was written. Schema discovery contains only bounded event/property/framing metadata grouped by action phase: no generic payload bytes, payload hashes, raw timestamps, process IDs, device paths, pointers or scalar values.") +
+        " Discovery metadata is never hardware-unlock evidence. Exact target-device SET_REPORT scope and vectors still require physical review. Ally Bindings sent no HID write and cannot clear recovery state from this capture. Hardware writes remain source locked.";
 
 }
 

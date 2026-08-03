@@ -39,6 +39,7 @@ The ZIP may contain private controller-configuration bytes:
 - API kind, report length and API result;
 - capture phase and per-phase ordinal, without raw timestamps or QPC values;
 - allowlisted ASUS process name, without process ID, executable path or user-specific identifiers;
+- bounded aggregate counts showing which covered HID APIs, categorical handle-validation outcomes and target filter stages were reached, without rejected bytes, hashes or exact nonmatching lengths;
 - redacted device/model identity;
 - manifest and file hashes.
 

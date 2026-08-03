@@ -914,7 +914,7 @@ public partial class App : System.Windows.Application
             var proceed = await _mainWindow.ShowControllerDialogAsync(
                 "Capture Armoury M1/M2 protocol",
                 "This starts a temporary user-mode capture inside Ally Bindings. Close games and anti-cheat software before continuing. Windows will request administrator approval to inject a capture-only DLL into one or more verified ASUS Armoury candidate processes. Ally Bindings enumerates running processes matching nine exact allowlisted executable names. Capture is rejected if more than twelve candidates pass path, signature and identity verification; otherwise, it may temporarily inject into each verified candidate to locate the component that owns the HID writes. No driver, Wireshark, USBPcap, WinDbg, Frida or separate tool is installed. The tap observes Armoury's HID writes without altering them.\n\n" +
-                "You will deliberately change M1/M2 three times through Armoury Crate so we can collect exact wire payloads for hardware review. Ally Bindings will send no HID reports, cannot clear recovery state from this capture, and its ASUS write backend remains source locked.\n\nContinue?",
+                "You will deliberately change M1/M2 three times through Armoury Crate so we can collect exact wire payloads for hardware review. The tap also retains bounded aggregate API-call and filter-stage counts, including categorical handle-validation outcomes; it never exports rejected bytes, hashes, exact lengths, handles, paths, PIDs or timestamps. Ally Bindings will send no HID reports, cannot clear recovery state from this capture, and its ASUS write backend remains source locked.\n\nContinue?",
                 primaryLabel: "Continue");
             if (!proceed) return;
             cancellationToken.ThrowIfCancellationRequested();
@@ -1006,7 +1006,7 @@ public partial class App : System.Windows.Application
             _mainWindow.SetArmouryCaptureStatus(
                 $"Capture complete — review required: {result.FeatureReportCount} report 0x5A candidate(s), {result.RearMappingReportCount} structurally valid candidate(s). Bundle SHA-256: {result.BundleSha256}. Bundle: {result.BundlePath}");
             _mainWindow.SetStatus(
-                $"ETW candidates captured for hardware review. They cannot unlock ASUS writes or clear recovery state: {string.Join(" ", result.AssessmentReasons)}");
+                $"Capture evidence saved for hardware review. It cannot unlock ASUS writes or clear recovery state: {string.Join(" ", result.AssessmentReasons)}");
             Process.Start(new ProcessStartInfo
             {
                 FileName = "explorer.exe",

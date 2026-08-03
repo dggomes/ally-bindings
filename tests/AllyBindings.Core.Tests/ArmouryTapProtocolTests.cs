@@ -1,3 +1,5 @@
+using System.Buffers.Binary;
+
 namespace AllyBindings.Core.Tests;
 
 public sealed class ArmouryTapProtocolTests
@@ -83,9 +85,83 @@ public sealed class ArmouryTapProtocolTests
     public void Wire_constants_are_stable()
     {
         Assert.Equal(0x31544241u, ArmouryTapProtocol.WireMagic);
-        Assert.Equal(1, ArmouryTapProtocol.WireVersion);
+        Assert.Equal(2, ArmouryTapProtocol.WireVersion);
         Assert.Equal(124, ArmouryTapProtocol.WireRecordSize);
         Assert.Equal(256, ArmouryTapProtocol.MaximumRecords);
+        Assert.Equal(0xFE, ArmouryTapProtocol.SummaryRecordApi);
+        Assert.Equal(0xFF, ArmouryTapProtocol.OverflowRecordApi);
+    }
+
+    [Fact]
+    public void Expanded_api_ids_are_distinct_and_bounded()
+    {
+        Assert.Equal(new byte[] { 1, 2, 3, 4, 5 },
+            Enum.GetValues<ArmouryTapApi>().Select(value => (byte)value));
+        Assert.All(Enum.GetValues<ArmouryTapApi>(), api =>
+            Assert.True((byte)api < ArmouryTapProtocol.SummaryRecordApi));
+    }
+
+    [Fact]
+    public void Diagnostics_schema_contains_aggregate_counts_but_no_raw_identity_or_payload_fields()
+    {
+        var properties = typeof(ArmouryTapPreFilterDiagnostics).GetProperties()
+            .Select(property => property.Name).ToArray();
+        Assert.Contains("ProcessName", properties);
+        Assert.Contains("DeviceIoControlSetOutputReportCallCount", properties);
+        Assert.Contains("AttributeReadFailureCount", properties);
+        Assert.Contains("CounterSaturated", properties);
+        Assert.DoesNotContain(properties, name =>
+            name.Contains("Pid", StringComparison.OrdinalIgnoreCase) ||
+            name.Contains("Path", StringComparison.OrdinalIgnoreCase) ||
+            name.Equals("Handle", StringComparison.OrdinalIgnoreCase) ||
+            name.Equals("RawHandle", StringComparison.OrdinalIgnoreCase) ||
+            name.Contains("Timestamp", StringComparison.OrdinalIgnoreCase) ||
+            name.Equals("Payload", StringComparison.OrdinalIgnoreCase) ||
+            name.Equals("Report", StringComparison.OrdinalIgnoreCase) ||
+            name.Equals("ReportBytes", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public void Diagnostic_summary_decodes_a_monotonic_target_only_funnel()
+    {
+        var raw = BuildSummary(0, 0, 0, 0, 0, 0, 3, 0, 0, 2, 1, 1, 0);
+        var result = ArmouryTapProtocol.DecodeDiagnosticSummary(
+            "ArmouryCrateSE.Service", 3, 0, 0, raw, 1);
+
+        Assert.Equal(3u, result.HidDSetFeatureCallCount);
+        Assert.Equal(2u, result.ReportId5ACount);
+        Assert.Equal(1u, result.Prefix5AD1Count);
+        Assert.Equal(1u, result.RetainedRecordCount);
+        Assert.False(result.CounterSaturated);
+    }
+
+    [Fact]
+    public void Diagnostic_summary_rejects_nonmonotonic_or_nonzero_reserved_data()
+    {
+        var nonmonotonic = BuildSummary(0, 0, 0, 0, 0, 0, 1, 0, 0, 1, 0, 1, 0);
+        Assert.Throws<InvalidDataException>(() =>
+            ArmouryTapProtocol.DecodeDiagnosticSummary("ArmouryCrateSE.Service", 1, 0, 0, nonmonotonic, 1));
+
+        var reserved = BuildSummary(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
+        reserved[63] = 1;
+        Assert.Throws<InvalidDataException>(() =>
+            ArmouryTapProtocol.DecodeDiagnosticSummary("ArmouryCrateSE.Service", 0, 0, 0, reserved, 0));
+
+        var saturated = BuildSummary(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
+        saturated[1] = 1;
+        var saturatedResult = ArmouryTapProtocol.DecodeDiagnosticSummary(
+            "ArmouryCrateSE.Service", ArmouryTapProtocol.MaximumDiagnosticCounter, 0, 0, saturated, 0);
+        Assert.True(saturatedResult.CounterSaturated);
+    }
+
+    private static byte[] BuildSummary(params uint[] counters)
+    {
+        Assert.Equal(13, counters.Length);
+        var raw = new byte[64];
+        raw[0] = ArmouryTapProtocol.SummarySchemaVersion;
+        for (var index = 0; index < counters.Length; index++)
+            BinaryPrimitives.WriteUInt32LittleEndian(raw.AsSpan(4 + index * 4), counters[index]);
+        return raw;
     }
 
     [Fact]

@@ -193,6 +193,8 @@ internal static class ArmouryTapCaptureHelper
                 await CleanupAsync().ConfigureAwait(false);
                 return 2;
             }
+            if (targets.Any(target => target.Diagnostics is null))
+                throw new InvalidDataException("A tapped Armoury process did not return authenticated pre-filter diagnostics.");
 
             var rawRecords = targets
                 .SelectMany(target => target.Records.Select(record => new NamedRawRecord(target.ProcessName, record)))
@@ -221,13 +223,14 @@ internal static class ArmouryTapCaptureHelper
                 record.Report,
                 Convert.ToHexString(SHA256.HashData(record.Report)).ToLowerInvariant())).ToList();
             var droppedCount = targets.Sum(target => target.DroppedRecordCount) + unattributedRecordCount;
+            var diagnostics = targets.Select(target => target.Diagnostics!).ToList();
             var output = new EtwCaptureOutput(
                 [new("AllyBindings native user-mode HID write tap", Guid.Empty, 0)],
                 rawRecords.Count, 0, 0, 0, 0,
                 droppedCount,
                 records.Sum(record => record.Report.Length),
                 droppedCount != 0, false,
-                reports, [], [], records);
+                reports, [], [], records, diagnostics);
             await CleanupAsync().ConfigureAwait(false);
             await writer.WriteLineAsync(JsonSerializer.Serialize(new EtwPipeEnvelope("result", Output: output), JsonOptions));
             return 0;
@@ -660,6 +663,7 @@ internal static class ArmouryTapCaptureHelper
         public string ProcessName => _identity.ExactName;
         public List<RawTapRecord> Records { get; } = [];
         public int DroppedRecordCount { get; private set; }
+        public ArmouryTapPreFilterDiagnostics? Diagnostics { get; private set; }
 
         private TappedProcess(VerifiedProcess identity, string dllPath, byte[] token, NamedPipeServerStream pipe,
             IntPtr remoteModule, Task readerTask)
@@ -757,12 +761,21 @@ internal static class ArmouryTapCaptureHelper
                     if (wire is null) return;
                     if (wire.ProcessId != _identity.ProcessId || !CryptographicOperations.FixedTimeEquals(wire.Token, _token))
                         throw new InvalidDataException("An unauthenticated tap record was rejected.");
-                    if (wire.Api == 0xFF)
+                    if (wire.Api == ArmouryTapProtocol.OverflowRecordApi)
                     {
                         DroppedRecordCount += checked((int)wire.ApiResult);
                         continue;
                     }
-                    if (wire.Api is not 1 and not 2 || !ArmouryTapProtocol.IsRetainableReport(wire.Report)) continue;
+                    if (wire.Api == ArmouryTapProtocol.SummaryRecordApi)
+                    {
+                        if (wire.Report.Length != 0) throw new InvalidDataException("Tap diagnostic summary exposed report bytes.");
+                        if (Diagnostics is not null) throw new InvalidDataException("Duplicate tap diagnostic summary.");
+                        Diagnostics = ArmouryTapProtocol.DecodeDiagnosticSummary(
+                            ProcessName, wire.Qpc, wire.ApiResult, wire.LastError, wire.RawReport, Records.Count);
+                        continue;
+                    }
+                    if (wire.Api is < 1 or > 5 || !ArmouryTapProtocol.IsRetainableReport(wire.Report))
+                        throw new InvalidDataException("Unknown or malformed tap evidence record.");
                     lock (Records)
                     {
                         if (Records.Count == ArmouryTapProtocol.MaximumRecords) { DroppedRecordCount++; continue; }
@@ -809,7 +822,8 @@ internal static class ArmouryTapCaptureHelper
 
         public void Dispose() { _readerCancellation.Cancel(); _readerCancellation.Dispose(); _pipe.Dispose(); }
 
-        private sealed record Wire(int ProcessId, byte Api, long Qpc, uint ApiResult, int LastError, byte[] Token, byte[] Report);
+        private sealed record Wire(int ProcessId, byte Api, long Qpc, uint ApiResult, int LastError,
+            byte[] Token, byte[] Report, byte[] RawReport);
         private static async Task<Wire?> ReadRecordAsync(Stream stream, CancellationToken cancellationToken)
         {
             var bytes = new byte[ArmouryTapProtocol.WireRecordSize];
@@ -825,9 +839,10 @@ internal static class ArmouryTapCaptureHelper
                 throw new InvalidDataException("Invalid tap record framing.");
             var length = bytes[7];
             if (length > ArmouryTapProtocol.MaximumReportLength) throw new InvalidDataException("Oversized tap record.");
+            var rawReport = bytes[60..124];
             return new(BinaryPrimitives.ReadInt32LittleEndian(bytes.AsSpan(8)), bytes[6],
                 BinaryPrimitives.ReadInt64LittleEndian(bytes.AsSpan(12)), BinaryPrimitives.ReadUInt32LittleEndian(bytes.AsSpan(20)),
-                BinaryPrimitives.ReadInt32LittleEndian(bytes.AsSpan(24)), bytes[28..60], bytes[60..(60 + length)]);
+                BinaryPrimitives.ReadInt32LittleEndian(bytes.AsSpan(24)), bytes[28..60], rawReport[..length], rawReport);
         }
 
         private static NamedPipeServerStream CreateTapServer(string name)
