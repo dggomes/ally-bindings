@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using System.Runtime.InteropServices;
+using System.Reflection;
 
 namespace AllyBindings.HardwareValidator.Tests;
 
@@ -134,5 +135,30 @@ public sealed class HardwareLabPolicyTests
         {
             Marshal.FreeHGlobal(buffer);
         }
+    }
+
+    [Fact]
+    public void Native_writer_marshalling_matches_the_pinned_x64_windows_abi()
+    {
+        var writer = typeof(ExactRc73xaLabWriter);
+        var nested = BindingFlags.NonPublic;
+        Assert.Equal(NativeHidLayout.HidpCapsSize, Marshal.SizeOf(writer.GetNestedType("HidpCaps", nested)!));
+        Assert.Equal(NativeHidLayout.HiddAttributesSize, Marshal.SizeOf(writer.GetNestedType("HiddAttributes", nested)!));
+        Assert.Equal(NativeHidLayout.DeviceInterfaceDataSize, Marshal.SizeOf(writer.GetNestedType("SpDeviceInterfaceData", nested)!));
+
+        var methods = writer.GetMethods(BindingFlags.NonPublic | BindingFlags.Static);
+        var valueCaps = Assert.Single(methods, method => method.Name == "HidP_GetSpecificValueCaps");
+        var buttonCaps = Assert.Single(methods, method => method.Name == "HidP_GetSpecificButtonCaps");
+        Assert.Equal(typeof(ushort).MakeByRefType(), valueCaps.GetParameters()[5].ParameterType);
+        Assert.Equal(typeof(ushort).MakeByRefType(), buttonCaps.GetParameters()[5].ParameterType);
+
+        var setFeature = Assert.Single(methods, method => method.Name == "HidD_SetFeature");
+        Assert.Equal(3, setFeature.GetParameters().Length);
+        Assert.Equal(typeof(byte[]), setFeature.GetParameters()[1].ParameterType);
+        Assert.Equal(typeof(int), setFeature.GetParameters()[2].ParameterType);
+        var import = setFeature.GetCustomAttribute<DllImportAttribute>();
+        Assert.NotNull(import);
+        Assert.Equal("hid.dll", import.Value);
+        Assert.True(import.SetLastError);
     }
 }

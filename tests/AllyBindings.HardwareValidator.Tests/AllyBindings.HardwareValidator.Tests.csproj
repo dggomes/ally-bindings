@@ -23,5 +23,6 @@
     <Using Include="Xunit" />
     <Compile Include="..\..\src\AllyBindings.HardwareValidator\HardwareLabPolicy.cs" Link="HardwareLabPolicy.cs" />
     <Compile Include="..\..\src\AllyBindings.HardwareValidator\NativeHidLayout.cs" Link="NativeHidLayout.cs" />
+    <Compile Include="..\..\src\AllyBindings.HardwareValidator\ExactRc73xaLabWriter.cs" Link="ExactRc73xaLabWriter.cs" />
   </ItemGroup>
 </Project>
