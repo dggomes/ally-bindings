@@ -515,7 +515,7 @@ foreach ($required in @(
 }
 
 # CMake must produce x64-only DLL with security mitigations
-foreach ($required in @('FATAL_ERROR', 'MultiThreaded', '/guard:cf', '/DYNAMICBASE', '/HIGHENTROPYVA', '/NXCOMPAT', '/CETCOMPAT', '/Brepro', 'AllyBindings.ArmouryTap')) {
+foreach ($required in @('FATAL_ERROR', 'MultiThreaded', '/W4', '/WX', '/WX-', '/guard:cf', '/DYNAMICBASE', '/HIGHENTROPYVA', '/NXCOMPAT', '/CETCOMPAT', '/Brepro', 'AllyBindings.ArmouryTap')) {
     if ($tapCmake.IndexOf($required, [StringComparison]::Ordinal) -lt 0) {
         throw "The native CMake build is missing requirement: $required"
     }
