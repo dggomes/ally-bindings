@@ -138,9 +138,16 @@ try {
     }
 
     Write-Host 'Armoury tap runtime phase: authenticated ready record passed; stopping hooks.'
-    if ($stop.Invoke([IntPtr]::Zero) -ne 1) { throw 'ArmouryTapStop did not confirm clean hook teardown.' }
+    # Arm a read before waiting for Stop: the worker flushes its authenticated summary
+    # before exiting, so waiting first would deadlock against FlushFileBuffers.
     $summary = [byte[]]::new($wireRecordSize)
-    $offset = 0
+    $initialSummaryRead = $pipe.ReadAsync($summary, 0, $summary.Length)
+    if ($stop.Invoke([IntPtr]::Zero) -ne 1) { throw 'ArmouryTapStop did not confirm clean hook teardown.' }
+    if (-not $initialSummaryRead.Wait([TimeSpan]::FromSeconds(10))) {
+        throw 'Timed out waiting for the tap diagnostic summary.'
+    }
+    $offset = $initialSummaryRead.GetAwaiter().GetResult()
+    if ($offset -eq 0) { throw 'Tap DLL closed the pipe before its diagnostic summary.' }
     while ($offset -lt $summary.Length) {
         $read = $pipe.Read($summary, $offset, $summary.Length - $offset)
         if ($read -eq 0) { throw 'Tap DLL closed the pipe before its diagnostic summary.' }
