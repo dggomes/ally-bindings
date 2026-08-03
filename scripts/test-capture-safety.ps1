@@ -519,8 +519,6 @@ foreach ($required in @(
     'DisableHooksAndDrain',
     'transportFailure',
     'g_helperProcess',
-    'LoadLibraryExW',
-    'LOAD_LIBRARY_SEARCH_SYSTEM32',
     'helperPrefix',
     'FreeLibraryAndExitThread',
     'ReadProcessMemory',
@@ -561,6 +559,9 @@ foreach ($required in @('nativeWritesAllowed', '_armouryCaptureBarrierPersistenc
 $tapRuntime = Get-Content -Raw -LiteralPath (Join-Path $root 'scripts/test-armoury-tap-runtime.ps1')
 if ($tapRuntime.IndexOf("LoadLibraryW('hid.dll')", [StringComparison]::Ordinal) -ge 0) {
     throw 'The runtime test still masks production hid.dll loading by preloading it.'
+}
+if ($tapRuntime.IndexOf('tap PE dependency did not cause Windows to map hid.dll', [StringComparison]::Ordinal) -lt 0) {
+    throw 'The runtime test does not prove loader-owned hid.dll dependency mapping.'
 }
 foreach ($required in @(
     'id: publish',

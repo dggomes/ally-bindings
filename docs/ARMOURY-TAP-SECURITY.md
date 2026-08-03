@@ -39,7 +39,7 @@ PID `0x1B6E` is not an Ally controller identifier and must not pass the rear-but
 - Injection uses Windows `OpenProcess`, `VirtualAllocEx`, `WriteProcessMemory` and `CreateRemoteThread` with `LoadLibraryW`; there is no persistent service or driver.
 - The elevated same-executable helper revalidates process ID, executable name, signature, architecture and creation time immediately before injection.
 - A process restart, identity change, failed signature check, unknown architecture, partial remote write or uncertain module load fails closed.
-- If `hid.dll` is not already mapped in a target, the tap loads it only through `LOAD_LIBRARY_SEARCH_SYSTEM32`, installs the complete two-hook set, and releases that owned reference after hook removal.
+- The tap has a static Windows `hid.dll` import for target-handle validation, so the Windows PE loader maps the system HID module before tap entry; CI proves it was absent before tap load and released after tap unload.
 - The hook DLL may hook only:
   - `hid.dll!HidD_SetFeature`
   - the effective `WriteFile` implementation used by the target process.

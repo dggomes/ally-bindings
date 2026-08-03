@@ -65,6 +65,9 @@ try {
     if ($module -eq [IntPtr]::Zero) {
         throw "LoadLibraryW failed: $([Runtime.InteropServices.Marshal]::GetLastWin32Error())"
     }
+    if ([ArmouryTapRuntimeNative]::GetModuleHandleW('hid.dll') -eq [IntPtr]::Zero) {
+        throw 'The tap PE dependency did not cause Windows to map hid.dll before hook installation.'
+    }
     $systemStopAddress = [ArmouryTapRuntimeNative]::GetProcAddress($module, 'ArmouryTapStop')
     if ($systemStopAddress -eq [IntPtr]::Zero) { throw 'ArmouryTapStop export was not found.' }
     $stop = [Runtime.InteropServices.Marshal]::GetDelegateForFunctionPointer(

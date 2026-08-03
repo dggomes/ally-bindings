@@ -46,7 +46,6 @@ HANDLE g_queueEvent = nullptr;
 HANDLE g_worker = nullptr;
 HANDLE g_pipe = INVALID_HANDLE_VALUE;
 HANDLE g_helperProcess = nullptr;
-HMODULE g_ownedHidModule = nullptr;
 CRITICAL_SECTION g_queueLock{};
 std::array<WireRecord, kQueueCapacity> g_queue{};
 size_t g_head = 0;
@@ -213,17 +212,9 @@ bool InstallHooks() {
     const auto rollback = []() {
         MH_DisableHook(MH_ALL_HOOKS);
         MH_Uninitialize();
-        if (g_ownedHidModule) {
-            FreeLibrary(g_ownedHidModule);
-            g_ownedHidModule = nullptr;
-        }
         return false;
     };
     HMODULE hid = GetModuleHandleW(L"hid.dll");
-    if (!hid) {
-        hid = LoadLibraryExW(L"hid.dll", nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32);
-        g_ownedHidModule = hid;
-    }
     HMODULE kernelBase = GetModuleHandleW(L"KernelBase.dll");
     if (!hid || !kernelBase) return rollback();
     auto setFeature = reinterpret_cast<LPVOID>(GetProcAddress(hid, "HidD_SetFeature"));
@@ -257,12 +248,7 @@ bool DisableHooksAndDrain() {
         Sleep(10);
     }
     if (g_activeCallbacks.load(std::memory_order_acquire) != 0) return false;
-    if (MH_Uninitialize() != MH_OK) return false;
-    if (g_ownedHidModule) {
-        FreeLibrary(g_ownedHidModule);
-        g_ownedHidModule = nullptr;
-    }
-    return true;
+    return MH_Uninitialize() == MH_OK;
 }
 
 DWORD WINAPI WorkerMain(void* parameter) {
