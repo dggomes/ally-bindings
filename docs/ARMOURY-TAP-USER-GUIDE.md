@@ -19,8 +19,8 @@ This mode observes Armoury. It does not apply mappings itself and cannot enable 
 ## Capture
 
 1. Open **Capture & update** in Ally Bindings.
-2. Choose **Capture Armoury writes**.
-3. Review the displayed ROG Ally identity and exact ASUS process names.
+2. Choose **Capture Armoury M1/M2**.
+3. Review the displayed ROG Ally identity and the explicit injection/process-risk disclosure.
 4. Accept the one-time Windows administrator prompt. Nothing is installed.
 5. In Armoury, apply the three configurations requested by Ally Bindings:
    - M1=A and M2=B;
@@ -29,16 +29,16 @@ This mode observes Armoury. It does not apply mappings itself and cannot enable 
 6. Return to Ally Bindings and choose **Done** after each Armoury operation.
 7. Keep the generated ZIP and its displayed SHA-256 together.
 
-The app temporarily extracts its embedded x64 capture DLL into a random protected directory, injects it only into the confirmed ASUS process, records exact target report `0x5A` writes, unloads it and deletes the directory. A successful finish positively confirms helper exit and hook unload.
+The app temporarily extracts its embedded x64 capture DLL into a random protected directory, injects it only into the confirmed ASUS process, records exact target `5A D1` rear-mapping writes, unloads it and deletes the directory. A successful finish positively confirms helper exit and hook unload.
 
 ## What is retained
 
 The ZIP may contain private controller-configuration bytes:
 
-- exact 50–64-byte report `0x5A` buffers for ASUS VID `0x0B05`, PID `0x1B4C`;
+- exact 50–64-byte `5A D1` rear-mapping buffers for ASUS VID `0x0B05`, PID `0x1B4C`;
 - API kind, report length and API result;
-- bounded monotonic sequence/timing and capture phase;
-- confirmed process name, process ID and executable hash;
+- capture phase and per-phase ordinal, without raw timestamps or QPC values;
+- allowlisted ASUS process name, without process ID, executable path or user-specific identifiers;
 - redacted device/model identity;
 - manifest and file hashes.
 

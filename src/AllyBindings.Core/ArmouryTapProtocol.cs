@@ -5,6 +5,7 @@ public static class ArmouryTapProtocol
     public const ushort AsusVendorId = 0x0B05;
     public const ushort AllyProductId = 0x1B4C;
     public const byte ReportId = 0x5A;
+    public const byte RearMappingCommand = 0xD1;
     public const int MinimumReportLength = 50;
     public const int MaximumReportLength = 64;
     public const int MaximumRecords = 256;
@@ -26,7 +27,8 @@ public static class ArmouryTapProtocol
         processName is not null && CandidateNames.Contains(processName, StringComparer.OrdinalIgnoreCase);
 
     public static bool IsRetainableReport(ReadOnlySpan<byte> report) =>
-        report.Length is >= MinimumReportLength and <= MaximumReportLength && report[0] == ReportId;
+        report.Length is >= MinimumReportLength and <= MaximumReportLength &&
+        report[0] == ReportId && report[1] == RearMappingCommand;
 
     public static bool IsSupportedDevice(ushort vendorId, ushort productId) =>
         vendorId == AsusVendorId && productId == AllyProductId;
@@ -39,9 +41,10 @@ public enum ArmouryTapApi : byte
 }
 
 public sealed record ArmouryTapRecord(
-    int ProcessId,
+    string ProcessName,
+    int Phase,
+    int Ordinal,
     ArmouryTapApi Api,
-    long PerformanceCounterTimestamp,
     bool ApiResult,
     int LastError,
     byte[] Report);

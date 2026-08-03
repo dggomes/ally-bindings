@@ -19,7 +19,10 @@ internal static class ArmouryTapCaptureHelper
 {
     internal const string HelperArgument = "--armoury-tap-capture-helper";
     internal const string NativeResourceName = "AllyBindings.Windows.Native.AllyBindings.ArmouryTap.dll";
+    internal const string TapUnavailableErrorCode = "tap-unavailable";
+    internal const string TeardownUnconfirmedErrorCode = "teardown-unconfirmed";
     private static readonly TimeSpan MaximumCaptureDuration = TimeSpan.FromMinutes(10);
+    private const int MaximumCandidateProcesses = 4;
     private static readonly JsonSerializerOptions JsonOptions = new();
 
     public static bool TryParseArguments(IReadOnlyList<string> args, out Guid sessionId, out int parentProcessId)
@@ -44,7 +47,7 @@ internal static class ArmouryTapCaptureHelper
             VerifyParentExecutableIdentity(parentProcessId);
             using var reader = new BoundedTextLineReader(new StreamReader(pipe, Encoding.UTF8, false, leaveOpen: true));
             await using var writer = new StreamWriter(pipe, new UTF8Encoding(false), leaveOpen: true) { AutoFlush = true };
-            return await CaptureAsync(sessionId, reader, writer, cancellationToken).ConfigureAwait(false);
+            return await CaptureAsync(sessionId, parentProcessId, reader, writer, cancellationToken).ConfigureAwait(false);
         }
         catch (Exception ex)
         {
@@ -53,7 +56,14 @@ internal static class ArmouryTapCaptureHelper
                 try
                 {
                     await using var writer = new StreamWriter(pipe, new UTF8Encoding(false), leaveOpen: true) { AutoFlush = true };
-                    await writer.WriteLineAsync(JsonSerializer.Serialize(new EtwPipeEnvelope("error", Error: ex.Message), JsonOptions));
+                    var errorCode = ex switch
+                    {
+                        TapUnavailableException => TapUnavailableErrorCode,
+                        TapTeardownUnconfirmedException => TeardownUnconfirmedErrorCode,
+                        _ => null,
+                    };
+                    await writer.WriteLineAsync(JsonSerializer.Serialize(
+                        new EtwPipeEnvelope("error", Error: ex.Message, ErrorCode: errorCode), JsonOptions));
                 }
                 catch { }
             }
@@ -61,18 +71,64 @@ internal static class ArmouryTapCaptureHelper
         }
     }
 
-    private static async Task<int> CaptureAsync(Guid sessionId, BoundedTextLineReader reader, StreamWriter writer,
+    private static async Task<int> CaptureAsync(Guid sessionId, int parentProcessId,
+        BoundedTextLineReader reader, StreamWriter writer,
         CancellationToken cancellationToken)
     {
         var extractionDirectory = CreatePrivateExtractionDirectory(sessionId);
         var dllPath = Path.Combine(extractionDirectory, "AllyBindings.ArmouryTap.dll");
         var targets = new List<TappedProcess>();
+        var candidates = new List<VerifiedProcess>();
+        SafeAccessTokenHandle? unelevatedToken = null;
+        var phaseWindows = new Dictionary<int, PhaseWindow>();
+        FileStream? dllLock = null;
+        bool cleanupAttempted = false;
+        TapTeardownUnconfirmedException? cleanupFailure = null;
+        async Task CleanupAsync()
+        {
+            if (cleanupAttempted)
+            {
+                if (cleanupFailure is not null) throw cleanupFailure;
+                return;
+            }
+            cleanupAttempted = true;
+            var failures = new List<Exception>();
+            foreach (var target in targets)
+            {
+                try { await target.DetachAsync().ConfigureAwait(false); }
+                catch (Exception ex) { failures.Add(ex); }
+                try { target.Dispose(); }
+                catch (Exception ex) { failures.Add(ex); }
+            }
+            foreach (var candidate in candidates)
+            {
+                try { candidate.ImageLock.Dispose(); }
+                catch (Exception ex) { failures.Add(ex); }
+            }
+            try { unelevatedToken?.Dispose(); }
+            catch (Exception ex) { failures.Add(ex); }
+            try { dllLock?.Dispose(); }
+            catch (Exception ex) { failures.Add(ex); }
+            try { DeleteExtractionDirectory(extractionDirectory); }
+            catch (Exception ex) { failures.Add(ex); }
+            if (failures.Count != 0)
+            {
+                cleanupFailure = new TapTeardownUnconfirmedException(
+                    "One or more hooks, file locks or temporary files could not be positively removed.",
+                    new AggregateException(failures));
+                throw cleanupFailure;
+            }
+        }
         try
         {
-            ExtractNativeDll(dllPath);
-            var candidates = DiscoverSignedCandidates();
+            var expectedDllHash = ExtractNativeDll(dllPath);
+            dllLock = LockAndVerifyNativeDll(dllPath, expectedDllHash);
+            unelevatedToken = OpenParentImpersonationToken(parentProcessId);
+            candidates = DiscoverSignedCandidates(unelevatedToken);
             if (candidates.Count == 0)
-                throw new InvalidOperationException("No running ASUS-signed Armoury candidate process was found for the user-mode tap.");
+                throw new TapUnavailableException("No running ASUS-signed Armoury candidate process was found for the user-mode tap.");
+            if (candidates.Count > MaximumCandidateProcesses)
+                throw new InvalidOperationException($"Found {candidates.Count} ASUS Armoury candidates; the safe limit is {MaximumCandidateProcesses}.");
 
             foreach (var candidate in candidates)
             {
@@ -93,47 +149,82 @@ internal static class ArmouryTapCaptureHelper
                 if (!UsbEtwCapturePhaseCommand.TryParse(command, out var phase, out var transition))
                     throw new InvalidDataException("The tap helper received an invalid phase command.");
                 var boundary = Stopwatch.GetTimestamp();
+                if (transition == UsbEtwCapturePhaseTransition.Start)
+                {
+                    if (phaseWindows.ContainsKey(phase))
+                        throw new InvalidDataException($"Capture phase {phase} started more than once.");
+                    phaseWindows.Add(phase, new(boundary, null));
+                }
+                else
+                {
+                    if (!phaseWindows.TryGetValue(phase, out var window) || window.EndQpc is not null || boundary <= window.StartQpc)
+                        throw new InvalidDataException($"Capture phase {phase} ended without one valid open window.");
+                    phaseWindows[phase] = window with { EndQpc = boundary };
+                }
                 await writer.WriteLineAsync(JsonSerializer.Serialize(new EtwPipeEnvelope("phase-ack", Phase: phase,
                     PhaseStarted: transition == UsbEtwCapturePhaseTransition.Start, BoundaryQpc: boundary), JsonOptions));
             }
 
             var cancelled = command is null || command.Equals("cancel", StringComparison.Ordinal);
             foreach (var target in targets) await target.DetachAsync().ConfigureAwait(false);
-            if (cancelled) return 2;
+            if (cancelled)
+            {
+                await CleanupAsync().ConfigureAwait(false);
+                return 2;
+            }
 
-            var records = targets.SelectMany(target => target.Records).OrderBy(record => record.PerformanceCounterTimestamp).ToList();
+            var rawRecords = targets
+                .SelectMany(target => target.Records.Select(record => new NamedRawRecord(target.ProcessName, record)))
+                .OrderBy(item => item.Record.PerformanceCounterTimestamp)
+                .ToList();
+            var phaseOrdinals = new Dictionary<int, int>();
+            var unattributedRecordCount = 0;
+            var records = new List<ArmouryTapRecord>(rawRecords.Count);
+            foreach (var item in rawRecords)
+            {
+                var phase = ClassifyPhase(item.Record.PerformanceCounterTimestamp, phaseWindows);
+                if (phase < 0) { unattributedRecordCount++; continue; }
+                var ordinal = phaseOrdinals.GetValueOrDefault(phase) + 1;
+                phaseOrdinals[phase] = ordinal;
+                records.Add(new(item.ProcessName, phase, ordinal, item.Record.Api,
+                    item.Record.ApiResult, item.Record.LastError, item.Record.Report));
+            }
             var reports = records.Select(record => new UsbEtwFeatureReport(
-                DateTimeOffset.UnixEpoch.AddSeconds((double)record.PerformanceCounterTimestamp / Stopwatch.Frequency),
-                record.PerformanceCounterTimestamp,
+                DateTimeOffset.UnixEpoch,
+                0,
                 "AllyBindings-ArmouryTap",
                 record.Api.ToString(),
                 (int)record.Api,
-                $"pid-{record.ProcessId}",
+                $"phase-{record.Phase}-ordinal-{record.Ordinal}",
                 0,
                 record.Report,
                 Convert.ToHexString(SHA256.HashData(record.Report)).ToLowerInvariant())).ToList();
+            var droppedCount = targets.Sum(target => target.DroppedRecordCount) + unattributedRecordCount;
             var output = new EtwCaptureOutput(
                 [new("AllyBindings native user-mode HID write tap", Guid.Empty, 0)],
-                records.Count, 0, 0, 0, 0,
-                targets.Sum(target => target.DroppedRecordCount),
+                rawRecords.Count, 0, 0, 0, 0,
+                droppedCount,
                 records.Sum(record => record.Report.Length),
-                targets.Any(target => target.DroppedRecordCount != 0), false,
+                droppedCount != 0, false,
                 reports, [], [], records);
+            await CleanupAsync().ConfigureAwait(false);
             await writer.WriteLineAsync(JsonSerializer.Serialize(new EtwPipeEnvelope("result", Output: output), JsonOptions));
             return 0;
         }
         finally
         {
-            foreach (var target in targets)
-            {
-                try { await target.DetachAsync().ConfigureAwait(false); } catch { }
-                target.Dispose();
-            }
-            DeleteExtractionDirectory(extractionDirectory);
+            await CleanupAsync().ConfigureAwait(false);
         }
     }
 
-    private static List<VerifiedProcess> DiscoverSignedCandidates()
+    private static int ClassifyPhase(long qpc, IReadOnlyDictionary<int, PhaseWindow> windows)
+    {
+        foreach (var (phase, window) in windows.OrderBy(item => item.Value.StartQpc))
+            if (window.EndQpc is long end && qpc >= window.StartQpc && qpc <= end) return phase;
+        return windows.TryGetValue(1, out var first) && qpc < first.StartQpc ? 0 : -1;
+    }
+
+    private static List<VerifiedProcess> DiscoverSignedCandidates(SafeAccessTokenHandle unelevatedToken)
     {
         var found = new List<VerifiedProcess>();
         foreach (var name in ArmouryTapProtocol.ExactCandidateProcessNames)
@@ -145,14 +236,26 @@ internal static class ArmouryTapCaptureHelper
                     try
                     {
                         var path = process.MainModule?.FileName;
-                        if (path is null || !IsNativeAmd64(process.Handle) || !HasAsusAuthenticodeSignature(path)) continue;
-                        found.Add(new(process.Id, process.StartTime.ToUniversalTime(), Path.GetFullPath(path), name));
+                        if (path is null || !IsTrustedInstallPath(path) || HasReparseTraversal(path) ||
+                            IsWritableByToken(path, unelevatedToken) || !IsNativeAmd64(process.Handle)) continue;
+                        FileStream? imageLock = new(path, FileMode.Open, FileAccess.Read, FileShare.Read);
+                        try
+                        {
+                            if (!HasAsusAuthenticodeSignature(path)) continue;
+                            var imageHash = SHA256.HashData(imageLock);
+                            imageLock.Position = 0;
+                            if (found.Any(item => item.ProcessId == process.Id)) continue;
+                            found.Add(new(process.Id, process.StartTime.ToUniversalTime(), Path.GetFullPath(path), name,
+                                imageLock, imageHash, unelevatedToken));
+                            imageLock = null;
+                        }
+                        finally { imageLock?.Dispose(); }
                     }
                     catch { }
                 }
             }
         }
-        return found.GroupBy(item => item.ProcessId).Select(group => group.Single()).ToList();
+        return found;
     }
 
     internal static bool Revalidate(VerifiedProcess expected)
@@ -167,7 +270,9 @@ internal static class ArmouryTapCaptureHelper
                 currentName.Equals(expected.ExactName, StringComparison.OrdinalIgnoreCase) &&
                 process.StartTime.ToUniversalTime() == expected.StartTimeUtc && currentPath is not null &&
                 Path.GetFullPath(currentPath).Equals(expected.ExecutablePath, StringComparison.OrdinalIgnoreCase) &&
-                IsNativeAmd64(process.Handle) && HasAsusAuthenticodeSignature(currentPath);
+                IsTrustedInstallPath(currentPath) && !HasReparseTraversal(currentPath) &&
+                !IsWritableByToken(currentPath, expected.UnelevatedToken) && IsNativeAmd64(process.Handle) &&
+                HasAsusAuthenticodeSignature(currentPath) && ImageHashMatches(expected);
         }
         catch { return false; }
     }
@@ -180,8 +285,8 @@ internal static class ArmouryTapCaptureHelper
         {
             if (WinVerifyTrust(IntPtr.Zero, WinTrustActionGenericVerifyV2, data.Pointer) != 0) return false;
             using var certificate = new X509Certificate2(X509Certificate.CreateFromSignedFile(path));
-            return certificate.Subject.Contains("ASUSTeK COMPUTER INC.", StringComparison.OrdinalIgnoreCase) ||
-                certificate.Subject.Contains("ASUS", StringComparison.OrdinalIgnoreCase);
+            return certificate.GetNameInfo(X509NameType.SimpleName, forIssuer: false)
+                .Equals("ASUSTeK COMPUTER INC.", StringComparison.OrdinalIgnoreCase);
         }
         catch { return false; }
         finally { data.Dispose(); file.Dispose(); }
@@ -191,30 +296,176 @@ internal static class ArmouryTapCaptureHelper
         IsWow64Process2(process, out var processMachine, out var nativeMachine) &&
         processMachine == 0 && nativeMachine == 0x8664;
 
+    private static string? GetTrustedInstallRoot(string path)
+    {
+        var fullPath = Path.GetFullPath(path);
+        var roots = new[]
+        {
+            Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles),
+            Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86),
+            Environment.GetFolderPath(Environment.SpecialFolder.Windows),
+        };
+        return roots.Where(root => !string.IsNullOrWhiteSpace(root))
+            .Select(root => Path.GetFullPath(root).TrimEnd(Path.DirectorySeparatorChar))
+            .OrderByDescending(root => root.Length)
+            .FirstOrDefault(root => fullPath.StartsWith(root + Path.DirectorySeparatorChar,
+                StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static bool IsTrustedInstallPath(string path) => GetTrustedInstallRoot(path) is not null;
+
+    private static bool HasReparseTraversal(string path)
+    {
+        for (var current = Path.GetFullPath(path); !string.IsNullOrEmpty(current); current = Path.GetDirectoryName(current))
+        {
+            if ((File.GetAttributes(current) & FileAttributes.ReparsePoint) != 0) return true;
+            if (string.Equals(Path.GetPathRoot(current), current, StringComparison.OrdinalIgnoreCase)) break;
+        }
+        return false;
+    }
+
+    private static SafeAccessTokenHandle OpenParentImpersonationToken(int processId)
+    {
+        using var process = Process.GetProcessById(processId);
+        if (!OpenProcessToken(process.Handle, 0x0008 | 0x0002, out var primaryToken))
+            throw new System.ComponentModel.Win32Exception();
+        using (primaryToken)
+        {
+            if (!DuplicateToken(primaryToken, 2, out var impersonationToken))
+                throw new System.ComponentModel.Win32Exception();
+            return impersonationToken;
+        }
+    }
+
+    private static bool IsWritableByToken(string path, SafeAccessTokenHandle token)
+    {
+        const uint dangerousRights = 0x00000002 | 0x00000004 | 0x00000040 |
+            0x00010000 | 0x00040000 | 0x00080000;
+        var trustedRoot = GetTrustedInstallRoot(path)
+            ?? throw new InvalidOperationException("Executable is outside every trusted install root.");
+        for (var current = Path.GetFullPath(path); !string.IsNullOrEmpty(current); current = Path.GetDirectoryName(current))
+        {
+            const AccessControlSections sections = AccessControlSections.Access |
+                AccessControlSections.Owner | AccessControlSections.Group;
+            FileSystemSecurity security = File.Exists(current)
+                ? new FileInfo(current).GetAccessControl(sections)
+                : new DirectoryInfo(current).GetAccessControl(sections);
+            if ((GetMaximumAllowedAccess(security, token) & dangerousRights) != 0) return true;
+            if (current.Equals(trustedRoot, StringComparison.OrdinalIgnoreCase)) break;
+        }
+        return false;
+    }
+
+    private static uint GetMaximumAllowedAccess(FileSystemSecurity security, SafeAccessTokenHandle token)
+    {
+        var descriptor = security.GetSecurityDescriptorBinaryForm();
+        var pinnedDescriptor = GCHandle.Alloc(descriptor, GCHandleType.Pinned);
+        try
+        {
+            var mapping = new GenericMapping
+            {
+                GenericRead = 0x00120089,
+                GenericWrite = 0x00120116,
+                GenericExecute = 0x001200A0,
+                GenericAll = 0x001F01FF,
+            };
+            uint privilegeSetLength = 256;
+            for (var attempt = 0; attempt < 2; attempt++)
+            {
+                var privilegeSet = Marshal.AllocHGlobal(checked((int)privilegeSetLength));
+                try
+                {
+                    if (AccessCheck(pinnedDescriptor.AddrOfPinnedObject(), token, 0x02000000, ref mapping,
+                        privilegeSet, ref privilegeSetLength, out var grantedAccess, out var accessStatus))
+                        return accessStatus ? grantedAccess : 0;
+                    var error = Marshal.GetLastWin32Error();
+                    if (error != 122) throw new System.ComponentModel.Win32Exception(error);
+                }
+                finally { Marshal.FreeHGlobal(privilegeSet); }
+            }
+            throw new IOException("Windows returned an unstable AccessCheck privilege-set size.");
+        }
+        finally { pinnedDescriptor.Free(); }
+    }
+
+    private static bool ImageHashMatches(VerifiedProcess process)
+    {
+        process.ImageLock.Position = 0;
+        var actual = SHA256.HashData(process.ImageLock);
+        process.ImageLock.Position = 0;
+        return CryptographicOperations.FixedTimeEquals(actual, process.ImageHash);
+    }
+
     private static string CreatePrivateExtractionDirectory(Guid sessionId)
     {
-        var root = Path.Combine(Path.GetTempPath(), "AllyBindings", "armoury-tap", sessionId.ToString("D"));
-        Directory.CreateDirectory(root);
+        var windowsRoot = Environment.GetFolderPath(Environment.SpecialFolder.Windows);
+        var tempRoot = Path.Combine(windowsRoot, "Temp");
+        if (!Directory.Exists(tempRoot) || HasReparseTraversal(tempRoot))
+            throw new InvalidOperationException("The trusted Windows temporary root is unavailable or traverses a reparse point.");
         var security = new DirectorySecurity();
         security.SetAccessRuleProtection(true, false);
         using var identity = WindowsIdentity.GetCurrent();
         var user = identity.User ?? throw new InvalidOperationException("Current Windows SID unavailable.");
-        security.SetOwner(user);
-        foreach (var sid in new SecurityIdentifier[] { user,
-            new(WellKnownSidType.LocalSystemSid, null), new(WellKnownSidType.BuiltinAdministratorsSid, null) })
-            security.AddAccessRule(new(sid, FileSystemRights.FullControl, InheritanceFlags.ContainerInherit | InheritanceFlags.ObjectInherit,
+        var system = new SecurityIdentifier(WellKnownSidType.LocalSystemSid, null);
+        var administrators = new SecurityIdentifier(WellKnownSidType.BuiltinAdministratorsSid, null);
+        security.SetOwner(administrators);
+        security.AddAccessRule(new(user, FileSystemRights.ReadAndExecute,
+            InheritanceFlags.ContainerInherit | InheritanceFlags.ObjectInherit,
+            PropagationFlags.None, AccessControlType.Allow));
+        foreach (var sid in new[] { system, administrators })
+            security.AddAccessRule(new(sid, FileSystemRights.FullControl,
+                InheritanceFlags.ContainerInherit | InheritanceFlags.ObjectInherit,
                 PropagationFlags.None, AccessControlType.Allow));
-        new DirectoryInfo(root).SetAccessControl(security);
-        return root;
+        var descriptor = security.GetSecurityDescriptorBinaryForm();
+        var pinnedDescriptor = GCHandle.Alloc(descriptor, GCHandleType.Pinned);
+        try
+        {
+            var attributes = new SecurityAttributes
+            {
+                Length = Marshal.SizeOf<SecurityAttributes>(),
+                SecurityDescriptor = pinnedDescriptor.AddrOfPinnedObject(),
+            };
+            for (var attempt = 0; attempt < 8; attempt++)
+            {
+                var randomSuffix = Convert.ToHexString(RandomNumberGenerator.GetBytes(16));
+                var root = Path.Combine(tempRoot, $"AllyBindings-armoury-tap-{sessionId:D}-{randomSuffix}");
+                if (CreateDirectoryW(root, ref attributes)) return root;
+                var error = Marshal.GetLastWin32Error();
+                if (error != 183) throw new System.ComponentModel.Win32Exception(error);
+            }
+        }
+        finally { pinnedDescriptor.Free(); }
+        throw new IOException("Windows could not allocate a unique private Armoury tap directory.");
     }
 
-    private static void ExtractNativeDll(string destination)
+    private static byte[] ExtractNativeDll(string destination)
     {
         using var source = Assembly.GetExecutingAssembly().GetManifestResourceStream(NativeResourceName)
-            ?? throw new FileNotFoundException("The embedded native Armoury tap is unavailable; ETW fallback is required.");
+            ?? throw new TapUnavailableException("The embedded native Armoury tap is unavailable; ETW fallback is required.");
+        using var hasher = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
         using var output = new FileStream(destination, FileMode.CreateNew, FileAccess.Write, FileShare.Read);
-        source.CopyTo(output);
+        var buffer = new byte[64 * 1024];
+        int read;
+        while ((read = source.Read(buffer, 0, buffer.Length)) != 0)
+        {
+            hasher.AppendData(buffer, 0, read);
+            output.Write(buffer, 0, read);
+        }
         output.Flush(true);
+        return hasher.GetHashAndReset();
+    }
+
+    private static FileStream LockAndVerifyNativeDll(string path, byte[] expectedHash)
+    {
+        var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
+        var actualHash = SHA256.HashData(stream);
+        stream.Position = 0;
+        if (!CryptographicOperations.FixedTimeEquals(actualHash, expectedHash))
+        {
+            stream.Dispose();
+            throw new InvalidDataException("The extracted native tap DLL failed its embedded-resource SHA-256 check.");
+        }
+        return stream;
     }
 
     private static void DeleteExtractionDirectory(string path)
@@ -246,7 +497,12 @@ internal static class ArmouryTapCaptureHelper
     private static extern int WinVerifyTrust(IntPtr hwnd, [MarshalAs(UnmanagedType.LPStruct)] Guid action, IntPtr data);
     private static readonly Guid WinTrustActionGenericVerifyV2 = new("00AAC56B-CD44-11d0-8CC2-00C04FC295EE");
 
-    internal sealed record VerifiedProcess(int ProcessId, DateTime StartTimeUtc, string ExecutablePath, string ExactName);
+    internal sealed record VerifiedProcess(int ProcessId, DateTime StartTimeUtc, string ExecutablePath,
+        string ExactName, FileStream ImageLock, byte[] ImageHash, SafeAccessTokenHandle UnelevatedToken);
+    private sealed record PhaseWindow(long StartQpc, long? EndQpc);
+    private sealed record RawTapRecord(int ProcessId, ArmouryTapApi Api, long PerformanceCounterTimestamp,
+        bool ApiResult, int LastError, byte[] Report);
+    private sealed record NamedRawRecord(string ProcessName, RawTapRecord Record);
 
     private sealed class WinTrustFileInfo : IDisposable
     {
@@ -264,7 +520,8 @@ internal static class ArmouryTapCaptureHelper
             Marshal.FreeCoTaskMem(Marshal.ReadIntPtr(Pointer, 8));
             Marshal.FreeCoTaskMem(Pointer);
         }
-        [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)] private struct WinTrustFileInfoNative
+        [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+        private struct WinTrustFileInfoNative
         { public uint Size; public IntPtr FilePath; public IntPtr FileHandle; public IntPtr KnownSubject; }
     }
 
@@ -275,14 +532,21 @@ internal static class ArmouryTapCaptureHelper
         {
             var native = new WinTrustDataNative
             {
-                Size = (uint)Marshal.SizeOf<WinTrustDataNative>(), UIChoice = 2, RevocationChecks = 0,
-                UnionChoice = 1, FileInfo = file.Pointer, StateAction = 0, ProvFlags = 0x00001000, UIContext = 0,
+                Size = (uint)Marshal.SizeOf<WinTrustDataNative>(),
+                UIChoice = 2,
+                RevocationChecks = 0,
+                UnionChoice = 1,
+                FileInfo = file.Pointer,
+                StateAction = 0,
+                ProvFlags = 0x00001000,
+                UIContext = 0,
             };
             Pointer = Marshal.AllocCoTaskMem(Marshal.SizeOf<WinTrustDataNative>());
             Marshal.StructureToPtr(native, Pointer, false);
         }
         public void Dispose() => Marshal.FreeCoTaskMem(Pointer);
-        [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)] private struct WinTrustDataNative
+        [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+        private struct WinTrustDataNative
         {
             public uint Size; public IntPtr PolicyCallbackData; public IntPtr SipClientData; public uint UIChoice;
             public uint RevocationChecks; public uint UnionChoice; public IntPtr FileInfo; public uint StateAction;
@@ -300,7 +564,8 @@ internal static class ArmouryTapCaptureHelper
         private Task _readerTask;
         private IntPtr _remoteModule;
         private int _detached;
-        public List<ArmouryTapRecord> Records { get; } = [];
+        public string ProcessName => _identity.ExactName;
+        public List<RawTapRecord> Records { get; } = [];
         public int DroppedRecordCount { get; private set; }
 
         private TappedProcess(VerifiedProcess identity, string dllPath, byte[] token, NamedPipeServerStream pipe,
@@ -313,20 +578,51 @@ internal static class ArmouryTapCaptureHelper
             if (!Revalidate(identity)) throw new InvalidOperationException($"ASUS process {identity.ProcessId} changed before injection.");
             var token = RandomNumberGenerator.GetBytes(32);
             var pipeName = $"AllyBindings.ArmouryTap.{sessionId:D}.{identity.ProcessId}";
+            var configPath = dllPath + ".config";
             var pipe = CreateTapServer(pipeName);
-            await File.WriteAllTextAsync(dllPath + ".config", $"pipe=\\\\.\\pipe\\{pipeName}\ntoken={Convert.ToHexString(token)}\n",
-                new UnicodeEncoding(false, true), cancellationToken);
-            var remoteModule = Inject(identity, dllPath);
-            var holder = new TappedProcess(identity, dllPath, token, pipe, remoteModule, Task.CompletedTask);
-            var connectTask = pipe.WaitForConnectionAsync(cancellationToken);
-            await connectTask.WaitAsync(TimeSpan.FromSeconds(15), cancellationToken);
-            if (!GetNamedPipeClientProcessId(pipe.SafePipeHandle, out var clientPid) || clientPid != (uint)identity.ProcessId)
-                throw new InvalidOperationException("A tap record pipe connected from an unexpected process.");
-            var ready = await ReadRecordAsync(pipe, cancellationToken);
-            if (ready is null || ready.ProcessId != identity.ProcessId || ready.Api != 0 || !CryptographicOperations.FixedTimeEquals(ready.Token, token))
-                throw new InvalidDataException("The injected tap did not authenticate its ready record.");
-            holder._readerTask = holder.ReadLoopAsync();
-            return holder;
+            IntPtr remoteModule = IntPtr.Zero;
+            try
+            {
+                var configBytes = Encoding.ASCII.GetBytes(
+                    $"pipe=\\\\.\\pipe\\{pipeName}\ntoken={Convert.ToHexString(token)}\n");
+                using var configLock = new FileStream(configPath, FileMode.CreateNew, FileAccess.Write, FileShare.Read);
+                await configLock.WriteAsync(configBytes, cancellationToken).ConfigureAwait(false);
+                configLock.Flush(true);
+                remoteModule = Inject(identity, dllPath);
+                var holder = new TappedProcess(identity, dllPath, token, pipe, remoteModule, Task.CompletedTask);
+                var connectTask = pipe.WaitForConnectionAsync(cancellationToken);
+                await connectTask.WaitAsync(TimeSpan.FromSeconds(15), cancellationToken);
+                if (!GetNamedPipeClientProcessId(pipe.SafePipeHandle, out var clientPid) || clientPid != (uint)identity.ProcessId)
+                    throw new InvalidOperationException("A tap record pipe connected from an unexpected process.");
+                var ready = await ReadRecordAsync(pipe, cancellationToken);
+                if (ready is null || ready.ProcessId != identity.ProcessId || ready.Api != 0 ||
+                    !CryptographicOperations.FixedTimeEquals(ready.Token, token))
+                    throw new InvalidDataException("The injected tap did not authenticate its ready record.");
+                holder._readerTask = holder.ReadLoopAsync();
+                configLock.Dispose();
+                File.Delete(configPath);
+                return holder;
+            }
+            catch (Exception attachFailure)
+            {
+                Exception? teardownFailure = null;
+                if (remoteModule != IntPtr.Zero)
+                {
+                    if (!Revalidate(identity))
+                        teardownFailure = new InvalidOperationException("The injected process identity changed before failed-attach cleanup.");
+                    else
+                    {
+                        try { StopAndUnload(identity, dllPath, remoteModule); }
+                        catch (Exception ex) { teardownFailure = ex; }
+                    }
+                }
+                pipe.Dispose();
+                try { File.Delete(configPath); } catch (Exception ex) { teardownFailure ??= ex; }
+                if (teardownFailure is not null)
+                    throw new TapTeardownUnconfirmedException("Failed tap attachment could not be safely rolled back.",
+                        new AggregateException(attachFailure, teardownFailure));
+                throw;
+            }
         }
 
         private async Task ReadLoopAsync()
@@ -339,11 +635,17 @@ internal static class ArmouryTapCaptureHelper
                     if (wire is null) return;
                     if (wire.ProcessId != _identity.ProcessId || !CryptographicOperations.FixedTimeEquals(wire.Token, _token))
                         throw new InvalidDataException("An unauthenticated tap record was rejected.");
+                    if (wire.Api == 0xFF)
+                    {
+                        DroppedRecordCount += checked((int)wire.ApiResult);
+                        continue;
+                    }
                     if (wire.Api is not 1 and not 2 || !ArmouryTapProtocol.IsRetainableReport(wire.Report)) continue;
                     lock (Records)
                     {
                         if (Records.Count == ArmouryTapProtocol.MaximumRecords) { DroppedRecordCount++; continue; }
-                        Records.Add(new(wire.ProcessId, (ArmouryTapApi)wire.Api, wire.Qpc, wire.Result, wire.LastError, wire.Report));
+                        Records.Add(new(wire.ProcessId, (ArmouryTapApi)wire.Api, wire.Qpc,
+                            wire.ApiResult != 0, wire.LastError, wire.Report));
                     }
                 }
             }
@@ -361,14 +663,19 @@ internal static class ArmouryTapCaptureHelper
                 _remoteModule = IntPtr.Zero;
             }
             catch (Exception ex) { failure = ex; }
-            _readerCancellation.Cancel();
-            try { await _readerTask.WaitAsync(TimeSpan.FromSeconds(10)); } catch (Exception ex) { failure ??= ex; }
+            try
+            {
+                if (failure is null)
+                    await _readerTask.WaitAsync(TimeSpan.FromSeconds(10)).ConfigureAwait(false);
+            }
+            catch (Exception ex) { failure ??= ex; }
+            finally { _readerCancellation.Cancel(); }
             if (failure is not null) throw new InvalidOperationException("Native hook unload could not be confirmed.", failure);
         }
 
         public void Dispose() { _readerCancellation.Cancel(); _readerCancellation.Dispose(); _pipe.Dispose(); }
 
-        private sealed record Wire(int ProcessId, byte Api, long Qpc, bool Result, int LastError, byte[] Token, byte[] Report);
+        private sealed record Wire(int ProcessId, byte Api, long Qpc, uint ApiResult, int LastError, byte[] Token, byte[] Report);
         private static async Task<Wire?> ReadRecordAsync(Stream stream, CancellationToken cancellationToken)
         {
             var bytes = new byte[ArmouryTapProtocol.WireRecordSize];
@@ -385,7 +692,7 @@ internal static class ArmouryTapCaptureHelper
             var length = bytes[7];
             if (length > ArmouryTapProtocol.MaximumReportLength) throw new InvalidDataException("Oversized tap record.");
             return new(BinaryPrimitives.ReadInt32LittleEndian(bytes.AsSpan(8)), bytes[6],
-                BinaryPrimitives.ReadInt64LittleEndian(bytes.AsSpan(12)), BinaryPrimitives.ReadUInt32LittleEndian(bytes.AsSpan(20)) != 0,
+                BinaryPrimitives.ReadInt64LittleEndian(bytes.AsSpan(12)), BinaryPrimitives.ReadUInt32LittleEndian(bytes.AsSpan(20)),
                 BinaryPrimitives.ReadInt32LittleEndian(bytes.AsSpan(24)), bytes[28..60], bytes[60..(60 + length)]);
         }
 
@@ -413,15 +720,33 @@ internal static class ArmouryTapCaptureHelper
         var bytes = Encoding.Unicode.GetBytes(dllPath + '\0');
         var remotePath = VirtualAllocEx(process, IntPtr.Zero, (nuint)bytes.Length, 0x3000, 0x04);
         if (remotePath == IntPtr.Zero) throw new System.ComponentModel.Win32Exception();
+        var releaseRemotePath = true;
         try
         {
             if (!WriteProcessMemory(process, remotePath, bytes, bytes.Length, out var written) || written != bytes.Length)
                 throw new System.ComponentModel.Win32Exception();
             var loadLibrary = ResolveRemoteProc(identity.ProcessId, "kernel32.dll", "LoadLibraryW");
-            RunRemote(process, loadLibrary, remotePath);
-            return FindRemoteModule(identity.ProcessId, Path.GetFileName(dllPath));
+            using var thread = CreateRemoteThread(process, IntPtr.Zero, 0, loadLibrary, remotePath, 0, out _);
+            if (thread.IsInvalid) throw new System.ComponentModel.Win32Exception();
+            var wait = WaitForSingleObject(thread, 15_000);
+            if (wait != 0)
+            {
+                releaseRemotePath = false;
+                throw new TapTeardownUnconfirmedException(
+                    "The remote LoadLibrary call did not terminate; its argument memory was intentionally retained.");
+            }
+            var hasExitCode = GetExitCodeThread(thread, out var exitCode);
+            var remoteModule = FindRemoteModuleByPathWithRetry(identity.ProcessId, dllPath);
+            if (remoteModule != IntPtr.Zero) return remoteModule;
+            if (hasExitCode && exitCode == 0)
+                throw new InvalidOperationException("Remote LoadLibraryW rejected the native tap DLL.");
+            throw new TapTeardownUnconfirmedException(
+                "LoadLibraryW may have succeeded, but the loaded module could not be positively located for cleanup.");
         }
-        finally { VirtualFreeEx(process, remotePath, 0, 0x8000); }
+        finally
+        {
+            if (releaseRemotePath) VirtualFreeEx(process, remotePath, 0, 0x8000);
+        }
     }
 
     private static void StopAndUnload(VerifiedProcess identity, string dllPath, IntPtr remoteModule)
@@ -431,8 +756,38 @@ internal static class ArmouryTapCaptureHelper
         RunRemote(process, remoteModule + checked((int)stopRva), IntPtr.Zero);
         var freeLibrary = ResolveRemoteProc(identity.ProcessId, "kernel32.dll", "FreeLibrary");
         RunRemote(process, freeLibrary, remoteModule);
-        if (FindRemoteModule(identity.ProcessId, Path.GetFileName(dllPath), throwIfMissing: false) != IntPtr.Zero)
+        if (FindRemoteModuleByPath(identity.ProcessId, dllPath) != IntPtr.Zero)
             throw new InvalidOperationException("The native tap DLL remained loaded after FreeLibrary.");
+    }
+
+    private static IntPtr FindRemoteModuleByPathWithRetry(int pid, string modulePath)
+    {
+        for (var attempt = 0; attempt < 20; attempt++)
+        {
+            var module = FindRemoteModuleByPath(pid, modulePath);
+            if (module != IntPtr.Zero) return module;
+            Thread.Sleep(50);
+        }
+        return IntPtr.Zero;
+    }
+
+    private static IntPtr FindRemoteModuleByPath(int pid, string modulePath)
+    {
+        var expected = Path.GetFullPath(modulePath);
+        var snapshot = CreateToolhelp32Snapshot(0x00000008 | 0x00000010, pid);
+        if (snapshot == new IntPtr(-1)) return IntPtr.Zero;
+        try
+        {
+            var entry = new ModuleEntry32 { Size = (uint)Marshal.SizeOf<ModuleEntry32>() };
+            if (Module32First(snapshot, ref entry)) do
+                {
+                    if (Path.GetFullPath(entry.ExePath).Equals(expected, StringComparison.OrdinalIgnoreCase))
+                        return entry.BaseAddress;
+                } while (Module32Next(snapshot, ref entry));
+        }
+        catch { return IntPtr.Zero; }
+        finally { CloseHandle(snapshot); }
+        return IntPtr.Zero;
     }
 
     private static SafeProcessHandle OpenTarget(int pid)
@@ -467,9 +822,9 @@ internal static class ArmouryTapCaptureHelper
         {
             var entry = new ModuleEntry32 { Size = (uint)Marshal.SizeOf<ModuleEntry32>() };
             if (Module32First(snapshot, ref entry)) do
-            {
-                if (entry.Module.Equals(moduleName, StringComparison.OrdinalIgnoreCase)) return entry.BaseAddress;
-            } while (Module32Next(snapshot, ref entry));
+                {
+                    if (entry.Module.Equals(moduleName, StringComparison.OrdinalIgnoreCase)) return entry.BaseAddress;
+                } while (Module32Next(snapshot, ref entry));
         }
         finally { CloseHandle(snapshot); }
         if (throwIfMissing) throw new InvalidOperationException($"Remote module {moduleName} was not found.");
@@ -515,14 +870,42 @@ internal static class ArmouryTapCaptureHelper
         throw new InvalidDataException($"Export {name} is missing from the native tap.");
     }
 
-    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)] private struct ModuleEntry32
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    private struct ModuleEntry32
     {
         public uint Size; public uint ModuleId; public uint ProcessId; public uint GlobalUsage; public uint ProcessUsage;
         public IntPtr BaseAddress; public uint BaseSize; public IntPtr ModuleHandle;
         [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 256)] public string Module;
         [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 260)] public string ExePath;
     }
+    [StructLayout(LayoutKind.Sequential)]
+    private struct SecurityAttributes
+    {
+        public int Length;
+        public IntPtr SecurityDescriptor;
+        [MarshalAs(UnmanagedType.Bool)] public bool InheritHandle;
+    }
+    [StructLayout(LayoutKind.Sequential)]
+    private struct GenericMapping
+    {
+        public uint GenericRead;
+        public uint GenericWrite;
+        public uint GenericExecute;
+        public uint GenericAll;
+    }
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, ExactSpelling = true, SetLastError = true)]
+    private static extern bool CreateDirectoryW(string path, ref SecurityAttributes securityAttributes);
     [DllImport("kernel32.dll", SetLastError = true)] private static extern SafeProcessHandle OpenProcess(uint access, bool inherit, int pid);
+    [DllImport("advapi32.dll", SetLastError = true)]
+    private static extern bool OpenProcessToken(
+        IntPtr processHandle, uint desiredAccess, out SafeAccessTokenHandle tokenHandle);
+    [DllImport("advapi32.dll", SetLastError = true)]
+    private static extern bool DuplicateToken(
+        SafeAccessTokenHandle existingToken, int impersonationLevel, out SafeAccessTokenHandle duplicateToken);
+    [DllImport("advapi32.dll", SetLastError = true)]
+    private static extern bool AccessCheck(IntPtr securityDescriptor, SafeAccessTokenHandle clientToken,
+        uint desiredAccess, ref GenericMapping genericMapping, IntPtr privilegeSet,
+        ref uint privilegeSetLength, out uint grantedAccess, [MarshalAs(UnmanagedType.Bool)] out bool accessStatus);
     [DllImport("kernel32.dll", SetLastError = true)] private static extern IntPtr VirtualAllocEx(SafeProcessHandle process, IntPtr address, nuint size, uint type, uint protect);
     [DllImport("kernel32.dll", SetLastError = true)] private static extern bool VirtualFreeEx(SafeProcessHandle process, IntPtr address, nuint size, uint type);
     [DllImport("kernel32.dll", SetLastError = true)] private static extern bool WriteProcessMemory(SafeProcessHandle process, IntPtr address, byte[] buffer, int size, out int written);
@@ -535,4 +918,8 @@ internal static class ArmouryTapCaptureHelper
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode)] private static extern bool Module32First(IntPtr snapshot, ref ModuleEntry32 entry);
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode)] private static extern bool Module32Next(IntPtr snapshot, ref ModuleEntry32 entry);
     [DllImport("kernel32.dll")] private static extern bool CloseHandle(IntPtr handle);
+
+    private sealed class TapUnavailableException(string message) : InvalidOperationException(message);
+    private sealed class TapTeardownUnconfirmedException(string message, Exception? innerException = null)
+        : InvalidOperationException(message, innerException);
 }

@@ -2,10 +2,11 @@
 #include <hidsdi.h>
 #include <array>
 #include <atomic>
+#include <cstdlib>
 #include <cstdint>
 #include <cwchar>
-#include <fstream>
 #include <string>
+#include <string_view>
 #include "MinHook.h"
 
 namespace {
@@ -15,6 +16,7 @@ constexpr USHORT kVendor = 0x0B05;
 constexpr USHORT kProduct = 0x1B4C;
 constexpr size_t kMinReport = 50;
 constexpr size_t kMaxReport = 64;
+constexpr uint8_t kRearMappingCommand = 0xD1;
 constexpr size_t kQueueCapacity = 256;
 constexpr wchar_t kConfigSuffix[] = L".config";
 
@@ -71,7 +73,8 @@ bool IsTargetHandle(HANDLE handle) {
 bool PrepareRecord(Api api, HANDLE handle, const void* buffer, size_t length, WireRecord& record) {
     if (g_stopping.load(std::memory_order_relaxed) || buffer == nullptr ||
         length < kMinReport || length > kMaxReport ||
-        static_cast<const uint8_t*>(buffer)[0] != 0x5A || !IsTargetHandle(handle)) return false;
+        static_cast<const uint8_t*>(buffer)[0] != 0x5A ||
+        static_cast<const uint8_t*>(buffer)[1] != kRearMappingCommand || !IsTargetHandle(handle)) return false;
 
     record = {};
     record.magic = kMagic;
@@ -100,11 +103,30 @@ void Enqueue(const WireRecord& record) {
     LeaveCriticalSection(&g_queueLock);
 }
 
-BOOLEAN __stdcall HookSetFeature(HANDLE handle, PVOID data, ULONG length) {
+BOOLEAN __stdcall HookSetFeature(HANDLE handle, PVOID buffer, ULONG length) {
     CallbackLease lease;
     WireRecord record{};
-    const bool retain = PrepareRecord(Api::HidDSetFeature, handle, data, length, record);
-    const BOOLEAN result = g_originalSetFeature(handle, data, length);
+    const DWORD incomingError = GetLastError();
+    const bool retain = PrepareRecord(Api::HidDSetFeature, handle, buffer, length, record);
+    SetLastError(incomingError);
+    const BOOLEAN result = g_originalSetFeature(handle, buffer, length);
+    const DWORD error = GetLastError();
+    if (retain) {
+        record.apiResult = result != FALSE ? 1u : 0u;
+        record.lastError = error;
+        Enqueue(record);
+    }
+    SetLastError(error);
+    return result;
+}
+BOOL WINAPI HookWriteFile(HANDLE handle, LPCVOID buffer, DWORD bytesToWrite,
+    LPDWORD bytesWritten, LPOVERLAPPED overlapped) {
+    CallbackLease lease;
+    WireRecord record{};
+    const DWORD incomingError = GetLastError();
+    const bool retain = PrepareRecord(Api::KernelBaseWriteFile, handle, buffer, bytesToWrite, record);
+    SetLastError(incomingError);
+    const BOOL result = g_originalWriteFile(handle, buffer, bytesToWrite, bytesWritten, overlapped);
     const DWORD error = GetLastError();
     if (retain) {
         record.apiResult = result != FALSE ? 1u : 0u;
@@ -115,27 +137,12 @@ BOOLEAN __stdcall HookSetFeature(HANDLE handle, PVOID data, ULONG length) {
     return result;
 }
 
-BOOL WINAPI HookWriteFile(HANDLE handle, LPCVOID buffer, DWORD length, LPDWORD written, LPOVERLAPPED overlapped) {
-    CallbackLease lease;
-    WireRecord record{};
-    const bool retain = PrepareRecord(Api::KernelBaseWriteFile, handle, buffer, length, record);
-    const BOOL result = g_originalWriteFile(handle, buffer, length, written, overlapped);
-    const DWORD error = GetLastError();
-    if (retain) {
-        record.apiResult = result != FALSE ? 1u : 0u;
-        record.lastError = error;
-        Enqueue(record);
-    }
-    SetLastError(error);
-    return result;
-}
-
-bool ParseHexToken(const std::wstring& text) {
+bool ParseHexToken(const std::string& text) {
     if (text.size() != 64) return false;
     for (size_t index = 0; index < g_token.size(); ++index) {
-        wchar_t pair[3]{text[index * 2], text[index * 2 + 1], 0};
-        wchar_t* end = nullptr;
-        const auto value = wcstoul(pair, &end, 16);
+        char pair[3]{text[index * 2], text[index * 2 + 1], 0};
+        char* end = nullptr;
+        const auto value = strtoul(pair, &end, 16);
         if (end != pair + 2 || value > 0xFF) return false;
         g_token[index] = static_cast<uint8_t>(value);
     }
@@ -146,14 +153,42 @@ bool LoadConfig(HMODULE module) {
     wchar_t modulePath[MAX_PATH]{};
     if (GetModuleFileNameW(module, modulePath, MAX_PATH) == 0) return false;
     const std::wstring configPath = std::wstring(modulePath) + kConfigSuffix;
-    std::wifstream config(configPath.c_str());
-    std::wstring pipeLine;
-    std::wstring tokenLine;
-    if (!std::getline(config, pipeLine) || !std::getline(config, tokenLine)) return false;
-    constexpr wchar_t pipePrefix[] = L"pipe=";
-    constexpr wchar_t tokenPrefix[] = L"token=";
+    HANDLE file = CreateFileW(configPath.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr,
+        OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (file == INVALID_HANDLE_VALUE) return false;
+    LARGE_INTEGER size{};
+    if (!GetFileSizeEx(file, &size) || size.QuadPart <= 0 || size.QuadPart > 1024) {
+        CloseHandle(file);
+        return false;
+    }
+    std::string text(static_cast<size_t>(size.QuadPart), '\0');
+    size_t totalRead = 0;
+    while (totalRead < text.size()) {
+        DWORD chunkRead = 0;
+        const DWORD requested = static_cast<DWORD>(text.size() - totalRead);
+        if (!ReadFile(file, text.data() + totalRead, requested, &chunkRead, nullptr) || chunkRead == 0) {
+            CloseHandle(file);
+            return false;
+        }
+        totalRead += chunkRead;
+    }
+    CloseHandle(file);
+    for (const unsigned char value : text)
+        if (value != '\r' && value != '\n' && (value < 0x20 || value > 0x7E)) return false;
+    const size_t firstEnd = text.find('\n');
+    if (firstEnd == std::string::npos) return false;
+    const size_t secondEnd = text.find('\n', firstEnd + 1);
+    std::string pipeLine = text.substr(0, firstEnd);
+    std::string tokenLine = text.substr(firstEnd + 1,
+        secondEnd == std::string::npos ? std::string::npos : secondEnd - firstEnd - 1);
+    if (!pipeLine.empty() && pipeLine.back() == '\r') pipeLine.pop_back();
+    if (!tokenLine.empty() && tokenLine.back() == '\r') tokenLine.pop_back();
+    if (secondEnd != std::string::npos && text.find_first_not_of("\r\n", secondEnd) != std::string::npos) return false;
+    constexpr std::string_view pipePrefix = "pipe=";
+    constexpr std::string_view tokenPrefix = "token=";
     if (!pipeLine.starts_with(pipePrefix) || !tokenLine.starts_with(tokenPrefix)) return false;
-    g_pipeName = pipeLine.substr(std::size(pipePrefix) - 1);
+    const std::string pipeName = pipeLine.substr(std::size(pipePrefix) - 1);
+    g_pipeName.assign(pipeName.begin(), pipeName.end());
     return !g_pipeName.empty() && ParseHexToken(tokenLine.substr(std::size(tokenPrefix) - 1));
 }
 
@@ -192,6 +227,16 @@ bool Pop(WireRecord& record) {
     return present;
 }
 
+bool DisableHooksAndDrain() {
+    g_stopping.store(true, std::memory_order_release);
+    if (MH_DisableHook(MH_ALL_HOOKS) != MH_OK) return false;
+    for (int attempt = 0; attempt < 200 && g_activeCallbacks.load(std::memory_order_acquire) != 0; ++attempt) {
+        Sleep(10);
+    }
+    if (g_activeCallbacks.load(std::memory_order_acquire) != 0) return false;
+    return MH_Uninitialize() == MH_OK;
+}
+
 DWORD WINAPI WorkerMain(void* parameter) {
     const auto module = static_cast<HMODULE>(parameter);
     if (!LoadConfig(module)) return 2;
@@ -210,35 +255,33 @@ DWORD WINAPI WorkerMain(void* parameter) {
     memcpy(ready.token, g_token.data(), g_token.size());
     DWORD readyWritten = 0;
     if (!WriteFile(g_pipe, &ready, sizeof(ready), &readyWritten, nullptr) || readyWritten != sizeof(ready)) {
-        MH_DisableHook(MH_ALL_HOOKS);
-        MH_Uninitialize();
+        const bool hooksRemoved = DisableHooksAndDrain();
         CloseHandle(g_pipe);
         g_pipe = INVALID_HANDLE_VALUE;
-        return 5;
+        return hooksRemoved ? 5 : 6;
     }
 
+    bool transportFailure = false;
     HANDLE waits[]{g_stopEvent, g_queueEvent};
     while (WaitForMultipleObjects(2, waits, FALSE, INFINITE) != WAIT_OBJECT_0) {
         WireRecord record{};
         while (Pop(record)) {
             DWORD written = 0;
             if (!WriteFile(g_pipe, &record, sizeof(record), &written, nullptr) || written != sizeof(record)) {
+                transportFailure = true;
                 SetEvent(g_stopEvent);
                 break;
             }
         }
     }
-    g_stopping.store(true, std::memory_order_relaxed);
-    MH_DisableHook(MH_ALL_HOOKS);
-    for (int attempt = 0; attempt < 200 && g_activeCallbacks.load(std::memory_order_acquire) != 0; ++attempt) {
-        Sleep(10);
-    }
-    if (g_activeCallbacks.load(std::memory_order_acquire) != 0) return 6;
-    MH_Uninitialize();
+    if (!DisableHooksAndDrain()) return 6;
     WireRecord record{};
     while (Pop(record)) {
         DWORD written = 0;
-        if (!WriteFile(g_pipe, &record, sizeof(record), &written, nullptr)) break;
+        if (!WriteFile(g_pipe, &record, sizeof(record), &written, nullptr) || written != sizeof(record)) {
+            transportFailure = true;
+            break;
+        }
     }
     const uint32_t dropped = g_droppedRecords.load(std::memory_order_relaxed);
     if (dropped != 0) {
@@ -250,12 +293,13 @@ DWORD WINAPI WorkerMain(void* parameter) {
         overflow.apiResult = dropped;
         memcpy(overflow.token, g_token.data(), g_token.size());
         DWORD written = 0;
-        WriteFile(g_pipe, &overflow, sizeof(overflow), &written, nullptr);
+        if (!WriteFile(g_pipe, &overflow, sizeof(overflow), &written, nullptr) || written != sizeof(overflow))
+            transportFailure = true;
     }
-    FlushFileBuffers(g_pipe);
+    if (!FlushFileBuffers(g_pipe)) transportFailure = true;
     CloseHandle(g_pipe);
     g_pipe = INVALID_HANDLE_VALUE;
-    return 0;
+    return transportFailure ? 7 : 0;
 }
 }
 

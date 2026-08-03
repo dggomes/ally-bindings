@@ -201,6 +201,9 @@ foreach ($workflow in @($buildWorkflow, $releaseWorkflow)) {
     if ($workflow.IndexOf('test-etw-helper-auth.ps1', [StringComparison]::Ordinal) -lt 0) {
         throw 'A shipping workflow does not run the behavioral ETW helper authentication test.'
     }
+    if ($workflow.IndexOf('test-armoury-tap-runtime.ps1', [StringComparison]::Ordinal) -lt 0) {
+        throw 'A shipping workflow does not run the behavioral Armoury tap runtime test.'
+    }
 }
 if ($app.IndexOf('TryParseArguments(e.Args', [StringComparison]::Ordinal) -gt
     $app.IndexOf('new Mutex(', [StringComparison]::Ordinal)) {
@@ -339,7 +342,7 @@ if ($app -notmatch 'enableRearButtons\s*&&\s*ArmouryProtocolValidation\.IsOperat
     $app -notmatch 'allowUnverifiedRecoveryReset\s*&&\s*ArmouryProtocolValidation\.RecoveryWritesApproved') {
     throw 'Windows backend construction is not guarded by operation-specific validation gates.'
 }
-if ($xaml -notmatch 'IsEnabled="{Binding CanEnableAsusRearButtonMappings}"') {
+if ($xaml -notmatch 'IsEnabled="\{Binding CanEnableAsusRearButtonMappings\}"') {
     throw 'The ASUS write opt-in UI is not visibly locked.'
 }
 
@@ -371,6 +374,7 @@ foreach ($required in @(
     'AsusVendorId = 0x0B05',
     'AllyProductId = 0x1B4C',
     'ReportId = 0x5A',
+    'RearMappingCommand = 0xD1',
     'MinimumReportLength = 50',
     'MaximumReportLength = 64',
     'MaximumRecords = 256',
@@ -395,6 +399,20 @@ foreach ($required in @(
     'IsWow64Process2',
     'IsNativeAmd64',
     'HasAsusAuthenticodeSignature',
+    'IsTrustedInstallPath',
+    'HasReparseTraversal',
+    'OpenParentImpersonationToken',
+    'IsWritableByToken',
+    'GetMaximumAllowedAccess',
+    'AccessCheck',
+    'DuplicateToken',
+    'GetTrustedInstallRoot',
+    'ImageHashMatches',
+    'ImageLock',
+    'MaximumCandidateProcesses = 4',
+    'LockAndVerifyNativeDll',
+    'IncrementalHash.CreateHash',
+    'CryptographicOperations.FixedTimeEquals(actualHash, expectedHash)',
     'Revalidate',
     'StartTimeUtc',
     'ExecutablePath',
@@ -403,6 +421,10 @@ foreach ($required in @(
     'GetNamedPipeServerProcessId',
     'VerifyParentExecutableIdentity',
     'CreatePrivateExtractionDirectory',
+    'CreateDirectoryW',
+    'Environment.SpecialFolder.Windows',
+    'FileSystemRights.ReadAndExecute',
+    'Encoding.ASCII.GetBytes',
     'DeleteExtractionDirectory',
     'DirectorySecurity',
     'SetAccessRuleProtection',
@@ -415,11 +437,32 @@ foreach ($required in @(
     'CreateRemoteThread',
     'FreeLibrary',
     'FindRemoteModule',
+    'FindRemoteModuleByPathWithRetry',
     'ReadExportRva',
     'ArmouryTapStop',
-    'MaximumCaptureDuration')) {
+    'MaximumCaptureDuration',
+    'TapUnavailableErrorCode',
+    'TeardownUnconfirmedErrorCode',
+    'TapTeardownUnconfirmedException')) {
     if ($tapHelper.IndexOf($required, [StringComparison]::Ordinal) -lt 0) {
         throw "The tap helper is missing safety/lifecycle control: $required"
+    }
+}
+
+$tapRecordStart = $tapProtocol.IndexOf('public sealed record ArmouryTapRecord(', [StringComparison]::Ordinal)
+$tapRecordEnd = $tapProtocol.IndexOf(');', $tapRecordStart, [StringComparison]::Ordinal)
+if ($tapRecordStart -lt 0 -or $tapRecordEnd -le $tapRecordStart) {
+    throw 'Could not isolate the exported ArmouryTapRecord contract.'
+}
+$tapRecordContract = $tapProtocol.Substring($tapRecordStart, $tapRecordEnd - $tapRecordStart)
+foreach ($forbidden in @('ProcessId', 'PerformanceCounterTimestamp', 'ExecutablePath', 'Qpc')) {
+    if ($tapRecordContract.IndexOf($forbidden, [StringComparison]::OrdinalIgnoreCase) -ge 0) {
+        throw "The exported tap record leaks an internal identity/time field: $forbidden"
+    }
+}
+foreach ($required in @('ProcessName', 'Phase', 'Ordinal')) {
+    if ($tapRecordContract.IndexOf($required, [StringComparison]::Ordinal) -lt 0) {
+        throw "The exported tap record is missing sanitized attribution: $required"
     }
 }
 
@@ -432,6 +475,9 @@ foreach ($required in @(
     'MH_EnableHook',
     'MH_DisableHook',
     'MH_Uninitialize',
+    'DisableHooksAndDrain',
+    'transportFailure',
+    'SetLastError(incomingError)',
     'SetLastError(error)',
     'g_activeCallbacks',
     'CallbackLease',
@@ -440,6 +486,8 @@ foreach ($required in @(
     'kVendor',
     'kProduct',
     '0x5A',
+    'kRearMappingCommand = 0xD1',
+    'std::string text',
     'kMinReport',
     'kMaxReport',
     'kQueueCapacity')) {
@@ -449,7 +497,7 @@ foreach ($required in @(
 }
 
 # CMake must produce x64-only DLL with security mitigations
-foreach ($required in @('FATAL_ERROR', 'MultiThreaded', '/guard:cf', '/DYNAMICBASE', '/NXCOMPAT', 'AllyBindings.ArmouryTap')) {
+foreach ($required in @('FATAL_ERROR', 'MultiThreaded', '/guard:cf', '/DYNAMICBASE', '/HIGHENTROPYVA', '/NXCOMPAT', '/CETCOMPAT', '/Brepro', 'AllyBindings.ArmouryTap')) {
     if ($tapCmake.IndexOf($required, [StringComparison]::Ordinal) -lt 0) {
         throw "The native CMake build is missing requirement: $required"
     }
@@ -481,8 +529,31 @@ if ($app.IndexOf('ArmouryTapCaptureHelper.TryParseArguments', [StringComparison]
 # Capture service must try tap first with ETW fallback
 if ($service -notmatch 'ArmouryTapCaptureHelper\.HelperArgument' -or
     $service -notmatch 'ArmouryEtwCaptureHelper\.HelperArgument' -or
-    $service -notmatch 'catch \(ArmouryCaptureException\)') {
-    throw 'The capture service does not try the user-mode tap first with ETW fallback.'
+    $service -notmatch 'catch \(ArmouryTapUnavailableException\)' -or
+    $service -notmatch 'TeardownUnconfirmedErrorCode' -or
+    $service -notmatch 'ArmouryCaptureTeardownException') {
+    throw 'The capture service does not try the user-mode tap first while limiting ETW fallback to explicit pre-injection unavailability.'
+}
+if ([regex]::Matches($service, 'TeardownUnconfirmedErrorCode').Count -lt 2 -or
+    [regex]::Matches($service, 'throw new ArmouryCaptureTeardownException').Count -lt 2) {
+    throw 'Structured teardown-unconfirmed status is not promoted during both startup and completion.'
+}
+if ($app -notmatch 'ex is ArmouryCaptureTeardownException' -or
+    $app -notmatch 'captureTeardownFailure = ex' -or
+    $app -notmatch '_armouryCaptureTeardownUnconfirmed = true') {
+    throw 'The app-wide reset/write barrier is not latched after structured tap teardown failure.'
+}
+if ($service -notmatch 'isTapHelper' -or
+    $service -notmatch 'ex is ArmouryTapUnavailableException or ArmouryCaptureTeardownException' -or
+    $service -notmatch 'UsesArmouryTap' -or
+    $service -notmatch 'HelperProcess\.ExitCode != 2' -or
+    $app -notmatch 'session\?\.UsesArmouryTap == true') {
+    throw 'An unstructured tap-helper crash can bypass the app-wide teardown barrier.'
+}
+$cleanupIndex = $tapHelper.IndexOf('await CleanupAsync().ConfigureAwait(false);', [StringComparison]::Ordinal)
+$resultIndex = $tapHelper.IndexOf('new EtwPipeEnvelope("result"', [StringComparison]::Ordinal)
+if ($cleanupIndex -lt 0 -or $resultIndex -lt 0 -or $cleanupIndex -gt $resultIndex) {
+    throw 'The tap helper can publish a successful result before hook/file cleanup is confirmed.'
 }
 
 # Manifest must distinguish tap vs ETW source

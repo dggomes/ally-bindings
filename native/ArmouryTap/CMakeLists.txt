@@ -22,8 +22,8 @@ set_target_properties(AllyBindingsArmouryTap PROPERTIES
   OUTPUT_NAME "AllyBindings.ArmouryTap"
   MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 if(MSVC)
-  target_compile_options(AllyBindingsArmouryTap PRIVATE /W4 /WX /guard:cf /sdl)
-  target_link_options(AllyBindingsArmouryTap PRIVATE /DYNAMICBASE /NXCOMPAT /CETCOMPAT)
+  target_compile_options(AllyBindingsArmouryTap PRIVATE /W4 /WX /guard:cf /sdl /O2 /GS)
+  target_link_options(AllyBindingsArmouryTap PRIVATE /guard:cf /DYNAMICBASE /HIGHENTROPYVA /NXCOMPAT /CETCOMPAT /OPT:REF /OPT:ICF /Brepro)
 elseif(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
   target_compile_options(AllyBindingsArmouryTap PRIVATE -Wall -Wextra -Werror)
   target_link_options(AllyBindingsArmouryTap PRIVATE -static -static-libgcc -static-libstdc++)

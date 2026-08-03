@@ -70,13 +70,15 @@ Known limitation: feature report `0x5A` readback is now implemented as a discove
 - Data-bearing completion events 22 and 25 were absent from every phase. Therefore neither `fid_URB_TransferDataLength` nor `fid_URB_TransferData` was available to the decoder. This is provider behaviour, not priority starvation.
 - Real manifest leaves `fid_URB_TransferBuffer`, `fid_URB_TransferBufferMDL` and `fid_URB_ReservedHcd_*` bypassed the intended nested deny tokens and wasted framing quota. Preview.15 rejects those exact patterns.
 
-Conclusion: keep both write gates locked. Do not spend another physical run merely reshuffling ETW quotas. The preferred next experiment is the isolated read-only feature snapshot below; use ETW only as a deeper fallback if report `0x5A` proves unreadable or unhelpful.
+Conclusion: keep both write gates locked. Do not spend another physical run reshuffling ETW quotas. Public G-Helper captures establish the transport as HID Feature `SET_REPORT` (`0x21/0x09`, `wValue=0x035A`) and show that `GET_FEATURE 0x5A` behaves as a last-command/status mailbox rather than a reliable state mirror, so the read-only snapshot is retired as protocol authority.
 
-1. Run **Snapshot M1/M2 state · read-only**; no elevation, ETW session or separate capture software is required.
-2. Read the active-request disclosure and confirm the displayed ROG Ally model plus compatible ASUS report-`0x5A` interfaces.
-3. The app reads every compatible interface once at baseline, then prompts for `M1=A/M2=B`, `M1=X/M2=Y`, and Armoury Reset to Default, reading once after each applied state.
-4. Retain the single ZIP, record its displayed SHA-256 outside the capture directory, and verify the manifest says `rawSystemTraceWritten: false`, `hardwareWriteAttempted: false`, and `hardwareUnlockEvidence: false`.
-5. Compare exact bytes, per-report hashes, changed offsets, clean-room candidate vectors and baseline-to-reset equality. Treat a constant report, failed request, wrong prefix, malformed length or inconsistent run as inconclusive rather than an error to bypass.
+The preferred next experiment is the self-contained Armoury HID write tap:
+
+1. Run **Capture Armoury M1/M2** and accept the explicit injection/process-risk disclosure and UAC prompt. Close games and anti-cheat software first.
+2. Ally Bindings extracts and hash-verifies its embedded capture-only x64 DLL, then targets at most four exact allowlisted ASUS-signed Armoury processes under trusted system install roots.
+3. Follow the prompts for `M1=A/M2=B`, `M1=X/M2=Y`, and Armoury Reset to Default. The tap copies only 50–64-byte `5A D1` rear-mapping writes on `VID_0B05&PID_1B4C` handles and leaves each original API call unchanged.
+4. Retain the single ZIP, record its displayed SHA-256 separately, and verify the manifest says `rawSystemTraceWritten: false` and `hardwareUnlockEvidence: false`.
+5. Exported tap evidence contains only allowlisted process name, phase, ordinal, API result/error and exact bounded report bytes—no raw PID, path, timestamp, QPC, pointer or handle.
 6. Require at least two independent matching physical runs plus human review before proposing any protocol change. A result never changes either source-level write gate automatically.
 
 Research references:

@@ -11,7 +11,7 @@ The tap is not part of normal profile operation. It grants no M1/M2 write author
 - The public package remains one self-contained `AllyBindings.exe` plus documentation.
 - A small x64 native DLL is compiled in CI and embedded as an application resource.
 - The DLL is extracted only after explicit capture consent and Windows UAC approval.
-- Extraction uses a random per-session directory with an ACL restricted to the initiating user, Local System and Administrators.
+- Extraction uses an atomically created cryptographically random per-session directory directly under the trusted Windows Temp root; reparse traversal is rejected. Its protected ACL is Administrators-owned, grants write/delete only to Administrators and Local System, and grants the initiating user read/execute only so a user-context Armoury target can load the DLL and read its one-time configuration. The helper hashes the embedded resource while extracting, verifies the extracted bytes in constant time, and holds the DLL without write/delete sharing through unload.
 - The DLL is unloaded and the session directory is deleted before capture completion is accepted.
 - No driver, Windows service, scheduled task, startup item, debugger, package manager or third-party application is installed.
 
@@ -27,10 +27,10 @@ Every condition must pass or capture stops before injection:
    - `ArmouryCrate.Service.exe`
    - `ArmouryCrateSE.exe`
    - `AsusOptimization.exe`
-5. Every selected executable has a valid embedded Authenticode signature whose signer is ASUS/ASUSTeK.
-6. No selected process path is writable by the unelevated current user.
-7. The user confirms the displayed model, HID interface and exact candidate process names before UAC.
-8. The UI warns the user to close games and anti-cheat software before continuing.
+5. Every selected executable has a valid embedded Authenticode signature with the exact approved publisher name `ASUSTeK COMPUTER INC.`.
+6. Every selected process is under a trusted Windows, Program Files or Program Files (x86) root; reparse traversal is rejected, and Windows `AccessCheck` against an impersonation copy of the unelevated parent token must show no content-write, create, delete, DACL-change or ownership-change access on the executable or its ancestor chain up to that trusted root. The verified image file is hash-bound and held without write/delete sharing through injection and unload.
+7. At most four exact candidates may be selected; excess or ambiguous process inventory fails closed.
+8. The user confirms the displayed controller target and the injection/process risk before UAC and is told to close games and anti-cheat software.
 
 PID `0x1B6E` is not an Ally controller identifier and must not pass the rear-button gate.
 
@@ -57,16 +57,17 @@ A record may leave the target process only when all conditions pass:
 - Product ID is exactly `0x1B4C`.
 - Buffer length is between 50 and 64 bytes inclusive.
 - First byte is report ID `0x5A`.
+- Second byte is rear-mapping command `0xD1`.
 - Captured bytes are copied before the original call returns.
 
-No device path, arbitrary process memory, keyboard input, XInput history or non-target HID payload may be retained. `WriteFile` calls used by the tap's own named-pipe transport must be excluded with a recursion guard.
+No device path, arbitrary process memory, keyboard input, XInput history or non-target HID payload may be retained. `WriteFile` calls used by the tap's own named-pipe transport fail the exact HID-handle gate and are not queued.
 
 ## Bounds
 
 - Maximum candidate processes: 4.
 - Maximum reports per process: 256.
 - Maximum report bytes: 64.
-- Maximum capture duration: 15 minutes.
+- Maximum capture duration: 10 minutes.
 - Maximum control-message length: 4 KiB.
 - Maximum evidence JSON and ZIP sizes are explicitly bounded.
 - Overflow, malformed records, version mismatch, sequence gaps, pipe impersonation or dropped reports mark the run inconclusive.
@@ -74,10 +75,10 @@ No device path, arbitrary process memory, keyboard input, XInput history or non-
 ## IPC authentication
 
 - Parent ↔ elevated-helper communication reuses the current-user/local-only same-executable pipe and mutual process-ID authentication.
-- Each injected process gets a random per-session pipe capability derived from its random DLL filename.
+- Each injected process gets an independent 32-byte capability from `RandomNumberGenerator.GetBytes(32)`; it is not derived from a filename or process identifier.
 - The elevated helper creates each pipe with Local System, Administrators and initiating-user access only, plus a network SID deny rule.
 - `GetNamedPipeClientProcessId` must equal the process ID revalidated for that tap instance.
-- The native hello record includes protocol version, process ID, architecture and helper capability.
+- The native hello record includes protocol version, process ID and helper capability; the helper independently verifies x64 architecture before injection.
 - A mismatched client is disconnected and invalidates the run.
 
 ## Staged evidence
@@ -92,9 +93,9 @@ The helper assigns reports to helper-acknowledged QPC phases:
 The bundle contains only:
 
 - redacted target identity;
-- allowlisted process name, PID and executable SHA-256;
+- allowlisted process name only; process identity, PID, path and executable signature remain helper-internal;
 - API kind, report length, bounded report bytes, return status and error code;
-- helper-side phase and monotonic sequence/QPC values;
+- helper-side phase and per-phase ordinal; raw timestamps and QPC values are not exported;
 - manifest, evidence JSON and hashes.
 
 Every manifest permanently states:

@@ -35,26 +35,36 @@ public sealed class ArmouryTapProtocolTests
     }
 
     [Fact]
-    public void IsRetainableReport_requires_report_id_and_length_bounds()
+    public void IsRetainableReport_requires_rear_mapping_command_and_length_bounds()
     {
         var valid = new byte[64];
         valid[0] = 0x5A;
+        valid[1] = 0xD1;
         Assert.True(ArmouryTapProtocol.IsRetainableReport(valid));
 
         var minValid = new byte[50];
         minValid[0] = 0x5A;
+        minValid[1] = 0xD1;
         Assert.True(ArmouryTapProtocol.IsRetainableReport(minValid));
 
         var wrongId = new byte[64];
         wrongId[0] = 0x5B;
+        wrongId[1] = 0xD1;
         Assert.False(ArmouryTapProtocol.IsRetainableReport(wrongId));
+
+        var wrongCommand = new byte[64];
+        wrongCommand[0] = 0x5A;
+        wrongCommand[1] = 0x99;
+        Assert.False(ArmouryTapProtocol.IsRetainableReport(wrongCommand));
 
         var tooShort = new byte[49];
         tooShort[0] = 0x5A;
+        tooShort[1] = 0xD1;
         Assert.False(ArmouryTapProtocol.IsRetainableReport(tooShort));
 
         var tooLong = new byte[65];
         tooLong[0] = 0x5A;
+        tooLong[1] = 0xD1;
         Assert.False(ArmouryTapProtocol.IsRetainableReport(tooLong));
     }
 

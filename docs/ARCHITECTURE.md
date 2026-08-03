@@ -153,9 +153,9 @@ A real backend must additionally stream normalized input through `MappingEngine`
 4. Ctrl+Alt+F12 does not depend on the controller chord/profile.
 5. Disconnect cancels uncommitted selections.
 6. Startup registration is per-user, opt-in and removable.
-7. Launching the app and explicit feature snapshots install no driver and require no elevation; only explicit USB ETW capture requests one-time elevation for the same executable's temporary helper and installs nothing.
+7. Launching the app and explicit feature snapshots install no driver and require no elevation. Explicit Armoury tap or USB ETW capture requests one-time elevation for the same executable's temporary helper and installs nothing.
 8. Normal diagnostics contain status/config metadata, not controller input history. Capture bundles are separate private artifacts created only on explicit request.
-9. No code injection, Armoury database mutation, macros or network service.
+9. No injection into games, Xbox, anti-cheat or arbitrary processes. The opt-in diagnostic tap may temporarily inject only its embedded capture DLL into exact allowlisted x64 ASUS-signed Armoury processes under trusted system install roots; it has zero write authority and must be positively unloaded before completion.
 10. No custom or recovery M1/M2 report can be emitted while either source-level validation gate is closed.
 
 ## Release gate

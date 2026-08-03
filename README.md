@@ -9,7 +9,7 @@ A lightweight, local-first Windows controller-profile selector for Xbox Remote P
 
 Ally Bindings lets you save named mappings, rotate them from the controller, and see the pending choice in a small overlay. It is intentionally conservative: the current public build exercises the complete profile-selection experience without hiding the physical controller, creating a virtual controller, or writing unvalidated ASUS controller settings.
 
-> **Project status: preview.** This source tree targets `v0.3.0-preview.15`. Standard-button remapping is preview-only. Five physical Armoury captures were clean but contained no exact rear-mapping packets; v14 isolated action-correlated UCX control-transfer metadata, but Windows emitted none of the data-bearing completion events needed to recover payload bytes. M1/M2 writes remain locked. The preferred next experiment is a separate unelevated, target-scoped read-only snapshot of ASUS feature report `0x5A`. See [Current capabilities](#current-capabilities) before installing.
+> **Project status: preview.** This source tree targets `v0.3.0-preview.16`. Standard-button remapping is preview-only. Five physical Armoury captures were clean but contained no exact rear-mapping packets; v14 isolated action-correlated UCX control-transfer metadata, but Windows emitted none of the data-bearing completion events needed to recover payload bytes. M1/M2 writes remain locked. The preferred next experiment is the explicit, self-contained Armoury HID write tap: it temporarily injects an embedded capture-only DLL into exact ASUS-signed Armoury processes after consent and UAC, retains only target `5A D1` writes, and must unload cleanly before success. See [Current capabilities](#current-capabilities) before installing.
 
 Ally Bindings is an independent project and is not affiliated with ASUS, ROG, Microsoft or Xbox.
 
@@ -63,6 +63,7 @@ The chord and timings are configurable. The app can remain in the notification a
 | Automatic and manual update checks | **Working** |
 | Verified GitHub Releases updater with rollback | **Working** |
 | Read-only ASUS report `0x5A` snapshot | **Working; physical validation required and zero write authority** |
+| Self-contained Armoury HID write tap | **Diagnostic preview; explicit UAC/consent, ASUS-process-only, zero write authority** |
 | USB ETW Armoury M1/M2 protocol capture | **Working; retained as deeper diagnostic fallback and write-locked** |
 | Standard XInput remapping | **Preview only** |
 | ASUS M1/M2 controller-setting writes | **Disabled pending physical validation** |
@@ -75,7 +76,7 @@ Selecting a profile currently updates Ally Bindings' state and UX. It does **not
 - Windows 11 x64. Windows 10 2004+ is the build target, but the physical validation target is Windows 11 on the ROG Xbox Ally X.
 - An XInput-compatible controller; the built-in Ally X controller is the intended target.
 - No administrator rights for normal launch.
-- Optional passive protocol capture uses Windows' built-in USB ETW providers. It installs no driver or separate application; Windows requests one-time elevation only while the in-app capture helper is active.
+- Optional protocol capture first uses an embedded capture-only DLL inside an exact ASUS-signed Armoury process, with explicit disclosure and one-time UAC. It installs no driver or separate application, unloads/deletes the DLL at teardown, and falls back to Windows USB ETW when safe injection is unavailable.
 
 ## Install
 
@@ -165,7 +166,7 @@ The updater protects against corruption and mismatched downloads. Until releases
 
 - No account, telemetry, cloud sync or network listener.
 - Update checks contact only GitHub's HTTPS API and release-download hosts.
-- No injection into games, Xbox or Armoury Crate.
+- No injection into games, Xbox, anti-cheat or arbitrary processes. The explicit Armoury diagnostic may temporarily inject only an embedded, hash-verified capture DLL into exact allowlisted x64 ASUS-signed Armoury processes under trusted Windows/Program Files roots; it is unloaded and deleted at teardown.
 - No Armoury database mutation, macros, turbo or anti-cheat bypasses.
 - No driver is installed or updated by Ally Bindings.
 - The permanent Default profile cannot be edited or deleted.
@@ -199,7 +200,8 @@ The WPF app can be cross-compiled with Windows targeting enabled, but Windows pa
 ## Repository map
 
 - `src/AllyBindings.Core` — profile/configuration model, persistence, mapping engine, backend contracts, carousel state machine and privacy-filtered ETW payload extractor.
-- `src/AllyBindings.Windows` — WPF UI, tray, overlay, XInput polling, startup registration, updater and passive capture orchestration.
+- `src/AllyBindings.Windows` — WPF UI, tray, overlay, XInput polling, startup registration, updater, the explicit Armoury tap helper and ETW fallback orchestration.
+- `native/ArmouryTap` — capture-only x64 hook DLL built into the managed executable; not shipped as a loose binary.
 - `tests/AllyBindings.Core.Tests` — deterministic core and protocol-parser tests.
 - `docs/ARCHITECTURE.md` — boundaries, data flow and safety invariants.
 - `docs/HARDWARE-SPIKE.md` — physical Ally validation and rollback matrix.
