@@ -68,7 +68,8 @@ try {
     Write-Host 'Armoury tap runtime phase: kernel boot identifier passed.'
     $readExportRva = $helperType.GetMethod('ReadExportRva', $flags)
     if ($null -eq $readExportRva) { throw 'Production tap export parser was not found.' }
-    $stopRva = [uint32]$readExportRva.Invoke($null, @($testDll, 'ArmouryTapStop'))
+    $exportArguments = [object[]]@([string]$testDll, [string]'ArmouryTapStop')
+    $stopRva = [uint32]$readExportRva.Invoke($null, $exportArguments)
     Write-Host 'Armoury tap runtime phase: production PE export parser returned.'
 
     $pipe = [IO.Pipes.NamedPipeServerStream]::new(
