@@ -93,13 +93,18 @@ if ($publicPackage.IndexOf('HardwareValidator', [StringComparison]::OrdinalIgnor
 
 $expected = @(
     'AllyBindings.HardwareValidator.exe',
-    'HidSharp-Apache-2.0.txt',
     'LICENSE',
+    'LICENSES/HidSharp-Apache-2.0.txt',
     'RUNBOOK.md',
     'SHA256SUMS.txt',
     'THIRD-PARTY-NOTICES.md'
 ) | Sort-Object
-$actual = @(Get-ChildItem -LiteralPath $PackageRoot -File | Select-Object -ExpandProperty Name | Sort-Object)
+$packageRootFull = [IO.Path]::GetFullPath($PackageRoot).TrimEnd([IO.Path]::DirectorySeparatorChar) + [IO.Path]::DirectorySeparatorChar
+$actual = Get-ChildItem -LiteralPath $PackageRoot -Recurse -File |
+    ForEach-Object {
+        [IO.Path]::GetFullPath($_.FullName).Substring($packageRootFull.Length).Replace([IO.Path]::DirectorySeparatorChar, '/')
+    } |
+    Sort-Object
 $difference = @(Compare-Object -ReferenceObject $expected -DifferenceObject $actual)
 if ($difference.Count -ne 0) {
     throw "Private validator package does not match its exact allowlist: $($difference | Out-String)"

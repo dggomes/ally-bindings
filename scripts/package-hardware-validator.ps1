@@ -47,14 +47,15 @@ Get-ChildItem -LiteralPath $publishDir -Filter '*.pdb' -File | Remove-Item -Forc
 Copy-Item (Join-Path $repo 'lab/HARDWARE-VALIDATOR-RUNBOOK.md') (Join-Path $publishDir 'RUNBOOK.md')
 Copy-Item (Join-Path $repo 'THIRD-PARTY-NOTICES.md') $publishDir
 Copy-Item (Join-Path $repo 'LICENSE') $publishDir
-Copy-Item (Join-Path $repo 'LICENSES/HidSharp-Apache-2.0.txt') $publishDir
+New-Item -ItemType Directory -Path (Join-Path $publishDir 'LICENSES') -Force | Out-Null
+Copy-Item (Join-Path $repo 'LICENSES/HidSharp-Apache-2.0.txt') (Join-Path $publishDir 'LICENSES')
 
 $hashedFiles = @(
     'AllyBindings.HardwareValidator.exe',
     'RUNBOOK.md',
     'THIRD-PARTY-NOTICES.md',
     'LICENSE',
-    'HidSharp-Apache-2.0.txt'
+    'LICENSES/HidSharp-Apache-2.0.txt'
 )
 $checksumLines = foreach ($relative in $hashedFiles) {
     $hash = (Get-FileHash -LiteralPath (Join-Path $publishDir $relative) -Algorithm SHA256).Hash.ToLowerInvariant()
