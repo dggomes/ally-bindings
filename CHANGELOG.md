@@ -8,7 +8,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Thi
 
 ### Added
 
-- Add a separately packaged, private `AllyBindings.HardwareValidator` for the first controlled RC73XA write test. It supports only read-free target inspection and one fixed interactive `M1=A/M2=B` operation, emits a local audit record, and is excluded from the public Ally Bindings package.
+- Add a standalone, controlled `AllyBindings.HardwareValidator` for the first RC73XA/PID_1B4C write test. It has no Core/generic-adapter dependency, supports only read-free target inspection and one literal interactive `M1=A/M2=B` operation, emits append-only local audit records, and is built only by an approved manual workflow outside the public package.
 - Add a physical validation runbook that makes Armoury Crate—not a guessed reset packet—the recovery authority.
 
 ### Security

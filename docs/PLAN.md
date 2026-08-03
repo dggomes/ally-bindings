@@ -84,7 +84,7 @@ Required runtime sequence:
 
 ### Preview application
 
-A clean CI checkout builds a downloadable Windows app; Daniel can create profiles, rotate them with the controller, use chord+RT to open the editor, use tray/startup mode and see truthful locked/preview backend status. Public M1/M2 writes remain unavailable. A separate private CI artifact performs only the controlled one-shot RC73XA validation and is never shipped in the app package or release.
+A clean CI checkout builds a downloadable Windows app; Daniel can create profiles, rotate them with the controller, use chord+RT to open the editor, use tray/startup mode and see truthful locked/preview backend status. Public M1/M2 writes remain unavailable. A standalone controlled artifact performs only the one-shot RC73XA/PID_1B4C validation; it is built manually from an approved main commit and is never shipped in the app package or release.
 
 ### Remapping release
 

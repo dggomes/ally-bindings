@@ -19,9 +19,9 @@ This supports a narrow direct-write backend; it does **not** make M1/M2 readable
 
 Implementation safety gates:
 
-1. The public application's custom and recovery writes remain source locked until the private physical validator below succeeds and its result is reviewed.
-2. The private validator is a separate executable. It supports only inspection and one fixed `M1=A/M2=B` packet; it is never included in the normal Ally Bindings package or release.
-3. A lab write requires exact DMI manufacturer/model, known ASUS VID/PID, exactly one openable report-`0x5A` interface, an unchanged interface identity set, an interactive console and an exact typed confirmation.
+1. The public application's custom and recovery writes remain source locked until the controlled physical validator below succeeds and its result is reviewed.
+2. The controlled validator is a standalone executable with no Core/generic-adapter dependency. It supports only inspection and one literal `M1=A/M2=B` packet; it is never included in the normal Ally Bindings package or release.
+3. A lab write requires exact ASUS RC73XA DMI, `VID_0B05/PID_1B4C`, exactly one bounded report-`0x5A` interface, same-handle native VID/PID/caps revalidation, an interactive console and an exact typed confirmation.
 4. The lab utility has no reset command, no arbitrary mapping parser and no retry loop. Armoury Crate remains the recovery authority for the photographed/exported assignment.
 5. API acceptance must be followed by physical M1/M2 verification in a safe controller tester and then verified restoration through Armoury.
 6. Standard mappings remain preview-only and are labelled as such.
@@ -78,9 +78,9 @@ Known limitation: feature report `0x5A` behaves as a last-command/status mailbox
 
 Conclusion: keep both public write gates locked, but stop expanding passive capture by default. ETW and native-tap experiments have provided transport diagnostics rather than the required product proof. Public G-Helper and Handheld Companion implementations independently establish a narrow candidate report; the next useful evidence is whether that fixed packet works and can be recovered safely on this physical RC73XA.
 
-The preferred next experiment is the private one-shot hardware validator:
+The preferred next experiment is the controlled one-shot hardware validator:
 
-1. Build/download the private `AllyBindings.HardwareValidator` CI artifact. It is not a GitHub release and is not bundled with Ally Bindings.
+1. Manually dispatch the protected main-branch `controlled hardware validator` workflow for an approved exact commit, then download the commit-named `AllyBindings.HardwareValidator` artifact and independently verify its outer ZIP SHA-256. It is not a GitHub release and is not bundled with Ally Bindings.
 2. Follow [`lab/HARDWARE-VALIDATOR-RUNBOOK.md`](../lab/HARDWARE-VALIDATOR-RUNBOOK.md): photograph/export the current Armoury assignments, close Armoury/games/anti-cheat, and run `inspect` first.
 3. Continue only for the exact supported model and exactly one compatible, openable report-`0x5A` interface.
 4. Run the fixed `write-m1-a-m2-b` command and type the displayed confirmation. The exact packet and SHA-256 are shown before the single HID call.

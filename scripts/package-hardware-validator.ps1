@@ -26,8 +26,8 @@ function Assert-NativeSuccess([string]$Description) {
 }
 
 if (-not $SkipTests) {
-    & $dotnet test (Join-Path $repo 'tests/AllyBindings.Core.Tests/AllyBindings.Core.Tests.csproj') --configuration Release
-    Assert-NativeSuccess 'core tests'
+    & $dotnet test (Join-Path $repo 'tests/AllyBindings.HardwareValidator.Tests/AllyBindings.HardwareValidator.Tests.csproj') --configuration Release
+    Assert-NativeSuccess 'standalone hardware validator policy tests'
 }
 
 if (Test-Path -LiteralPath $publishDir) { Remove-Item -LiteralPath $publishDir -Recurse -Force }
@@ -66,4 +66,4 @@ $checksumLines = foreach ($relative in $hashedFiles) {
 Compress-Archive -Path "$publishDir/*" -DestinationPath $zipPath -CompressionLevel Optimal
 & (Join-Path $repo 'scripts/test-hardware-validator-safety.ps1') -PackageRoot $publishDir -ZipPath $zipPath
 Assert-NativeSuccess 'hardware validator safety validation'
-Write-Output "Created private hardware validator: $zipPath"
+Write-Output "Created controlled lab hardware validator: $zipPath"

@@ -1,97 +1,98 @@
 param(
     [string]$PackageRoot = (Join-Path (Split-Path -Parent $PSScriptRoot) 'artifacts/AllyBindings-HardwareValidator-win-x64'),
-    [string]$ZipPath = "$PackageRoot.zip",
-    [long]$MaximumExecutableBytes = 110MB,
-    [long]$MaximumZipBytes = 50MB
+    [string]$ZipPath = (Join-Path (Split-Path -Parent $PSScriptRoot) 'artifacts/AllyBindings-HardwareValidator-win-x64.zip'),
+    [long]$MaximumExecutableBytes = 115343360,
+    [long]$MaximumZipBytes = 52428800
 )
 
 $ErrorActionPreference = 'Stop'
 $repo = Split-Path -Parent $PSScriptRoot
-$corePolicy = Get-Content -Raw -LiteralPath (Join-Path $repo 'src/AllyBindings.Core/AsusRearButtonProtocol.cs')
-$labPolicy = Get-Content -Raw -LiteralPath (Join-Path $repo 'src/AllyBindings.Core/AsusRearButtonLabValidation.cs')
-$labTests = Get-Content -Raw -LiteralPath (Join-Path $repo 'tests/AllyBindings.Core.Tests/AsusRearButtonLabValidationTests.cs')
+$policy = Get-Content -Raw -LiteralPath (Join-Path $repo 'src/AllyBindings.HardwareValidator/HardwareLabPolicy.cs')
 $program = Get-Content -Raw -LiteralPath (Join-Path $repo 'src/AllyBindings.HardwareValidator/Program.cs')
+$writer = Get-Content -Raw -LiteralPath (Join-Path $repo 'src/AllyBindings.HardwareValidator/ExactRc73xaLabWriter.cs')
 $project = Get-Content -Raw -LiteralPath (Join-Path $repo 'src/AllyBindings.HardwareValidator/AllyBindings.HardwareValidator.csproj')
 $manifest = Get-Content -Raw -LiteralPath (Join-Path $repo 'src/AllyBindings.HardwareValidator/app.manifest')
-$device = Get-Content -Raw -LiteralPath (Join-Path $repo 'src/AllyBindings.Windows/AsusRearButtonHidDevice.cs')
 $publicPackage = Get-Content -Raw -LiteralPath (Join-Path $repo 'scripts/package.ps1')
 
+$goldenHex = '5AD102082C010200000000000000000001020000000000000000000101000000000000000000010100000000000000000000'
+$goldenHash = 'fb0f2ac8167350edf147fb839be2306ccb15494c824a44badeff7aad083cf38b'
 foreach ($required in @(
-    'public static bool CustomWritesApproved => false',
-    'public static bool RecoveryWritesApproved => false'
+    'TargetVendorId = 0x0B05',
+    'TargetProductId = 0x1B4C',
+    'MaximumWireReportLength = 64',
+    'write-m1-a-m2-b',
+    'I SAVED SETTINGS; WRITE M1=A M2=B',
+    $goldenHash,
+    'IsApprovedProductName',
+    'IsApprovedInterface'
 )) {
-    if ($corePolicy.IndexOf($required, [StringComparison]::Ordinal) -lt 0) {
-        throw "The public application hardware lock is missing: $required"
+    if ($policy.IndexOf($required, [StringComparison]::OrdinalIgnoreCase) -lt 0) {
+        throw "Standalone fixed policy is missing: $required"
     }
 }
 
 foreach ($required in @(
-    'WriteCommand = "write-m1-a-m2-b"',
-    'ConfirmationPhrase = "I SAVED SETTINGS; WRITE M1=A M2=B"',
-    'BuildMappingReport(ControllerButton.A, ControllerButton.B)',
-    'inputRedirected',
-    'compatibleInterfaceCount != 1'
-)) {
-    if ($labPolicy.IndexOf($required, [StringComparison]::Ordinal) -lt 0) {
-        throw "The one-shot lab policy is missing: $required"
-    }
-}
-
-foreach ($pinnedPacketFact in @(
-    '5AD102082C010200000000000000000001020000000000000000000101000000000000000000010100000000000000000000',
-    'fb0f2ac8167350edf147fb839be2306ccb15494c824a44badeff7aad083cf38b'
-)) {
-    if ($labTests.IndexOf($pinnedPacketFact, [StringComparison]::OrdinalIgnoreCase) -lt 0) {
-        throw "The fixed lab packet is not pinned by exact vector and hash: $pinnedPacketFact"
-    }
-}
-
-foreach ($required in @(
-    'AsusRearButtonLabValidation.BuildOneShotReport()',
     'Console.IsInputRedirected',
     'Console.ReadLine()',
-    'device.GetSnapshotInterfaceIdentityKeys().Count',
-    'device.WriteFeatureReportAsync(report',
-    'LabAuditStore.ClaimOneShotAsync',
+    'ExactRc73xaLabWriter.WriteAsync',
+    'ClaimOneShotAsync',
     'FileMode.CreateNew',
-    '"one-shot-claimed.json"',
-    'The validator has no reset command',
+    'RECOVERY REQUIRED',
     'ArmouryRecoveryConfirmed: false'
 )) {
     if ($program.IndexOf($required, [StringComparison]::Ordinal) -lt 0) {
-        throw "The validator safety flow is missing: $required"
+        throw "Validator safety flow is missing: $required"
     }
 }
-
-foreach ($forbidden in @(
-    'BuildNativeResetReport',
-    'ControllerButton.X',
-    'ControllerButton.Y',
-    'RestoreDefaultAsync',
-    '--force',
-    '--yes'
+foreach ($required in @(
+    'CreateFileW',
+    'HidD_GetAttributes',
+    'HidD_GetPreparsedData',
+    'HidP_GetCaps',
+    'HidD_SetFeature',
+    'BuildWirePacket',
+    'IsExactSystemIdentity()'
 )) {
-    if ($program.IndexOf($forbidden, [StringComparison]::OrdinalIgnoreCase) -ge 0) {
-        throw "The fixed validator contains a forbidden general/recovery path: $forbidden"
+    if ($writer.IndexOf($required, [StringComparison]::Ordinal) -lt 0) {
+        throw "Same-handle writer is missing: $required"
     }
 }
-
-if ($project.IndexOf('ProjectReference Include="..\AllyBindings.Windows', [StringComparison]::OrdinalIgnoreCase) -ge 0 -or
-    $project.IndexOf('AsusRearButtonHidDevice.cs', [StringComparison]::Ordinal) -lt 0) {
-    throw 'The validator must link only the narrow HID adapter, not reference the full WPF application.'
+if ($writer -notmatch 'WriteAsync\s*\(\s*LabTargetSnapshot approvedTarget' -or
+    $writer -match 'WriteAsync\s*\(\s*byte\[\]') {
+    throw 'The sole write entry point must construct its fixed packet internally and accept no packet bytes.'
+}
+if ([regex]::Matches($writer, 'HidD_SetFeature\(').Count -ne 2) {
+    throw 'Expected exactly one SET_FEATURE call site plus its single native declaration.'
+}
+foreach ($forbidden in @(
+    'ProjectReference',
+    'AsusRearButtonHidDevice.cs',
+    'AllyBindings.Core'
+)) {
+    if ($project.IndexOf($forbidden, [StringComparison]::OrdinalIgnoreCase) -ge 0) {
+        throw "Standalone validator project contains forbidden dependency: $forbidden"
+    }
+}
+foreach ($forbidden in @(
+    'BuildMappingReport',
+    'BuildNativeResetReport',
+    'WriteFeatureReportAsync',
+    'ReadFeatureReportAsync',
+    'HidD_GetFeature',
+    'GetFeature('
+)) {
+    if (($program + $writer + $policy).IndexOf($forbidden, [StringComparison]::OrdinalIgnoreCase) -ge 0) {
+        throw "Standalone validator source contains forbidden general/read/reset capability: $forbidden"
+    }
 }
 if ($manifest.IndexOf('level="requireAdministrator"', [StringComparison]::Ordinal) -lt 0) {
-    throw 'The lab validator must retain an explicit UAC boundary.'
-}
-if ($device.IndexOf('expectedInterfaceIdentityKeys', [StringComparison]::Ordinal) -lt 0 -or
-    $device.IndexOf('IsExactInterfaceSnapshot', [StringComparison]::Ordinal) -lt 0) {
-    throw 'The HID write does not revalidate the exact inspected interface set.'
+    throw 'The controlled lab validator must retain an explicit UAC boundary.'
 }
 if ($publicPackage.IndexOf('HardwareValidator', [StringComparison]::OrdinalIgnoreCase) -ge 0) {
-    throw 'The normal Ally Bindings package must not include the private hardware validator.'
+    throw 'The public Ally Bindings package must not include the lab validator.'
 }
 
-$expected = @(
+$expectedAll = @(
     'AllyBindings.HardwareValidator.exe',
     'LICENSE',
     'LICENSES/HidSharp-Apache-2.0.txt',
@@ -99,53 +100,64 @@ $expected = @(
     'SHA256SUMS.txt',
     'THIRD-PARTY-NOTICES.md'
 ) | Sort-Object
-$packageRootFull = [IO.Path]::GetFullPath($PackageRoot).TrimEnd([IO.Path]::DirectorySeparatorChar) + [IO.Path]::DirectorySeparatorChar
-$actual = Get-ChildItem -LiteralPath $PackageRoot -Recurse -File |
-    ForEach-Object {
-        [IO.Path]::GetFullPath($_.FullName).Substring($packageRootFull.Length).Replace([IO.Path]::DirectorySeparatorChar, '/')
-    } |
-    Sort-Object
-$difference = @(Compare-Object -ReferenceObject $expected -DifferenceObject $actual)
-if ($difference.Count -ne 0) {
-    throw "Private validator package does not match its exact allowlist: $($difference | Out-String)"
+$expectedHashed = @($expectedAll | Where-Object { $_ -ne 'SHA256SUMS.txt' })
+
+function Get-RelativeFiles([string]$Root) {
+    $rootFull = [IO.Path]::GetFullPath($Root).TrimEnd([IO.Path]::DirectorySeparatorChar) + [IO.Path]::DirectorySeparatorChar
+    return @(Get-ChildItem -LiteralPath $Root -Recurse -File |
+        ForEach-Object { [IO.Path]::GetFullPath($_.FullName).Substring($rootFull.Length).Replace([IO.Path]::DirectorySeparatorChar, '/') } |
+        Sort-Object)
 }
 
-$checksums = Get-Content -LiteralPath (Join-Path $PackageRoot 'SHA256SUMS.txt')
-if ($checksums.Count -ne 5) {
-    throw 'SHA256SUMS.txt must cover every package payload except itself.'
-}
-foreach ($line in $checksums) {
-    if ($line -notmatch '^([0-9a-f]{64})  (.+)$') {
-        throw "Malformed checksum line: $line"
+function Assert-Package([string]$Root) {
+    $actual = Get-RelativeFiles $Root
+    if (@(Compare-Object -ReferenceObject $expectedAll -DifferenceObject $actual).Count -ne 0) {
+        throw "Validator package does not match the exact allowlist: $($actual -join ', ')"
     }
-    $actualHash = (Get-FileHash -LiteralPath (Join-Path $PackageRoot $Matches[2]) -Algorithm SHA256).Hash.ToLowerInvariant()
-    if ($actualHash -ne $Matches[1]) {
-        throw "Checksum mismatch for $($Matches[2])."
+
+    $lines = @(Get-Content -LiteralPath (Join-Path $Root 'SHA256SUMS.txt'))
+    $entries = foreach ($line in $lines) {
+        if ($line -notmatch '^([0-9a-f]{64})  ([A-Za-z0-9._/-]+)$') { throw "Malformed checksum line: $line" }
+        if ($Matches[2].Contains('..') -or $Matches[2].StartsWith('/') -or $Matches[2].Contains('\')) {
+            throw "Unsafe checksum path: $($Matches[2])"
+        }
+        [pscustomobject]@{ Hash = $Matches[1]; Name = $Matches[2] }
+    }
+    if (@($entries | Group-Object Name | Where-Object Count -ne 1).Count -ne 0) {
+        throw 'SHA256SUMS contains duplicate payload names.'
+    }
+    $actualNames = @($entries.Name | Sort-Object)
+    if (@(Compare-Object -ReferenceObject $expectedHashed -DifferenceObject $actualNames).Count -ne 0) {
+        throw 'SHA256SUMS does not cover every payload exactly once.'
+    }
+    foreach ($entry in $entries) {
+        $actualHash = (Get-FileHash -LiteralPath (Join-Path $Root $entry.Name) -Algorithm SHA256).Hash.ToLowerInvariant()
+        if ($actualHash -ne $entry.Hash) { throw "Checksum mismatch for $($entry.Name)." }
     }
 }
 
-if (-not (Test-Path -LiteralPath $ZipPath -PathType Leaf)) {
-    throw "Private validator ZIP is missing: $ZipPath"
-}
+Assert-Package $PackageRoot
+if (-not (Test-Path -LiteralPath $ZipPath -PathType Leaf)) { throw "Validator ZIP is missing: $ZipPath" }
 $executable = Get-Item -LiteralPath (Join-Path $PackageRoot 'AllyBindings.HardwareValidator.exe')
-if ($executable.Length -gt $MaximumExecutableBytes) {
-    throw "Private validator executable exceeds its $MaximumExecutableBytes-byte budget."
-}
 $zip = Get-Item -LiteralPath $ZipPath
-if ($zip.Length -gt $MaximumZipBytes) {
-    throw "Private validator ZIP exceeds its $MaximumZipBytes-byte budget."
+if ($executable.Length -gt $MaximumExecutableBytes) { throw "Validator executable exceeds size budget: $($executable.Length) bytes." }
+if ($zip.Length -gt $MaximumZipBytes) { throw "Validator ZIP exceeds size budget: $($zip.Length) bytes." }
+
+$binaryText = [Text.Encoding]::UTF8.GetString([IO.File]::ReadAllBytes($executable.FullName))
+foreach ($required in @('ExactRc73xaLabWriter', 'HidD_SetFeature')) {
+    if ($binaryText.IndexOf($required, [StringComparison]::Ordinal) -lt 0) { throw "Compiled validator is missing: $required" }
 }
-Add-Type -AssemblyName System.IO.Compression.FileSystem
-$archive = [IO.Compression.ZipFile]::OpenRead($ZipPath)
+foreach ($forbidden in @('BuildMappingReport', 'BuildNativeResetReport', 'WriteFeatureReportAsync', 'ReadFeatureReportAsync')) {
+    if ($binaryText.IndexOf($forbidden, [StringComparison]::Ordinal) -ge 0) { throw "Compiled validator contains forbidden symbol: $forbidden" }
+}
+
+$temp = Join-Path ([IO.Path]::GetTempPath()) ("ally-validator-" + [Guid]::NewGuid().ToString('N'))
 try {
-    $zipFiles = @($archive.Entries | Where-Object Name | Select-Object -ExpandProperty FullName | Sort-Object)
-    $zipDifference = @(Compare-Object -ReferenceObject $expected -DifferenceObject $zipFiles)
-    if ($zipDifference.Count -ne 0) {
-        throw "Private validator ZIP does not match its exact allowlist: $($zipDifference | Out-String)"
-    }
+    Expand-Archive -LiteralPath $ZipPath -DestinationPath $temp
+    Assert-Package $temp
 }
 finally {
-    $archive.Dispose()
+    if (Test-Path -LiteralPath $temp) { Remove-Item -LiteralPath $temp -Recurse -Force }
 }
 
-Write-Output "Private one-shot hardware validator safety and package assertions passed: exe=$($executable.Length), zip=$($zip.Length)."
+Write-Output "Controlled one-shot hardware validator source, binary, ZIP, and checksum assertions passed."

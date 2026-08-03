@@ -1,43 +1,22 @@
 using System.Reflection;
-using System.Security.Cryptography;
 using System.Text.Json;
-using AllyBindings.Core;
-using AllyBindings.Windows;
 
 namespace AllyBindings.HardwareValidator;
 
 internal static class Program
 {
     private const int Success = 0;
-    private const int UnsupportedHost = 2;
     private const int TargetRejected = 3;
     private const int ConfirmationRejected = 4;
     private const int WriteFailed = 5;
+    private const int AuditPersistenceFailed = 6;
     private const int UsageError = 64;
 
     public static async Task<int> Main(string[] args)
     {
-        Console.WriteLine("Ally Bindings — private M1/M2 physical validator");
-        Console.WriteLine("This is not the Ally Bindings application and does not unlock application writes.");
-        Console.WriteLine();
-
-        if (!OperatingSystem.IsWindows())
+        if (args.Length != 1 ||
+            (args[0] != HardwareLabPolicy.InspectCommand && args[0] != HardwareLabPolicy.WriteCommand))
         {
-            Console.Error.WriteLine("This validator runs only on Windows.");
-            return UnsupportedHost;
-        }
-
-        if (args.Length != 1 || args[0] is "--help" or "-h" or "help")
-        {
-            PrintUsage();
-            return args.Length == 1 ? Success : UsageError;
-        }
-
-        var command = args[0];
-        if (command is not AsusRearButtonLabValidation.InspectCommand and
-            not AsusRearButtonLabValidation.WriteCommand)
-        {
-            Console.Error.WriteLine($"Unknown command '{command}'.");
             PrintUsage();
             return UsageError;
         }
@@ -49,63 +28,85 @@ internal static class Program
             cancellation.Cancel();
         };
 
-        await using var device = new AsusRearButtonHidDevice();
-        var status = await device.InitializeAsync(cancellation.Token).ConfigureAwait(false);
-        var interfaceCount = device.GetSnapshotInterfaceIdentityKeys().Count;
-        PrintTarget(status, interfaceCount);
-
-        if (!status.IsSupportedModel || !status.IsAvailable)
+        LabTargetSnapshot target;
+        try
         {
-            Console.Error.WriteLine("Target validation failed. No hardware write was attempted.");
+            target = await ExactRc73xaLabWriter.InspectAsync(cancellation.Token).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            Console.Error.WriteLine("Inspection cancelled; no HID write was attempted.");
             return TargetRejected;
         }
 
-        if (command == AsusRearButtonLabValidation.InspectCommand)
+        PrintTarget(target);
+        if (!target.Approved)
         {
-            Console.WriteLine("INSPECT PASSED: no controller setting was read or changed.");
+            Console.Error.WriteLine("Exact target validation failed. No hardware write was attempted.");
+            return TargetRejected;
+        }
+
+        var wirePacket = HardwareLabPolicy.BuildWirePacket(target.FeatureReportLength);
+        var wirePacketHex = Convert.ToHexString(wirePacket);
+        var wirePacketSha256 = HardwareLabPolicy.Sha256Hex(wirePacket);
+        Console.WriteLine($"Logical fixed command ({HardwareLabPolicy.LogicalReportLength} bytes): {Convert.ToHexString(HardwareLabPolicy.GetLogicalPacket())}");
+        Console.WriteLine($"Logical SHA-256: {HardwareLabPolicy.LogicalPacketSha256}");
+        Console.WriteLine($"Exact wire packet ({wirePacket.Length} bytes): {wirePacketHex}");
+        Console.WriteLine($"Exact wire SHA-256: {wirePacketSha256}");
+
+        if (args[0] == HardwareLabPolicy.InspectCommand)
+        {
+            Console.WriteLine("Inspection only. No HID feature report was read or written.");
+            Console.WriteLine("Close Armoury Crate and anti-cheat software before the write command.");
             return Success;
         }
 
-        var report = AsusRearButtonLabValidation.BuildOneShotReport();
-        var packetHash = Convert.ToHexString(SHA256.HashData(report)).ToLowerInvariant();
-        var audit = LabAudit.Create(status.Model, interfaceCount, packetHash, Convert.ToHexString(report));
-        string auditPath;
+        var audit = new LabAudit(
+            SchemaVersion: 2,
+            ValidatorVersion: Assembly.GetExecutingAssembly().GetName().Version?.ToString() ?? "unknown",
+            SessionId: Guid.NewGuid().ToString("N"),
+            CreatedAtUtc: DateTimeOffset.UtcNow,
+            Model: target.Model,
+            VendorId: HardwareLabPolicy.TargetVendorId,
+            ProductId: HardwareLabPolicy.TargetProductId,
+            CompatibleInterfaceCount: 1,
+            FeatureReportLength: target.FeatureReportLength,
+            FixedMapping: "M1=A; M2=B",
+            LogicalPacketSha256: HardwareLabPolicy.LogicalPacketSha256,
+            WirePacketHex: wirePacketHex,
+            WirePacketSha256: wirePacketSha256,
+            Outcome: "not-attempted",
+            Detail: "Pre-write audit created before authorization.",
+            AttemptedInterfaces: 0,
+            SuccessfulInterfaces: 0,
+            RecoveryRequired: false,
+            ArmouryRecoveryConfirmed: false);
+
+        string preWriteAuditPath;
         try
         {
-            auditPath = await LabAuditStore.WriteAsync(audit, cancellation.Token).ConfigureAwait(false);
+            preWriteAuditPath = await LabAuditStore.WriteAsync(audit, cancellation.Token).ConfigureAwait(false);
         }
         catch (Exception ex)
         {
-            Console.Error.WriteLine($"Could not create the pre-write audit record ({ex.GetType().Name}). No hardware write was attempted.");
-            return TargetRejected;
+            Console.Error.WriteLine($"Pre-write audit failed ({ex.GetType().Name}); no HID write was attempted.");
+            return AuditPersistenceFailed;
         }
 
         Console.WriteLine();
-        Console.WriteLine("DANGER — THIS COMMAND CHANGES THE CONTROLLER'S M1/M2 CONFIGURATION.");
-        Console.WriteLine("Before continuing:");
-        Console.WriteLine("  1. Close Armoury Crate, games, launchers, and anti-cheat software.");
-        Console.WriteLine("  2. Photograph or export the current Armoury M1/M2 assignments.");
-        Console.WriteLine("  3. Keep Armoury Crate available to restore the assignments after testing.");
-        Console.WriteLine("The validator has no reset command and will not guess your previous configuration.");
-        Console.WriteLine();
-        Console.WriteLine("Fixed operation: M1=A, M2=B");
-        Console.WriteLine($"Packet SHA-256: {packetHash}");
-        Console.WriteLine($"Exact 50-byte packet: {Convert.ToHexString(report)}");
-        Console.WriteLine($"Pre-write audit: {auditPath}");
-        Console.WriteLine();
-        Console.WriteLine($"Type exactly: {AsusRearButtonLabValidation.ConfirmationPhrase}");
+        Console.WriteLine("DANGER: this performs one experimental hardware write. It does not read current mappings.");
+        Console.WriteLine("Before continuing: save/screenshot Armoury settings, then fully close Armoury Crate and anti-cheat software.");
+        Console.WriteLine("Recovery is ONLY through Armoury Crate; this validator has no reset command.");
+        Console.WriteLine($"Type exactly: {HardwareLabPolicy.ConfirmationPhrase}");
         Console.Write("> ");
         var confirmation = Console.ReadLine();
 
-        var authorization = AsusRearButtonLabValidation.Authorize(
-            command,
-            confirmation,
-            Console.IsInputRedirected,
-            interfaceCount);
+        var authorization = HardwareLabPolicy.Authorize(
+            args[0], confirmation, Console.IsInputRedirected, compatibleInterfaceCount: 1);
         if (!authorization.Approved)
         {
             audit = audit with { Outcome = "confirmation-rejected", Detail = authorization.Message };
-            await LabAuditStore.WriteAsync(audit, CancellationToken.None).ConfigureAwait(false);
+            _ = await PersistAuditBestEffortAsync(audit).ConfigureAwait(false);
             Console.Error.WriteLine(authorization.Message);
             return ConfirmationRejected;
         }
@@ -116,37 +117,35 @@ internal static class Program
             audit = audit with
             {
                 Outcome = "authorized-write-pending",
-                Detail = "The durable one-shot claim was created; the HID outcome is pending.",
+                Detail = "Durable one-shot claim created; hardware outcome pending.",
                 RecoveryRequired = true,
             };
             await LabAuditStore.WriteAsync(audit, cancellation.Token).ConfigureAwait(false);
         }
         catch (Exception ex)
         {
-            audit = audit with
-            {
-                Outcome = "one-shot-claim-rejected",
-                Detail = $"The durable one-shot claim could not be created ({ex.GetType().Name}); no HID write was attempted.",
-            };
-            await LabAuditStore.WriteAsync(audit, CancellationToken.None).ConfigureAwait(false);
-            Console.Error.WriteLine(audit.Detail);
+            Console.Error.WriteLine($"Durable claim/pending audit failed ({ex.GetType().Name}); no HID write was attempted.");
             return ConfirmationRejected;
         }
 
-        AsusRearButtonWriteResult write;
+        LabWriteResult write;
+        var operationEntered = false;
         try
         {
-            write = await device.WriteFeatureReportAsync(report, cancellation.Token).ConfigureAwait(false);
+            operationEntered = true;
+            write = await ExactRc73xaLabWriter.WriteAsync(
+                target,
+                cancellation.Token).ConfigureAwait(false);
         }
         catch (OperationCanceledException)
         {
             audit = audit with
             {
                 Outcome = "cancelled-outcome-unknown",
-                Detail = "Cancellation occurred around the HID operation; recovery through Armoury remains required.",
+                Detail = "Cancellation occurred around SET_FEATURE; hardware outcome unknown.",
                 RecoveryRequired = true,
             };
-            await LabAuditStore.WriteAsync(audit, CancellationToken.None).ConfigureAwait(false);
+            _ = await PersistAuditBestEffortAsync(audit).ConfigureAwait(false);
             Console.Error.WriteLine(audit.Detail);
             return WriteFailed;
         }
@@ -154,45 +153,68 @@ internal static class Program
         {
             audit = audit with
             {
-                Outcome = "write-error",
+                Outcome = "write-error-outcome-unknown",
                 Detail = $"{ex.GetType().Name}: {ex.Message}",
                 RecoveryRequired = true,
             };
-            await LabAuditStore.WriteAsync(audit, CancellationToken.None).ConfigureAwait(false);
-            Console.Error.WriteLine("The HID operation failed. Its hardware outcome may be unknown; restore through Armoury.");
+            _ = await PersistAuditBestEffortAsync(audit).ConfigureAwait(false);
+            Console.Error.WriteLine("SET_FEATURE failed or its outcome is unknown.");
             return WriteFailed;
+        }
+        finally
+        {
+            if (operationEntered)
+            {
+                Console.Error.WriteLine("RECOVERY REQUIRED — restore the original mappings through Armoury Crate before any further test.");
+            }
         }
 
         audit = audit with
         {
             Outcome = write.Succeeded == 1
                 ? "hid-api-accepted"
-                : write.Message.Contains("outcome is unknown", StringComparison.OrdinalIgnoreCase)
-                    ? "hid-outcome-unknown"
-                    : "hid-api-rejected",
+                : write.Attempted > 0 ? "hid-outcome-rejected-or-unknown" : "hid-not-attempted-after-revalidation",
             Detail = write.Message,
             AttemptedInterfaces = write.Attempted,
             SuccessfulInterfaces = write.Succeeded,
-            RecoveryRequired = write.Attempted > 0,
+            RecoveryRequired = true,
         };
-        await LabAuditStore.WriteAsync(audit, CancellationToken.None).ConfigureAwait(false);
+        var outcomeAuditPath = await PersistAuditBestEffortAsync(audit).ConfigureAwait(false);
 
         if (write.Succeeded != 1)
         {
             Console.Error.WriteLine($"WRITE NOT CONFIRMED: {write.Message}");
-            Console.Error.WriteLine("If any attempt occurred, restore through Armoury before further testing.");
+            if (outcomeAuditPath is null)
+                Console.Error.WriteLine("Outcome audit also failed; the recovery warning remains authoritative.");
             return WriteFailed;
         }
 
-        Console.WriteLine();
-        Console.WriteLine("HID API ACCEPTED THE ONE-SHOT PACKET. This is not yet physical proof.");
-        Console.WriteLine("Next:");
-        Console.WriteLine("  1. Open joy.cpl or another safe local controller tester.");
-        Console.WriteLine("  2. Verify M1 registers only A and M2 registers only B.");
-        Console.WriteLine("  3. Restore your original/default assignments in Armoury Crate.");
-        Console.WriteLine("  4. Verify both paddles again after Armoury restoration.");
-        Console.WriteLine($"Audit requiring recovery confirmation: {auditPath}");
+        Console.WriteLine("HID API ACCEPTED THE SOLE FIXED PACKET. This is not physical proof.");
+        Console.WriteLine("1. Verify in joy.cpl: M1 registers only A; M2 registers only B.");
+        Console.WriteLine("2. Check for duplicate or stuck inputs.");
+        Console.WriteLine("3. Restore the original assignments in Armoury Crate.");
+        Console.WriteLine("4. Verify both paddles again after restoration.");
+        Console.WriteLine($"Pre-write audit: {preWriteAuditPath}");
+        if (outcomeAuditPath is null)
+        {
+            Console.Error.WriteLine("WRITE SUCCEEDED, BUT OUTCOME AUDIT PERSISTENCE FAILED.");
+            return AuditPersistenceFailed;
+        }
+        Console.WriteLine($"Outcome audit: {outcomeAuditPath}");
         return Success;
+    }
+
+    private static async Task<string?> PersistAuditBestEffortAsync(LabAudit audit)
+    {
+        try
+        {
+            return await LabAuditStore.WriteAsync(audit, CancellationToken.None).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"Audit persistence failed ({ex.GetType().Name}); this does not change the hardware/recovery outcome.");
+            return null;
+        }
     }
 
     private static void PrintUsage()
@@ -200,16 +222,16 @@ internal static class Program
         Console.WriteLine("Usage:");
         Console.WriteLine("  AllyBindings.HardwareValidator.exe inspect");
         Console.WriteLine("  AllyBindings.HardwareValidator.exe write-m1-a-m2-b");
-        Console.WriteLine();
-        Console.WriteLine("Run inspect first. The write command is fixed, interactive, one-shot, and has no reset option.");
+        Console.WriteLine("The write command is fixed, interactive, one-shot, and has no reset option.");
     }
 
-    private static void PrintTarget(AsusRearButtonDeviceStatus status, int interfaceCount)
+    private static void PrintTarget(LabTargetSnapshot target)
     {
-        Console.WriteLine($"Model: {status.Model}");
-        Console.WriteLine($"Supported ROG Ally identity: {status.IsSupportedModel}");
-        Console.WriteLine($"Compatible openable report-0x5A interfaces: {interfaceCount}");
-        Console.WriteLine(status.Message);
+        Console.WriteLine($"Model: {target.Model}");
+        Console.WriteLine($"Exact RC73XA target approved: {target.Approved}");
+        Console.WriteLine($"Compatible VID_0B05/PID_1B4C interfaces: {(target.Approved ? 1 : 0)}");
+        Console.WriteLine($"Feature report length: {target.FeatureReportLength}");
+        Console.WriteLine(target.Message);
     }
 }
 
@@ -219,79 +241,67 @@ internal sealed record LabAudit(
     string SessionId,
     DateTimeOffset CreatedAtUtc,
     string Model,
+    int VendorId,
+    int ProductId,
     int CompatibleInterfaceCount,
+    int FeatureReportLength,
     string FixedMapping,
-    string PacketSha256,
-    string PacketHex,
+    string LogicalPacketSha256,
+    string WirePacketHex,
+    string WirePacketSha256,
     string Outcome,
     string Detail,
     int AttemptedInterfaces,
     int SuccessfulInterfaces,
     bool RecoveryRequired,
-    bool ArmouryRecoveryConfirmed)
-{
-    public static LabAudit Create(string model, int interfaceCount, string packetHash, string packetHex) =>
-        new(
-            SchemaVersion: 1,
-            ValidatorVersion: Assembly.GetExecutingAssembly()
-                .GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion ?? "unknown",
-            SessionId: Guid.NewGuid().ToString("N"),
-            CreatedAtUtc: DateTimeOffset.UtcNow,
-            Model: model,
-            CompatibleInterfaceCount: interfaceCount,
-            FixedMapping: "M1=A;M2=B",
-            PacketSha256: packetHash,
-            PacketHex: packetHex,
-            Outcome: "not-attempted",
-            Detail: "Pre-write audit created; no HID write has occurred yet.",
-            AttemptedInterfaces: 0,
-            SuccessfulInterfaces: 0,
-            RecoveryRequired: false,
-            ArmouryRecoveryConfirmed: false);
-}
+    bool ArmouryRecoveryConfirmed);
 
 internal static class LabAuditStore
 {
     private static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = true };
 
-    public static async Task ClaimOneShotAsync(LabAudit audit, CancellationToken cancellationToken)
+    internal static async Task<string> WriteAsync(LabAudit audit, CancellationToken cancellationToken)
     {
         var root = GetRoot();
         Directory.CreateDirectory(root);
-        var claimPath = Path.Combine(root, "one-shot-claimed.json");
-        var claim = JsonSerializer.SerializeToUtf8Bytes(new
-        {
-            schemaVersion = 1,
-            audit.SessionId,
-            claimedAtUtc = DateTimeOffset.UtcNow,
-            audit.PacketSha256,
-            purpose = "fixed M1=A;M2=B physical validation",
-        }, JsonOptions);
-        await using var stream = new FileStream(
-            claimPath,
-            FileMode.CreateNew,
-            FileAccess.Write,
-            FileShare.None,
-            bufferSize: 4096,
-            useAsync: true);
-        await stream.WriteAsync(claim, cancellationToken).ConfigureAwait(false);
-        await stream.FlushAsync(cancellationToken).ConfigureAwait(false);
+        var safeOutcome = string.Concat(audit.Outcome.Select(character =>
+            char.IsAsciiLetterOrDigit(character) || character == '-' ? character : '-'));
+        var path = Path.Combine(root, $"{audit.SessionId}-{safeOutcome}.json");
+        await WriteCreateNewAsync(path, JsonSerializer.SerializeToUtf8Bytes(audit, JsonOptions), cancellationToken).ConfigureAwait(false);
+        return path;
     }
 
-    public static async Task<string> WriteAsync(LabAudit audit, CancellationToken cancellationToken)
+    internal static Task ClaimOneShotAsync(LabAudit audit, CancellationToken cancellationToken)
     {
         var root = GetRoot();
         Directory.CreateDirectory(root);
-        var path = Path.Combine(root, $"{audit.SessionId}.json");
-        var temporaryPath = path + ".tmp";
-        var bytes = JsonSerializer.SerializeToUtf8Bytes(audit, JsonOptions);
-        await File.WriteAllBytesAsync(temporaryPath, bytes, cancellationToken).ConfigureAwait(false);
-        File.Move(temporaryPath, path, overwrite: true);
-        return path;
+        var claim = new
+        {
+            schemaVersion = 2,
+            claimedAtUtc = DateTimeOffset.UtcNow,
+            audit.SessionId,
+            audit.ValidatorVersion,
+            audit.Model,
+            audit.ProductId,
+            audit.WirePacketSha256,
+            recoveryRequired = true,
+            armouryRecoveryConfirmed = false,
+        };
+        return WriteCreateNewAsync(
+            Path.Combine(root, "one-shot-claimed.json"),
+            JsonSerializer.SerializeToUtf8Bytes(claim, JsonOptions),
+            cancellationToken);
+    }
+
+    private static async Task WriteCreateNewAsync(string path, byte[] bytes, CancellationToken cancellationToken)
+    {
+        await using var stream = new FileStream(path, FileMode.CreateNew, FileAccess.Write, FileShare.Read, 4096, useAsync: true);
+        await stream.WriteAsync(bytes, cancellationToken).ConfigureAwait(false);
+        await stream.FlushAsync(cancellationToken).ConfigureAwait(false);
     }
 
     private static string GetRoot() => Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
         "AllyBindings",
-        "hardware-validation");
+        "HardwareValidator");
 }

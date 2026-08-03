@@ -13,8 +13,7 @@
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
   </PropertyGroup>
   <ItemGroup>
-    <ProjectReference Include="..\AllyBindings.Core\AllyBindings.Core.csproj" />
     <PackageReference Include="HidSharp" Version="2.6.4" />
-    <Compile Include="..\AllyBindings.Windows\AsusRearButtonHidDevice.cs" Link="Hardware\AsusRearButtonHidDevice.cs" />
+    <InternalsVisibleTo Include="AllyBindings.HardwareValidator.Tests" />
   </ItemGroup>
 </Project>

@@ -7,7 +7,7 @@ if (-not (Test-Path -LiteralPath $ExecutablePath -PathType Leaf)) {
     throw "Hardware validator executable is missing: $ExecutablePath"
 }
 
-$auditRoot = Join-Path $env:LOCALAPPDATA 'AllyBindings/hardware-validation'
+$auditRoot = Join-Path $env:LOCALAPPDATA 'AllyBindings/HardwareValidator'
 $before = if (Test-Path -LiteralPath $auditRoot) {
     @(Get-ChildItem -LiteralPath $auditRoot -File | Select-Object -ExpandProperty FullName)
 }
@@ -21,11 +21,11 @@ if ($exitCode -notin @(0, 3)) {
     throw "Read-free inspect exited $exitCode instead of success or target-rejected: $($output -join [Environment]::NewLine)"
 }
 $joined = $output -join [Environment]::NewLine
-if ($joined.IndexOf('DANGER — THIS COMMAND CHANGES', [StringComparison]::Ordinal) -ge 0 -or
-    $joined.IndexOf('Exact 50-byte packet', [StringComparison]::Ordinal) -ge 0) {
+if ($joined.IndexOf('DANGER: this performs one experimental hardware write', [StringComparison]::Ordinal) -ge 0 -or
+    $joined.IndexOf('Type exactly:', [StringComparison]::Ordinal) -ge 0) {
     throw 'Inspect entered the hardware-write flow.'
 }
-if ($exitCode -eq 0 -and $joined.IndexOf('INSPECT PASSED: no controller setting was read or changed.', [StringComparison]::Ordinal) -lt 0) {
+if ($exitCode -eq 0 -and $joined.IndexOf('Inspection only. No HID feature report was read or written.', [StringComparison]::Ordinal) -lt 0) {
     throw 'Successful inspect did not make its no-read/no-write result explicit.'
 }
 if ($exitCode -eq 3 -and $joined.IndexOf('No hardware write was attempted.', [StringComparison]::Ordinal) -lt 0) {

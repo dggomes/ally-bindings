@@ -43,15 +43,6 @@ jobs:
       - name: Publish self-contained x64 app
         shell: pwsh
         run: ./scripts/package.ps1 -SkipTests
-      - name: Build private one-shot M1/M2 hardware validator
-        shell: pwsh
-        run: ./scripts/package-hardware-validator.ps1 -SkipTests
-      - name: Assert private hardware validator write boundaries
-        shell: pwsh
-        run: ./scripts/test-hardware-validator-safety.ps1
-      - name: Exercise read-free hardware validator inspect mode
-        shell: pwsh
-        run: ./scripts/test-hardware-validator-inspect.ps1
       - name: Verify embedded Armoury tap resource
         shell: pwsh
         run: ./scripts/test-armoury-tap-embedded-resource.ps1
@@ -114,12 +105,6 @@ jobs:
           name: AllyBindings-win-x64
           path: artifacts/AllyBindings-win-x64.zip
           if-no-files-found: error
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
-        with:
-          name: AllyBindings-private-hardware-validator-win-x64
-          path: artifacts/AllyBindings-HardwareValidator-win-x64.zip
-          if-no-files-found: error
-          retention-days: 7
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: AllyBindings-ui-screenshots
