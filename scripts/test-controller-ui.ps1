@@ -101,7 +101,9 @@ foreach ($requiredCode in @(
     'if ((end - start).LengthSquared > 12 * 12) return false;',
     'startNearest.Source != endNearest.Source',
     'dialogOrigin = Keyboard.FocusedElement;',
-    'Keyboard.Focus(origin);'
+    'Keyboard.Focus(origin);',
+    'SetArmouryCaptureBlocked',
+    'ArmouryCaptureButton.Content = isBlocked ? "Restart Windows" : "Start capture"'
 )) {
     if ($windowCode.IndexOf($requiredCode, [StringComparison]::Ordinal) -lt 0) {
         throw "Controller interaction safety is missing required logic: $requiredCode"

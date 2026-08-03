@@ -26,10 +26,15 @@ Every condition must pass or capture stops before injection:
    - `ArmouryCrateSE.Service.exe`
    - `ArmouryCrate.Service.exe`
    - `ArmouryCrateSE.exe`
+   - `ArmouryCrate.UserSessionHelper.exe`
+   - `ArmouryCrateControlInterface.exe`
+   - `ArmourySocketServer.exe`
+   - `ArmourySwAgent.exe`
+   - `ArmouryCrateKeyControl.exe`
    - `AsusOptimization.exe`
 5. Every selected executable has a valid embedded Authenticode signature with whole-chain, cache-only revocation checking; unknown/offline revocation state fails closed to ETW. The leaf requires exact ASUS common-name and organisation RDNs, code-signing EKU and digital-signature key usage.
 6. Every selected process is under a trusted Windows, Program Files or Program Files (x86) root; reparse traversal is rejected, and Windows `AccessCheck` against an impersonation copy of the unelevated parent token must show no content-write, create, delete, DACL-change or ownership-change access on the executable or its ancestor chain up to that trusted root. The verified image file is hash-bound and held without write/delete sharing through injection and unload.
-7. At most four exact candidates may be selected; excess or ambiguous process inventory fails closed.
+7. At most twelve exact candidates may be selected across the nine allowlisted executable names; excess or ambiguous process inventory fails closed. Each candidate gets two five-second authenticated-handshake stages and at most three five-second remote lifecycle calls (load, stop and unload). The parent startup deadline is derived from that complete per-candidate bound across all twelve candidates plus a sixty-second validation and cleanup margin.
 8. The user confirms the displayed controller target and the injection/process risk before UAC and is told to close games and anti-cheat software.
 
 PID `0x1B6E` is not an Ally controller identifier and must not pass the rear-button gate.
@@ -65,7 +70,7 @@ No device path, arbitrary process memory, keyboard input, XInput history or non-
 
 ## Bounds
 
-- Maximum candidate processes: 4.
+- Maximum candidate processes: 12.
 - Maximum reports per process: 256.
 - Maximum report bytes: 64.
 - Maximum capture duration: 10 minutes.

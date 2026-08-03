@@ -15,6 +15,7 @@ namespace AllyBindings.Windows;
 internal sealed class ArmouryCaptureService
 {
     private static readonly TimeSpan CaptureStartTimeout = TimeSpan.FromSeconds(30);
+    private static readonly TimeSpan ArmouryTapCaptureStartTimeout = ArmouryTapProtocol.CaptureStartupTimeout;
     private static readonly TimeSpan CaptureStopTimeout = TimeSpan.FromSeconds(30);
     private const int MaximumPipeEnvelopeCharacters = 512 * 1024;
     private static readonly JsonSerializerOptions JsonOptions = new()
@@ -48,26 +49,30 @@ internal sealed class ArmouryCaptureService
         ArmouryCaptureTarget confirmedTarget,
         CancellationToken cancellationToken = default)
     {
-        try
-        {
-            return await StartWithHelperAsync(
-                confirmedTarget,
-                ArmouryTapCaptureHelper.HelperArgument,
-                cancellationToken).ConfigureAwait(false);
-        }
-        catch (ArmouryTapUnavailableException) when (!cancellationToken.IsCancellationRequested)
-        {
-            return await StartWithHelperAsync(
-                confirmedTarget,
-                ArmouryEtwCaptureHelper.HelperArgument,
-                cancellationToken).ConfigureAwait(false);
-        }
+        return await StartWithHelperAsync(
+            confirmedTarget,
+            ArmouryTapCaptureHelper.HelperArgument,
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    public Task<ArmouryCaptureSession> StartMetadataFallbackAsync(
+        ArmouryCaptureTarget confirmedTarget,
+        string tapUnavailableReason,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(tapUnavailableReason);
+        return StartWithHelperAsync(
+            confirmedTarget,
+            ArmouryEtwCaptureHelper.HelperArgument,
+            cancellationToken,
+            tapUnavailableReason);
     }
 
     private async Task<ArmouryCaptureSession> StartWithHelperAsync(
         ArmouryCaptureTarget confirmedTarget,
         string helperArgument,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        string? tapUnavailableReason = null)
     {
         ArgumentNullException.ThrowIfNull(confirmedTarget);
         var isTapHelper = helperArgument.Equals(ArmouryTapCaptureHelper.HelperArgument, StringComparison.Ordinal);
@@ -101,7 +106,13 @@ internal sealed class ArmouryCaptureService
                 ?? throw new InvalidOperationException("Windows did not start the elevated in-app ETW capture helper.");
             ArmouryCaptureDiagnostics.Record(sessionId, "parent-helper-launched");
 
-            var connection = await WaitForReadyAsync(sessionId, helper, pipe, cancellationToken).ConfigureAwait(false);
+            var startTimeout = isTapHelper ? ArmouryTapCaptureStartTimeout : CaptureStartTimeout;
+            var connection = await WaitForReadyAsync(
+                sessionId,
+                helper,
+                pipe,
+                startTimeout,
+                cancellationToken).ConfigureAwait(false);
             ArmouryCaptureDiagnostics.Record(sessionId, "parent-ready-received");
             var directory = Path.Combine(
                 ArmouryEtwCapturePipe.GetCaptureRoot(),
@@ -115,7 +126,8 @@ internal sealed class ArmouryCaptureService
                 connection.Writer,
                 directory,
                 confirmedTarget,
-                connection.Ready.EnabledProviders.Select(provider => provider.Name).ToArray());
+                connection.Ready.EnabledProviders.Select(provider => provider.Name).ToArray(),
+                tapUnavailableReason);
             session.RecordAction("capture-started");
             return session;
         }
@@ -402,10 +414,11 @@ internal sealed class ArmouryCaptureService
         Guid sessionId,
         Process helper,
         NamedPipeServerStream pipe,
+        TimeSpan startTimeout,
         CancellationToken cancellationToken)
     {
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        timeout.CancelAfter(CaptureStartTimeout);
+        timeout.CancelAfter(startTimeout);
         try
         {
             var connectTask = pipe.WaitForConnectionAsync(timeout.Token);
@@ -435,7 +448,7 @@ internal sealed class ArmouryCaptureService
                 sessionId,
                 helper,
                 reader,
-                CaptureStartTimeout,
+                startTimeout,
                 cancellationToken).ConfigureAwait(false);
             if (!envelope.Type.Equals("ready", StringComparison.Ordinal) || envelope.Ready is null)
             {
@@ -454,7 +467,8 @@ internal sealed class ArmouryCaptureService
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
             StopHelper(helper);
-            throw new TimeoutException("Windows did not start the in-app USB ETW session within 30 seconds.");
+            throw new TimeoutException(
+                $"Windows did not start the in-app capture helper within {startTimeout.TotalSeconds:0} seconds.");
         }
     }
 
@@ -791,7 +805,8 @@ internal sealed class ArmouryCaptureSession(
     StreamWriter pipeWriter,
     string directory,
     ArmouryCaptureTarget target,
-    IReadOnlyList<string> enabledProviders) : IDisposable
+    IReadOnlyList<string> enabledProviders,
+    string? tapUnavailableReason) : IDisposable
 {
     private int _disposed;
 
@@ -803,6 +818,7 @@ internal sealed class ArmouryCaptureSession(
     public string Directory { get; } = directory;
     public ArmouryCaptureTarget Target { get; } = target;
     public IReadOnlyList<string> EnabledProviders { get; } = enabledProviders;
+    public string? TapUnavailableReason { get; } = tapUnavailableReason;
     public bool UsesArmouryTap { get; } = enabledProviders.Any(provider =>
         provider.Equals("AllyBindings native user-mode HID write tap", StringComparison.Ordinal));
     public List<CaptureActionMarker> Actions { get; } = [];

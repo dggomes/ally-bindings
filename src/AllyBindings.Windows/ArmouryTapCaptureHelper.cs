@@ -22,7 +22,7 @@ internal static class ArmouryTapCaptureHelper
     internal const string TapUnavailableErrorCode = "tap-unavailable";
     internal const string TeardownUnconfirmedErrorCode = "teardown-unconfirmed";
     private static readonly TimeSpan MaximumCaptureDuration = TimeSpan.FromMinutes(10);
-    private const int MaximumCandidateProcesses = 4;
+    private const int MaximumCandidateProcesses = ArmouryTapProtocol.MaximumCandidateProcesses;
     private static readonly JsonSerializerOptions JsonOptions = new();
 
     public static bool TryParseArguments(IReadOnlyList<string> args, out Guid sessionId, out int parentProcessId)
@@ -132,16 +132,29 @@ internal static class ArmouryTapCaptureHelper
             var expectedDllHash = ExtractNativeDll(dllPath);
             dllLock = LockAndVerifyNativeDll(dllPath, expectedDllHash);
             unelevatedToken = OpenParentImpersonationToken(parentProcessId);
-            candidates = DiscoverSignedCandidates(unelevatedToken);
+            candidates = DiscoverSignedCandidates(unelevatedToken, out var candidateDiagnostic);
             if (candidates.Count == 0)
-                throw new TapUnavailableException("No running ASUS-signed Armoury candidate process was found for the user-mode tap.");
+                throw new TapUnavailableException(
+                    $"No injectable ASUS-signed Armoury process was found for the user-mode tap. {candidateDiagnostic}");
             if (candidates.Count > MaximumCandidateProcesses)
                 throw new InvalidOperationException($"Found {candidates.Count} ASUS Armoury candidates; the safe limit is {MaximumCandidateProcesses}.");
 
-            foreach (var candidate in candidates)
+            var attachmentRejections = await CandidateAttachmentCoordinator.AttachAvailableAsync(
+                candidates,
+                targets,
+                candidate => candidate.ExactName,
+                (candidate, token) => TappedProcess.AttachAsync(sessionId, candidate, dllPath, token),
+                ex => ex is TapTeardownUnconfirmedException,
+                DescribeSafeAttachRejection,
+                cancellationToken).ConfigureAwait(false);
+            if (targets.Count == 0)
             {
-                cancellationToken.ThrowIfCancellationRequested();
-                targets.Add(await TappedProcess.AttachAsync(sessionId, candidate, dllPath, cancellationToken).ConfigureAwait(false));
+                var rejected = attachmentRejections.Count == 0
+                    ? "No candidate reached the attachment stage."
+                    : "Attachment outcomes: " + string.Join("; ", attachmentRejections
+                        .Select(item => $"{item.CandidateName}=[{item.Reason}]")) + ".";
+                throw new TapUnavailableException(
+                    $"No verified Armoury process accepted the native tap. {candidateDiagnostic} {rejected}");
             }
             await writer.WriteLineAsync(JsonSerializer.Serialize(new EtwPipeEnvelope("ready", Ready: new(
                 [new("AllyBindings native user-mode HID write tap", Guid.Empty, 0)])), JsonOptions));
@@ -225,6 +238,16 @@ internal static class ArmouryTapCaptureHelper
         }
     }
 
+    private static string DescribeSafeAttachRejection(Exception exception) => exception switch
+    {
+        UnauthorizedAccessException => "access-denied",
+        System.ComponentModel.Win32Exception => "windows-api-rejected",
+        TimeoutException => "tap-handshake-timeout",
+        InvalidDataException => "tap-handshake-rejected",
+        InvalidOperationException => "tap-attachment-rejected",
+        _ => "tap-attachment-failed",
+    };
+
     private static int ClassifyPhase(long qpc, IReadOnlyDictionary<int, PhaseWindow> windows)
     {
         foreach (var (phase, window) in windows.OrderBy(item => item.Value.StartQpc))
@@ -232,39 +255,80 @@ internal static class ArmouryTapCaptureHelper
         return windows.TryGetValue(1, out var first) && qpc < first.StartQpc ? 0 : -1;
     }
 
-    private static List<VerifiedProcess> DiscoverSignedCandidates(SafeAccessTokenHandle unelevatedToken)
+    private static List<VerifiedProcess> DiscoverSignedCandidates(
+        SafeAccessTokenHandle unelevatedToken,
+        out string diagnostic)
     {
         var found = new List<VerifiedProcess>();
+        var observations = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase);
+        void Observe(string name, string result)
+        {
+            if (!observations.TryGetValue(name, out var results))
+            {
+                results = new(StringComparer.Ordinal);
+                observations.Add(name, results);
+            }
+            results.Add(result);
+        }
+
         foreach (var name in ArmouryTapProtocol.ExactCandidateProcessNames)
         {
-            foreach (var process in Process.GetProcessesByName(name))
+            Process[] processes;
+            try { processes = Process.GetProcessesByName(name); }
+            catch
             {
+                Observe(name, "enumeration-failed");
+                continue;
+            }
+            foreach (var process in processes)
+            {
+                Observe(name, "running");
                 using (process)
                 {
                     try
                     {
                         var path = process.MainModule?.FileName;
-                        if (path is null || !IsTrustedInstallPath(path) || HasReparseTraversal(path) ||
-                            IsWritableByToken(path, unelevatedToken) || !IsNativeAmd64(process.Handle)) continue;
+                        if (path is null) { Observe(name, "path-unavailable"); continue; }
+                        if (!IsTrustedInstallPath(path)) { Observe(name, "untrusted-install-root"); continue; }
+                        if (HasReparseTraversal(path)) { Observe(name, "reparse-traversal"); continue; }
+                        if (IsWritableByToken(path, unelevatedToken)) { Observe(name, "user-writable-image-or-parent"); continue; }
+                        if (!IsNativeAmd64(process.Handle)) { Observe(name, "not-native-x64"); continue; }
                         FileStream? imageLock = new(path, FileMode.Open, FileAccess.Read, FileShare.Read);
                         try
                         {
-                            if (!HasAsusAuthenticodeSignature(path)) continue;
+                            if (!HasAsusAuthenticodeSignature(path))
+                            {
+                                Observe(name, "asus-signature-rejected");
+                                continue;
+                            }
                             var imageHash = SHA256.HashData(imageLock);
                             imageLock.Position = 0;
                             if (found.Any(item => item.ProcessId == process.Id)) continue;
+                            var processStartTimeUtc = process.StartTime.ToUniversalTime();
                             var lifecycleHandle = OpenProcess(0x00100000 | 0x1000, false, process.Id);
-                            if (lifecycleHandle.IsInvalid) { lifecycleHandle.Dispose(); continue; }
-                            found.Add(new(process.Id, process.StartTime.ToUniversalTime(), Path.GetFullPath(path), name,
+                            if (lifecycleHandle.IsInvalid)
+                            {
+                                lifecycleHandle.Dispose();
+                                Observe(name, "lifecycle-handle-denied");
+                                continue;
+                            }
+                            found.Add(new(process.Id, processStartTimeUtc, Path.GetFullPath(path), name,
                                 imageLock, imageHash, unelevatedToken, lifecycleHandle));
+                            Observe(name, "accepted");
                             imageLock = null;
                         }
                         finally { imageLock?.Dispose(); }
                     }
-                    catch { }
+                    catch (UnauthorizedAccessException) { Observe(name, "inspection-denied"); }
+                    catch { Observe(name, "inspection-failed"); }
                 }
             }
         }
+        diagnostic = observations.Count == 0
+            ? $"None of the {ArmouryTapProtocol.ExactCandidateProcessNames.Count} exact Armoury component names were running. Open Armoury Crate, leave it open on the controller configuration page, then retry."
+            : "Allowlisted process observations: " + string.Join("; ", observations
+                .OrderBy(item => item.Key, StringComparer.OrdinalIgnoreCase)
+                .Select(item => $"{item.Key}=[{string.Join(',', item.Value.Order(StringComparer.Ordinal))}]")) + ".";
         return found;
     }
 
@@ -619,11 +683,11 @@ internal static class ArmouryTapCaptureHelper
                 remoteModule = Inject(identity, dllPath);
                 var holder = new TappedProcess(identity, dllPath, token, pipe, remoteModule, Task.CompletedTask);
                 var connectTask = pipe.WaitForConnectionAsync(cancellationToken);
-                await connectTask.WaitAsync(TimeSpan.FromSeconds(15), cancellationToken);
+                await connectTask.WaitAsync(ArmouryTapProtocol.CandidateHandshakeStepTimeout, cancellationToken);
                 if (!GetNamedPipeClientProcessId(pipe.SafePipeHandle, out var clientPid) || clientPid != (uint)identity.ProcessId)
                     throw new InvalidOperationException("A tap record pipe connected from an unexpected process.");
                 var ready = await ReadRecordAsync(pipe, cancellationToken)
-                    .WaitAsync(TimeSpan.FromSeconds(15), cancellationToken).ConfigureAwait(false);
+                    .WaitAsync(ArmouryTapProtocol.CandidateHandshakeStepTimeout, cancellationToken).ConfigureAwait(false);
                 if (ready is null || ready.ProcessId != identity.ProcessId || ready.Api != 0 ||
                     !CryptographicOperations.FixedTimeEquals(ready.Token, token))
                     throw new InvalidDataException("The injected tap did not authenticate its ready record.");
@@ -769,7 +833,7 @@ internal static class ArmouryTapCaptureHelper
             var loadLibrary = ResolveRemoteProc(identity.ProcessId, "kernel32.dll", "LoadLibraryW");
             using var thread = CreateRemoteThread(process, IntPtr.Zero, 0, loadLibrary, remotePath, 0, out _);
             if (thread.IsInvalid) throw new System.ComponentModel.Win32Exception();
-            var wait = WaitForSingleObject(thread, 15_000);
+            var wait = WaitForSingleObject(thread, ArmouryTapProtocol.CandidateRemoteCallTimeoutMilliseconds);
             if (wait != 0)
             {
                 releaseRemotePath = false;
@@ -851,7 +915,8 @@ internal static class ArmouryTapCaptureHelper
     {
         using var thread = CreateRemoteThread(process, IntPtr.Zero, 0, start, parameter, 0, out _);
         if (thread.IsInvalid) throw new System.ComponentModel.Win32Exception();
-        if (WaitForSingleObject(thread, 15_000) != 0) throw new TimeoutException("Remote tap lifecycle call timed out.");
+        if (WaitForSingleObject(thread, ArmouryTapProtocol.CandidateRemoteCallTimeoutMilliseconds) != 0)
+            throw new TimeoutException("Remote tap lifecycle call timed out.");
         if (!GetExitCodeThread(thread, out var exitCode) || exitCode == 0)
             throw new InvalidOperationException("Remote tap lifecycle call failed.");
     }

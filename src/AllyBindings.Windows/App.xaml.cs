@@ -304,6 +304,12 @@ public partial class App : System.Windows.Application
             _updateService = new GitHubUpdateService();
             MainWindow = _mainWindow;
             _mainWindow.SetUpdateStatus($"Current version: {GitHubUpdateService.CurrentSemanticVersion}");
+            if (_armouryCaptureTeardownUnconfirmed)
+            {
+                _mainWindow.SetArmouryCaptureBlocked(
+                    true,
+                    "CAPTURE BLOCKED — a previous native tap unload was not confirmed. Restart Windows before starting another capture.");
+            }
 
             ConfigureTray();
             _controllerMonitor = new XInputMonitor(Configuration.ControllerIndex);
@@ -692,20 +698,37 @@ public partial class App : System.Windows.Application
 
     public async Task CaptureRearButtonSnapshotAsync()
     {
+        string? blockedReason = null;
         await _operationGate.WaitAsync();
         try
         {
-            if (_exiting || _armouryCaptureInProgress) return;
-            _armouryCaptureInProgress = true;
-            _armouryCaptureCancellation = new CancellationTokenSource();
-            _armouryCaptureCompletion = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            if (_exiting) return;
+            if (_armouryCaptureInProgress)
+            {
+                blockedReason = _armouryCaptureTeardownUnconfirmed
+                    ? "CAPTURE BLOCKED — restart Windows because a previous native tap unload was not confirmed."
+                    : "Another Armoury capture is already active. Finish or cancel it before starting a snapshot.";
+            }
+            else
+            {
+                _armouryCaptureInProgress = true;
+                _armouryCaptureCancellation = new CancellationTokenSource();
+                _armouryCaptureCompletion = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            }
         }
         finally
         {
             _operationGate.Release();
         }
+        if (blockedReason is not null)
+        {
+            _mainWindow.SetRearButtonSnapshotStatus(blockedReason);
+            if (_armouryCaptureTeardownUnconfirmed)
+                _mainWindow.SetArmouryCaptureBlocked(true, blockedReason);
+            return;
+        }
 
-        var cancellationToken = _armouryCaptureCancellation.Token;
+        var cancellationToken = _armouryCaptureCancellation!.Token;
         string? deferredFailureMessage = null;
         async Task RequireSnapshotStepAsync(string message, string title)
         {
@@ -824,19 +847,36 @@ public partial class App : System.Windows.Application
 
     public async Task CaptureArmouryProtocolAsync()
     {
+        string? blockedReason = null;
         await _operationGate.WaitAsync();
         try
         {
-            if (_exiting || _armouryCaptureInProgress) return;
-            _armouryCaptureInProgress = true;
-            _armouryCaptureCancellation = new CancellationTokenSource();
-            _armouryCaptureCompletion = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            if (_exiting) return;
+            if (_armouryCaptureInProgress)
+            {
+                blockedReason = _armouryCaptureTeardownUnconfirmed
+                    ? "CAPTURE BLOCKED — restart Windows because a previous native tap unload was not confirmed."
+                    : "Another Armoury capture is already active. Finish or cancel it before starting a new one.";
+            }
+            else
+            {
+                _armouryCaptureInProgress = true;
+                _armouryCaptureCancellation = new CancellationTokenSource();
+                _armouryCaptureCompletion = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            }
         }
         finally
         {
             _operationGate.Release();
         }
-        var cancellationToken = _armouryCaptureCancellation.Token;
+        if (blockedReason is not null)
+        {
+            _mainWindow.SetArmouryCaptureStatus(blockedReason);
+            if (_armouryCaptureTeardownUnconfirmed)
+                _mainWindow.SetArmouryCaptureBlocked(true, blockedReason);
+            return;
+        }
+        var cancellationToken = _armouryCaptureCancellation!.Token;
         ArmouryCaptureSession? session = null;
         Exception? captureTeardownFailure = null;
         string? deferredFailureMessage = null;
@@ -872,10 +912,33 @@ public partial class App : System.Windows.Application
             await RequireCaptureStepAsync(
                 $"Confirm this is the ROG Ally controller you intend to inspect:\n\nModel: {target.Model}\nCompatible ASUS HID interfaces: {string.Join(" | ", target.DeviceIds)}\n\nNo ETW session has started yet. Click Cancel if this identity is unexpected.",
                 "Confirm integrated Windows capture");
-            session = await captureService.StartAsync(target, cancellationToken);
-            cancellationToken.ThrowIfCancellationRequested();
-            _mainWindow.SetArmouryCaptureStatus(
-                $"Capture running through {string.Join(" + ", session.EnabledProviders)}. Follow the staged baseline, A/B, X/Y, and reset prompts; this app remains write-locked.");
+            try
+            {
+                session = await captureService.StartAsync(target, cancellationToken);
+                cancellationToken.ThrowIfCancellationRequested();
+                _mainWindow.SetArmouryCaptureStatus(
+                    "Native Armoury write tap is attached. Follow the staged baseline, A/B, X/Y, and reset prompts; this app remains write-locked.");
+            }
+            catch (ArmouryTapUnavailableException ex) when (!cancellationToken.IsCancellationRequested)
+            {
+                var fallbackMessage =
+                    $"The native Armoury write tap could not attach:\n\n{ex.Message}\n\n" +
+                    "No ETW session has started. The optional metadata-only Windows ETW fallback may confirm USB activity, but on this Windows build it cannot recover payload bytes that Windows does not expose. Continue only if you explicitly want that system-wide diagnostic metadata capture; otherwise cancel and use the rejection details above.";
+                _mainWindow.SetArmouryCaptureStatus($"NATIVE TAP UNAVAILABLE — {ex.Message}");
+                if (!await _mainWindow.ShowControllerDialogAsync(
+                        "Native Armoury tap unavailable",
+                        fallbackMessage,
+                        primaryLabel: "Start ETW fallback"))
+                {
+                    throw new OperationCanceledException(
+                        $"The metadata-only ETW fallback was declined before it started. Native tap rejection: {ex.Message}");
+                }
+                cancellationToken.ThrowIfCancellationRequested();
+                session = await captureService.StartMetadataFallbackAsync(target, ex.Message, cancellationToken);
+                cancellationToken.ThrowIfCancellationRequested();
+                _mainWindow.SetArmouryCaptureStatus(
+                    $"Metadata-only ETW fallback started with explicit consent. Native tap rejection: {ex.Message}");
+            }
             await RequireCaptureStepAsync(
                 "Baseline: leave the current M1/M2 assignments untouched briefly, then choose Done. Do not apply an Armoury change during this baseline window.",
                 "Capture baseline · no change");
@@ -962,6 +1025,9 @@ public partial class App : System.Windows.Application
                 else
                 {
                     _armouryCaptureTeardownUnconfirmed = true;
+                    _mainWindow.SetArmouryCaptureBlocked(
+                        true,
+                        "CAPTURE TEARDOWN UNCONFIRMED — restart Windows before trying Start capture again.");
                     Configuration = Configuration with
                     {
                         ArmouryTapTeardownBlockedSinceUtc =
@@ -1230,6 +1296,8 @@ public partial class App : System.Windows.Application
                     "A native tap unload was not confirmed and Ally Bindings could not persist its write barrier. Ordinary app exit is blocked because reopening could enable writes. Restart Windows from the Start menu; Windows session shutdown is allowed.",
                     primaryLabel: "Stay open",
                     secondaryLabel: "Stay open");
+                _exiting = false;
+                OpenMainWindow();
                 return;
             }
             var exitWithoutReset = await _mainWindow.ShowControllerDialogAsync(

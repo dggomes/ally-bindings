@@ -10,6 +10,7 @@ $schemaRetentionPolicyPath = Join-Path $root 'src/AllyBindings.Core/UsbEtwSchema
 $phasePath = Join-Path $root 'src/AllyBindings.Core/UsbEtwCapturePhases.cs'
 $boundedReaderPath = Join-Path $root 'src/AllyBindings.Core/BoundedTextLineReader.cs'
 $resetGatePath = Join-Path $root 'src/AllyBindings.Core/CaptureResetGate.cs'
+$candidateAttachmentCoordinatorPath = Join-Path $root 'src/AllyBindings.Core/CandidateAttachmentCoordinator.cs'
 $discoveryContractPath = Join-Path $root 'src/AllyBindings.Core/UsbEtwSchemaDiscoveryContract.cs'
 $servicePath = Join-Path $root 'src/AllyBindings.Windows/ArmouryCaptureService.cs'
 $helperPath = Join-Path $root 'src/AllyBindings.Windows/ArmouryEtwCaptureHelper.cs'
@@ -32,6 +33,7 @@ $schemaRetentionPolicy = Get-Content -Raw -LiteralPath $schemaRetentionPolicyPat
 $phase = Get-Content -Raw $phasePath
 $boundedReader = Get-Content -Raw $boundedReaderPath
 $resetGate = Get-Content -Raw $resetGatePath
+$candidateAttachmentCoordinator = Get-Content -Raw -LiteralPath $candidateAttachmentCoordinatorPath
 $discoveryContract = Get-Content -Raw -LiteralPath $discoveryContractPath
 $service = Get-Content -Raw -LiteralPath $servicePath
 $helper = Get-Content -Raw -LiteralPath $helperPath
@@ -326,9 +328,11 @@ if ($service -notmatch 'helperExitVerified = helper\.HasExited \|\| helper\.Wait
     throw 'Capture startup or updater shutdown can still bypass verified helper teardown.'
 }
 if ($app -notmatch 'private async Task ExitAsync\(\)[\s\S]*CaptureResetGate\.AcquireWhenCaptureStoppedAsync' -or
-    $app -notmatch 'if \(_exiting \|\| _armouryCaptureInProgress\) return;' -or
+    $app -notmatch 'if \(_exiting\) return;' -or
+    $app -notmatch 'blockedReason = _armouryCaptureTeardownUnconfirmed' -or
+    $app -notmatch 'SetArmouryCaptureBlocked\(true, blockedReason\)' -or
     $app -notmatch 'OnSessionEnding\(SessionEndingCancelEventArgs e\)[\s\S]*_exiting = true;') {
-    throw 'Exit or session-ending can still race queued capture startup.'
+    throw 'Exit/session-ending can race queued capture startup or blocked capture activation can still fail silently.'
 }
 if ($app -notmatch 'private void RequestArmouryCaptureCancellation\(\)' -or
     $app -notmatch '_mainWindow\.Dispatcher\.CheckAccess\(\)' -or
@@ -413,12 +417,22 @@ foreach ($required in @(
     'MinimumReportLength = 50',
     'MaximumReportLength = 64',
     'MaximumRecords = 256',
+    'MaximumCandidateProcesses = 12',
+    'CandidateHandshakeStepTimeout = TimeSpan.FromSeconds(5)',
+    'CandidateRemoteCallTimeoutMilliseconds = 5_000',
+    'CandidateWorstCaseStartupDuration',
+    'CandidateWorstCaseStartupDuration * MaximumCandidateProcesses + TimeSpan.FromSeconds(60)',
     'WireRecordSize = 124',
     'WireMagic = 0x31544241',
     'WireVersion = 1',
     'ArmouryCrateSE.Service',
     'ArmouryCrate.Service',
     'ArmouryCrateSE',
+    'ArmouryCrate.UserSessionHelper',
+    'ArmouryCrateControlInterface',
+    'ArmourySocketServer',
+    'ArmourySwAgent',
+    'ArmouryCrateKeyControl',
     'AsusOptimization')) {
     if ($tapProtocol.IndexOf($required, [StringComparison]::Ordinal) -lt 0) {
         throw "The tap protocol contract is missing: $required"
@@ -444,7 +458,14 @@ foreach ($required in @(
     'GetTrustedInstallRoot',
     'ImageHashMatches',
     'ImageLock',
-    'MaximumCandidateProcesses = 4',
+    'MaximumCandidateProcesses = ArmouryTapProtocol.MaximumCandidateProcesses',
+    'ArmouryTapProtocol.CandidateHandshakeStepTimeout',
+    'ArmouryTapProtocol.CandidateRemoteCallTimeoutMilliseconds',
+    'Allowlisted process observations:',
+    'user-writable-image-or-parent',
+    'asus-signature-rejected',
+    'CandidateAttachmentCoordinator.AttachAvailableAsync',
+    'DescribeSafeAttachRejection',
     'LockAndVerifyNativeDll',
     'IncrementalHash.CreateHash',
     'CryptographicOperations.FixedTimeEquals(actualHash, expectedHash)',
@@ -488,6 +509,41 @@ foreach ($required in @(
     if ($tapHelper.IndexOf($required, [StringComparison]::Ordinal) -lt 0) {
         throw "The tap helper is missing safety/lifecycle control: $required"
     }
+}
+
+foreach ($required in @(
+    'attachedTargets.EnsureCapacity(candidates.Count)',
+    'attachedTargets.Add(attachedTarget)',
+    'when (cancellationToken.IsCancellationRequested)',
+    'when (!requiresFailClosedAbort(ex))',
+    'CandidateAttachmentRejection')) {
+    if ($candidateAttachmentCoordinator.IndexOf($required, [StringComparison]::Ordinal) -lt 0) {
+        throw "The per-candidate attachment coordinator is missing fail-closed lifecycle behavior: $required"
+    }
+}
+
+$tapStartIndex = $service.IndexOf('public async Task<ArmouryCaptureSession> StartAsync(', [StringComparison]::Ordinal)
+$fallbackStartIndex = $service.IndexOf('public Task<ArmouryCaptureSession> StartMetadataFallbackAsync(', [StringComparison]::Ordinal)
+if ($tapStartIndex -lt 0 -or $fallbackStartIndex -le $tapStartIndex) {
+    throw 'The native tap and explicit metadata fallback entry points are not independently defined.'
+}
+$tapStartContract = $service.Substring($tapStartIndex, $fallbackStartIndex - $tapStartIndex)
+if ($tapStartContract.IndexOf('ArmouryEtwCaptureHelper.HelperArgument', [StringComparison]::Ordinal) -ge 0) {
+    throw 'The native tap start path still auto-starts the system-wide ETW fallback before explicit consent.'
+}
+foreach ($required in @(
+    'StartMetadataFallbackAsync',
+    'ArmouryTapCaptureStartTimeout = ArmouryTapProtocol.CaptureStartupTimeout',
+    'isTapHelper ? ArmouryTapCaptureStartTimeout : CaptureStartTimeout')) {
+    if ($service.IndexOf($required, [StringComparison]::Ordinal) -lt 0) {
+        throw "The capture service is missing explicit-fallback/deadline control: $required"
+    }
+}
+$fallbackDisclosureIndex = $app.IndexOf('No ETW session has started. The optional metadata-only Windows ETW fallback', [StringComparison]::Ordinal)
+$fallbackLaunchIndex = $app.IndexOf('StartMetadataFallbackAsync', [StringComparison]::Ordinal)
+if ($fallbackDisclosureIndex -lt 0 -or $fallbackLaunchIndex -le $fallbackDisclosureIndex -or
+    $app.IndexOf('primaryLabel: "Start ETW fallback"', [StringComparison]::Ordinal) -lt 0) {
+    throw 'The UI does not obtain explicit ETW fallback consent before launching the metadata helper.'
 }
 
 $tapRecordStart = $tapProtocol.IndexOf('public sealed record ArmouryTapRecord(', [StringComparison]::Ordinal)
@@ -556,6 +612,9 @@ foreach ($required in @('nativeWritesAllowed', '_armouryCaptureBarrierPersistenc
         throw "The persisted teardown barrier does not block startup/exit path: $required"
     }
 }
+if ($app -notmatch 'if \(_armouryCaptureBarrierPersistenceFailed\)[\s\S]{0,1400}_exiting = false;[\s\S]{0,300}OpenMainWindow\(\);[\s\S]{0,200}return;') {
+    throw 'The persistence-failure Stay open path can permanently leak the app exit-intent latch.'
+}
 $tapRuntime = Get-Content -Raw -LiteralPath (Join-Path $root 'scripts/test-armoury-tap-runtime.ps1')
 if ($tapRuntime.IndexOf("LoadLibraryW('hid.dll')", [StringComparison]::Ordinal) -ge 0) {
     throw 'The runtime test still masks production hid.dll loading by preloading it.'
@@ -605,13 +664,17 @@ if ($app.IndexOf('ArmouryTapCaptureHelper.TryParseArguments', [StringComparison]
     throw 'The tap helper is not recognized before the single-instance mutex.'
 }
 
-# Capture service must try tap first with ETW fallback
+# Capture service must try the tap first; the app obtains explicit consent before starting ETW fallback.
 if ($service -notmatch 'ArmouryTapCaptureHelper\.HelperArgument' -or
     $service -notmatch 'ArmouryEtwCaptureHelper\.HelperArgument' -or
-    $service -notmatch 'catch \(ArmouryTapUnavailableException\)' -or
+    $app -notmatch 'catch \(ArmouryTapUnavailableException(?:\s+\w+)?\)' -or
+    $service -notmatch 'StartMetadataFallbackAsync' -or
+    $service -notmatch 'TapUnavailableReason' -or
+    $app -notmatch 'Native Armoury tap unavailable' -or
+    $app -notmatch 'Start ETW fallback' -or
     $service -notmatch 'TeardownUnconfirmedErrorCode' -or
     $service -notmatch 'ArmouryCaptureTeardownException') {
-    throw 'The capture service does not try the user-mode tap first while limiting ETW fallback to explicit pre-injection unavailability.'
+    throw 'The capture flow does not preserve tap-first startup and explicit ETW fallback consent.'
 }
 if ([regex]::Matches($service, 'TeardownUnconfirmedErrorCode').Count -lt 2 -or
     [regex]::Matches($service, 'throw new ArmouryCaptureTeardownException').Count -lt 2) {
