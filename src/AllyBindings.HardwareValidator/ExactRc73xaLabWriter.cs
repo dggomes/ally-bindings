@@ -31,7 +31,7 @@ internal static class ExactRc73xaLabWriter
             throw new ArgumentException("An approved exact-target operation is required.", nameof(approvedOperation));
 
         cancellationToken.ThrowIfCancellationRequested();
-        var immutablePacket = approvedOperation.CopyWirePacket();
+        var immutablePacket = PrepareFixedWirePacket(approvedOperation, target.FeatureReportLength);
         var operation = Task.Run(
             () => WritePinnedHandle(immutablePacket, target.InterfaceIdentityKey, target.FeatureReportLength),
             CancellationToken.None);
@@ -102,7 +102,7 @@ internal static class ExactRc73xaLabWriter
         }
 
         var expectedPacket = HardwareLabPolicy.BuildWirePacket(featureReportLength);
-        if (!fixedWirePacket.AsSpan().SequenceEqual(expectedPacket))
+        if (!CryptographicOperations.FixedTimeEquals(fixedWirePacket, expectedPacket))
             return new(0, 0, "The approved wire packet changed before SET_FEATURE.");
 
         var accepted = HidD_SetFeature(handle, fixedWirePacket, fixedWirePacket.Length);
@@ -244,6 +244,22 @@ internal static class ExactRc73xaLabWriter
         Marshal.SizeOf<HidpCaps>() == NativeHidLayout.HidpCapsSize &&
         Marshal.SizeOf<HiddAttributes>() == NativeHidLayout.HiddAttributesSize &&
         Marshal.SizeOf<SpDeviceInterfaceData>() == NativeHidLayout.DeviceInterfaceDataSize;
+
+    internal static byte[] PrepareFixedWirePacket(
+        HardwareLabPolicy.ApprovedOperation operation,
+        int pinnedFeatureReportLength)
+    {
+        if (operation.Target.FeatureReportLength != pinnedFeatureReportLength)
+            throw new InvalidOperationException("Pinned-handle report length diverged from the approved target.");
+
+        var fixedWirePacket = operation.CopyWirePacket();
+        var expectedPacket = HardwareLabPolicy.BuildWirePacket(pinnedFeatureReportLength);
+        if (fixedWirePacket.Length != pinnedFeatureReportLength ||
+            !CryptographicOperations.FixedTimeEquals(fixedWirePacket, expectedPacket))
+            throw new InvalidOperationException("Pinned-handle packet diverged from the approved fixed vector.");
+
+        return fixedWirePacket;
+    }
 
     private static LabTargetSnapshot Rejected(string message, string model = "unknown") =>
         new(false, model, string.Empty, 0, message);

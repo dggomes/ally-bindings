@@ -6,6 +6,7 @@
     <Nullable>enable</Nullable>
     <IsPackable>false</IsPackable>
     <IsTestProject>true</IsTestProject>
+    <DefineConstants>$(DefineConstants);HARDWARE_VALIDATOR_TESTS</DefineConstants>
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="coverlet.collector" Version="6.0.4">
@@ -24,5 +25,6 @@
     <Compile Include="..\..\src\AllyBindings.HardwareValidator\HardwareLabPolicy.cs" Link="HardwareLabPolicy.cs" />
     <Compile Include="..\..\src\AllyBindings.HardwareValidator\NativeHidLayout.cs" Link="NativeHidLayout.cs" />
     <Compile Include="..\..\src\AllyBindings.HardwareValidator\ExactRc73xaLabWriter.cs" Link="ExactRc73xaLabWriter.cs" />
+    <Compile Include="..\..\src\AllyBindings.HardwareValidator\LabAuditStore.cs" Link="LabAuditStore.cs" />
   </ItemGroup>
 </Project>

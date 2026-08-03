@@ -47,6 +47,7 @@ Get-ChildItem -LiteralPath $publishDir -Filter '*.pdb' -File | Remove-Item -Forc
 Copy-Item (Join-Path $repo 'lab/HARDWARE-VALIDATOR-RUNBOOK.md') (Join-Path $publishDir 'RUNBOOK.md')
 Copy-Item (Join-Path $repo 'lab/HARDWARE-VALIDATOR-NOTICES.txt') (Join-Path $publishDir 'VALIDATOR-NOTICES.txt')
 Copy-Item (Join-Path $repo 'lab/Verify-HardwareValidator-Package.ps1') (Join-Path $publishDir 'Verify-Package.ps1')
+Copy-Item (Join-Path $repo 'lab/Build-HardwareValidator-Evidence.ps1') (Join-Path $publishDir 'Build-Evidence.ps1')
 Copy-Item (Join-Path $repo 'LICENSE') $publishDir
 New-Item -ItemType Directory -Path (Join-Path $publishDir 'LICENSES') -Force | Out-Null
 $dotnetRoot = Split-Path -Parent $dotnet
@@ -55,6 +56,7 @@ Copy-Item (Join-Path $dotnetRoot 'ThirdPartyNotices.txt') (Join-Path $publishDir
 
 $hashedFiles = @(
     'AllyBindings.HardwareValidator.exe',
+    'Build-Evidence.ps1',
     'LICENSE',
     'LICENSES/dotnet-LICENSE.txt',
     'LICENSES/dotnet-ThirdPartyNotices.txt',
@@ -70,6 +72,8 @@ $checksumLines = foreach ($relative in $hashedFiles) {
 
 Compress-Archive -Path "$publishDir/*" -DestinationPath $zipPath -CompressionLevel Optimal
 & (Join-Path $repo 'scripts/test-hardware-validator-safety.ps1') -PackageRoot $publishDir -ZipPath $zipPath
-Assert-NativeSuccess 'hardware validator safety validation'
+Assert-NativeSuccess 'hardware validator safety assertions'
+& (Join-Path $repo 'scripts/test-hardware-validator-evidence.ps1')
+Assert-NativeSuccess 'hardware validator evidence sealing tests'
 & (Join-Path $publishDir 'Verify-Package.ps1')
 Write-Output "Created controlled lab hardware validator: $zipPath"

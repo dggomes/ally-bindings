@@ -25,19 +25,26 @@ Before extraction, compare the downloaded ZIP against both `OUTER-SHA256.txt` an
 Get-Content .\OUTER-SHA256.txt
 ```
 
-All three values—the computed hash, `OUTER-SHA256.txt`, and workflow summary—must match. After extraction, `SHA256SUMS.txt` must list exactly the other seven packaged files once each; the validator’s safety job verifies this automatically.
+All three values—the computed hash, `OUTER-SHA256.txt`, and workflow summary—must match. After extraction, `SHA256SUMS.txt` must list exactly the other eight packaged files once each; the validator’s safety job verifies this automatically.
 
 Verify GitHub's signed provenance and then run the packaged fail-closed allowlist/checksum verifier. If `gh` is unavailable, install the signed GitHub CLI first with `winget install --id GitHub.cli --exact`:
 
 ```powershell
-gh attestation verify .\AllyBindings-HardwareValidator-win-x64.zip --repo dggomes/ally-bindings
-# The verification output must identify .github/workflows/hardware-validator.yml on refs/heads/main.
+$ApprovedSha = '<exact approved 40-character main commit SHA>'
+gh attestation verify .\AllyBindings-HardwareValidator-win-x64.zip `
+  --repo dggomes/ally-bindings `
+  --signer-workflow dggomes/ally-bindings/.github/workflows/hardware-validator.yml `
+  --signer-digest $ApprovedSha `
+  --source-ref refs/heads/main `
+  --source-digest $ApprovedSha `
+  --deny-self-hosted-runners `
+  --format json | Tee-Object .\attestation-verification.txt
 Expand-Archive .\AllyBindings-HardwareValidator-win-x64.zip -DestinationPath .\validator
 Set-Location .\validator
 .\Verify-Package.ps1
 ```
 
-`Verify-Package.ps1` must print `CONTROLLED VALIDATOR PACKAGE VALID` and the executable SHA-256. `SHA256SUMS.txt` must contain exactly seven unique entries covering every file except itself.
+`Verify-Package.ps1` must print `CONTROLLED VALIDATOR PACKAGE VALID` and the executable SHA-256. `SHA256SUMS.txt` must contain exactly eight unique entries covering every file except itself.
 
 ## What it can do
 
@@ -148,6 +155,30 @@ Post-restoration controller-tester screenshot/video filename and SHA-256:
 Audit JSON filenames:
 Notes:
 ```
+
+## Seal the physical evidence
+
+Create a private directory containing exactly these nine files, using one supported image/video extension (`png`, `jpg`, `jpeg`, `mp4`, or `mov`) for each media item:
+
+```text
+RESULT.txt
+attestation-verification.txt
+pre-write-audit.json
+pending-set-feature-audit.json
+outcome-audit.json
+baseline-armoury.<extension>
+post-write-controller.<extension>
+post-restore-armoury.<extension>
+post-restore-controller.<extension>
+```
+
+Copy the three audit files from `%PROGRAMDATA%\AllyBindings\HardwareValidator`, giving them the canonical names above. Put the exact approved SHA in `RESULT.txt`, then run:
+
+```powershell
+.\Build-Evidence.ps1 -EvidenceDirectory .\physical-evidence -ApprovedSha $ApprovedSha -OutputDirectory .
+```
+
+The script validates the audit schema/session/vector, hashes every file into `EVIDENCE-MANIFEST.json`, creates a ZIP, and writes its outer SHA-256 beside it. Send **only that outer hash** into the development thread before anyone reviews or receives the private bundle. The prior message timestamp makes later alteration detectable without publishing private media.
 
 ## Stop rule
 

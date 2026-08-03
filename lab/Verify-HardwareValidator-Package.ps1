@@ -4,6 +4,7 @@ Set-StrictMode -Version Latest
 $root = [IO.Path]::GetFullPath($PSScriptRoot)
 $expectedPayload = @(
     'AllyBindings.HardwareValidator.exe',
+    'Build-Evidence.ps1',
     'LICENSE',
     'LICENSES/dotnet-LICENSE.txt',
     'LICENSES/dotnet-ThirdPartyNotices.txt',

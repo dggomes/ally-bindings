@@ -16,6 +16,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Thi
 - Keep both public application write gates locked; the lab artifact cannot enable normal profile writes.
 - Require exactly one compatible interface and revalidate the exact inspected HID interface identity set immediately before any lab write.
 - Reject redirected confirmation, changed/ambiguous device topology, unsupported models, and missing pre-write audit storage.
+- Pin the controlled workflow SDK and provenance policy to the approved main commit, and reject missing, extra, duplicated, tampered, or lookalike package contents.
+- Seal physical acceptance records, all three write-through audits, attestation output, and pre/write/restore media into one hashed evidence manifest whose outer hash can be timestamped independently without publishing private media.
 
 ### Changed
 

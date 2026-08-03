@@ -87,7 +87,7 @@ public sealed class HardwareLabPolicyTests
         {
             var target = new LabTargetSnapshot(true, "RC73XA", "identity", length, "approved");
             var operation = HardwareLabPolicy.CreateApprovedOperation(target);
-            var writerBytes = operation.CopyWirePacket();
+            var writerBytes = ExactRc73xaLabWriter.PrepareFixedWirePacket(operation, length);
 
             Assert.Equal(length, operation.WireLength);
             Assert.Equal(operation.WireHex, Convert.ToHexString(writerBytes));
@@ -96,6 +96,18 @@ public sealed class HardwareLabPolicyTests
 
             writerBytes[0] ^= 0xFF;
             Assert.Equal(HardwareLabPolicy.FeatureReportId, operation.CopyWirePacket()[0]);
+
+            for (var position = 0; position < length; position++)
+            {
+                var mutated = HardwareLabPolicy.BuildWirePacket(length);
+                mutated[position] ^= 0x01;
+                var tamperedOperation = new HardwareLabPolicy.ApprovedOperation(target, mutated);
+                Assert.Throws<InvalidOperationException>(() =>
+                    ExactRc73xaLabWriter.PrepareFixedWirePacket(tamperedOperation, length));
+            }
+
+            Assert.Throws<InvalidOperationException>(() =>
+                ExactRc73xaLabWriter.PrepareFixedWirePacket(operation, length == 64 ? 63 : length + 1));
         }
     }
 

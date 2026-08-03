@@ -9,6 +9,7 @@ $ErrorActionPreference = 'Stop'
 $repo = Split-Path -Parent $PSScriptRoot
 $policy = Get-Content -Raw -LiteralPath (Join-Path $repo 'src/AllyBindings.HardwareValidator/HardwareLabPolicy.cs')
 $program = Get-Content -Raw -LiteralPath (Join-Path $repo 'src/AllyBindings.HardwareValidator/Program.cs')
+$auditStore = Get-Content -Raw -LiteralPath (Join-Path $repo 'src/AllyBindings.HardwareValidator/LabAuditStore.cs')
 $writer = Get-Content -Raw -LiteralPath (Join-Path $repo 'src/AllyBindings.HardwareValidator/ExactRc73xaLabWriter.cs')
 $project = Get-Content -Raw -LiteralPath (Join-Path $repo 'src/AllyBindings.HardwareValidator/AllyBindings.HardwareValidator.csproj')
 $manifest = Get-Content -Raw -LiteralPath (Join-Path $repo 'src/AllyBindings.HardwareValidator/app.manifest')
@@ -35,6 +36,9 @@ foreach ($required in @(
     'Console.IsInputRedirected',
     'Console.ReadLine()',
     'ExactRc73xaLabWriter.WriteAsync',
+    'approvedOperation.WireHex',
+    'approvedOperation.WireSha256',
+    'approvedOperation.WireLength',
     'ClaimOneShotAsync',
     'FileMode.CreateNew',
     'CommonApplicationData',
@@ -43,7 +47,7 @@ foreach ($required in @(
     'RECOVERY REQUIRED',
     'ArmouryRecoveryConfirmed: false'
 )) {
-    if ($program.IndexOf($required, [StringComparison]::Ordinal) -lt 0) {
+    if (($program + $auditStore).IndexOf($required, [StringComparison]::Ordinal) -lt 0) {
         throw "Validator safety flow is missing: $required"
     }
 }
@@ -90,7 +94,7 @@ foreach ($forbidden in @(
     'GetFeature(',
     'HidStream'
 )) {
-    if (($program + $writer + $policy).IndexOf($forbidden, [StringComparison]::OrdinalIgnoreCase) -ge 0) {
+    if (($program + $auditStore + $writer + $policy).IndexOf($forbidden, [StringComparison]::OrdinalIgnoreCase) -ge 0) {
         throw "Standalone validator source contains forbidden general/read/reset capability: $forbidden"
     }
 }
@@ -103,6 +107,7 @@ if ($publicPackage.IndexOf('HardwareValidator', [StringComparison]::OrdinalIgnor
 
 $expectedAll = @(
     'AllyBindings.HardwareValidator.exe',
+    'Build-Evidence.ps1',
     'LICENSE',
     'LICENSES/dotnet-LICENSE.txt',
     'LICENSES/dotnet-ThirdPartyNotices.txt',
