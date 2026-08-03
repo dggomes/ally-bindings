@@ -176,8 +176,19 @@ if ($service -notmatch 'Stopwatch\.GetTimestamp\(\)' -or
     $extractor -notmatch 'PerformanceCounterTimestamp') {
     throw 'Action markers and ETW reports are not correlated on the shared QPC clock.'
 }
-if (($service | Select-String -Pattern 'schemaVersion\s*=\s*7' -AllMatches).Matches.Count -ne 2) {
-    throw 'Capture report and manifest are not both stamped with focused UCX URB schema version 7.'
+if ([regex]::Matches($service, 'schemaVersion\s*=\s*9').Count -ne 2) {
+    throw 'Capture report and manifest are not both stamped with tap-diagnostic schema version 9.'
+}
+if ($service -notmatch 'ally-bindings-\{captureKind\}' -or
+    $service -notmatch 'armoury-tap-evidence\.json' -or
+    $service -notmatch 'native Armoury HID write tap') {
+    throw 'Native tap bundles, evidence files or README text can still be mislabeled as ETW.'
+}
+if ($service -match '\betw\s*=\s*new' -or
+    $service -notmatch 'kind = "armouryHidWriteTap"' -or
+    $service -notmatch 'kind = "windowsUsbEtw"' -or
+    $service -notmatch 'schemaDiscovery = session\.UsesArmouryTap') {
+    throw 'Generated evidence can still label native tap output as ETW/schema discovery.'
 }
 if ($extractor -notmatch '0x5A,\s*0xD1,\s*0x02,\s*0x08,\s*0x2C' -or
     $extractor -notmatch 'AsusRearButtonProtocol\.ReportLength' -or
@@ -271,7 +282,7 @@ if ($service -notmatch '\.tmp-' -or
 }
 if ($service -notmatch 'captureScopeVerified:\s*false' -or
     $service -notmatch 'hardwareUnlockEvidence\s*=\s*false' -or
-    $service -notmatch 'Discovery metadata is never hardware-unlock evidence' -or
+    $service -notmatch 'Diagnostic metadata is never hardware-unlock evidence' -or
     $app -match 'staleRecoveryMarker\s*&&\s*result\.IsConclusive') {
     throw 'Unvalidated ETW candidates can still become conclusive unlock/recovery evidence.'
 }
@@ -346,7 +357,7 @@ if ($service -notmatch 'BoundedTextLineReader' -or $helper -notmatch 'BoundedTex
     $boundedReader -notmatch 'Array\.IndexOf' -or $boundedReader -notmatch '_offset') {
     throw 'The ETW IPC protocol does not bound both command and response messages.'
 }
-foreach ($forbidden in @('TraceEventSession(sessionName,', 'data.EventData()', 'USBPcapCMD', 'logman.exe', 'tracerpt.exe', 'File.WriteAllBytes', 'SetFeature', 'WriteFeatureReport', 'IControllerBackend')) {
+foreach ($forbidden in @('TraceEventSession(sessionName,', 'data.EventData()', 'USBPcapCMD', 'logman.exe', 'tracerpt.exe', 'File.WriteAllBytes', 'stream.SetFeature(', 'WriteFeatureReport', 'IControllerBackend')) {
     foreach ($source in @($service, $helper, $extractor)) {
         if ($source.IndexOf($forbidden, [StringComparison]::OrdinalIgnoreCase) -ge 0) {
             throw "The integrated capture path contains forbidden raw-capture/write token: $forbidden"
@@ -426,7 +437,7 @@ foreach ($required in @(
     'CandidateWorstCaseStartupDuration * MaximumCandidateProcesses + TimeSpan.FromSeconds(60)',
     'WireRecordSize = 124',
     'WireMagic = 0x31544241',
-    'WireVersion = 1',
+    'WireVersion = 2',
     'ArmouryCrateSE.Service',
     'ArmouryCrate.Service',
     'ArmouryCrateSE',
@@ -568,10 +579,25 @@ foreach ($required in @('ProcessName', 'Phase', 'Ordinal')) {
 # Native DLL must hook the right APIs, preserve return/LastError, and drain callbacks
 foreach ($required in @(
     'HidD_SetFeature',
+    'HidD_SetOutputReport',
     'WriteFile',
+    'DeviceIoControl',
+    'kIoctlHidSetFeature = 0x000B0191',
+    'kIoctlHidSetOutputReport = 0x000B0195',
+    'g_hidWrapperDepth',
+    'g_internalIoDepth',
+    'HandleClassification',
+    'CompareObjectHandles',
+    'IsKnownTargetHandle',
+    'RememberTargetHandle',
+    'ReleaseValidatedHandles',
+    'g_unvalidatedWriteHandle',
+    'AttributeReadFailure',
+    'BuildSummaryRecord',
     'MH_Initialize',
     'MH_CreateHook',
-    'MH_EnableHook',
+    'MH_QueueEnableHook',
+    'MH_ApplyQueued',
     'MH_DisableHook',
     'MH_Uninitialize',
     'DisableHooksAndDrain',
@@ -597,6 +623,21 @@ foreach ($required in @(
     if ($tapNative.IndexOf($required, [StringComparison]::Ordinal) -lt 0) {
         throw "The native tap DLL is missing safety requirement: $required"
     }
+}
+$lengthFilter = $tapNative.IndexOf('if (length < kMinReport)', [StringComparison]::Ordinal)
+$safePrefixFilter = $tapNative.IndexOf('if (copy[0] != 0x5A)', [StringComparison]::Ordinal)
+$handleValidation = $tapNative.IndexOf('switch (ClassifyHandle(handle))', [StringComparison]::Ordinal)
+if ($lengthFilter -lt 0 -or $safePrefixFilter -lt $lengthFilter -or $handleValidation -lt $safePrefixFilter) {
+    throw 'The native tap can probe arbitrary WriteFile handles before cheap length and safe-prefix filtering.'
+}
+if ($tapNative -notmatch 'if \(api == Api::KernelBaseWriteFile\)[\s\S]{0,250}!IsKnownTargetHandle\(handle\)[\s\S]{0,350}else \{[\s\S]{0,100}switch \(ClassifyHandle\(handle\)\)' -or
+    $tapNative -notmatch 'if \(!ReleaseValidatedHandles\(\)\) return false;') {
+    throw 'WriteFile retention is not restricted to object-identical HID-validated handles with confirmed owned-handle release.'
+}
+if ($tapNative -match 'const auto summary = BuildSummaryRecord\(\);[\s\S]{0,300}FlushFileBuffers\(g_pipe\)' -or
+    $tapNative -match 'Api::Overflow' -or $tapHelper -match 'OverflowRecordApi' -or
+    $tapHelper -notmatch '_receivedRecordCount') {
+    throw 'Wire-v2 terminal-summary/drop reconciliation is not authoritative and nonblocking.'
 }
 
 foreach ($required in @(
@@ -679,6 +720,27 @@ if ($tapRuntime.IndexOf("LoadLibraryW('hid.dll')", [StringComparison]::Ordinal) 
 }
 if ($tapRuntime.IndexOf('tap PE dependency did not cause Windows to map hid.dll', [StringComparison]::Ordinal) -lt 0) {
     throw 'The runtime test does not prove loader-owned hid.dll dependency mapping.'
+}
+foreach ($required in @(
+    '$stopConfirmed',
+    'if ($stopConfirmed)',
+    'DeviceIoControlSetFeatureCallCount',
+    'DecodeDiagnosticSummaryBytes',
+    'UnvalidatedWriteHandleCount',
+    'bounded 0x5A regular-file WriteFile probe')) {
+    if ($tapRuntime.IndexOf($required, [StringComparison]::Ordinal) -lt 0) {
+        throw "The runtime test is missing fail-closed teardown or native-to-managed summary coverage: $required"
+    }
+}
+if ($app -notmatch '!session\.NativeTeardownConfirmed' -or
+    $app -match 'CompleteAsync\(session, cancellationToken\);\s*cancellationToken\.ThrowIfCancellationRequested' -or
+    $service -notmatch 'EvidenceInvalidCleanupConfirmedErrorCode' -or
+    $service -notmatch 'expectedExitCode:\s*1,[\s\S]{0,100}cancellationToken:\s*CancellationToken\.None' -or
+    $service -notmatch 'expectedExitCode:\s*0,[\s\S]{0,100}cancellationToken:\s*CancellationToken\.None' -or
+    $service -notmatch 'helper\.ExitCode != expectedExitCode' -or
+    $service -notmatch 'session\.MarkNativeTeardownConfirmed\(\)' -or
+    $service -notmatch 'session\.MarkCompletionCommitted\(\)') {
+    throw 'Terminal outcomes, cleanup-confirmed protocol failures, or late cancellation can still arm the reboot barrier or delete committed evidence.'
 }
 foreach ($required in @(
     'id: publish',

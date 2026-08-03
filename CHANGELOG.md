@@ -6,6 +6,26 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Thi
 
 ## [Unreleased]
 
+## [v0.3.0-preview.20] - 2026-08-03
+
+### Added
+
+- Expand the capture-only native tap to observe `HidD_SetOutputReport` and only the two HID SET `DeviceIoControl` codes alongside `HidD_SetFeature` and `WriteFile`, with nested-wrapper suppression so one Armoury operation is not duplicated.
+- Export one authenticated, bounded terminal summary per verified Armoury process after checked hook teardown, containing aggregate covered-API counts, cheap candidate-filter counts, categorical handle-validation outcomes for readable bounded `0x5A` candidates and target-handle funnel counts—never rejected payload bytes, hashes, exact nonmatching lengths, handles, paths, PIDs or timestamps.
+
+### Fixed
+
+- Name native-tap evidence `ally-bindings-armoury-tap-…zip` while retaining `ally-bindings-armoury-etw-…zip` for explicit ETW fallback.
+- Replace ETW-specific completion wording with source-neutral capture evidence status and explain zero-record native runs using the deepest safe aggregate filter stage reached.
+- Make the authenticated terminal summary authoritative for native queue drops, reconcile it against every transported matching record, and keep managed evidence-parser faults distinct from positively confirmed native unload state.
+- Make the Windows runtime test consume terminal evidence concurrently, exercise the direct HID IOCTL hook through the production wire decoder, and refuse DLL unload unless teardown is positively confirmed.
+- Gate direct `WriteFile` retention on object identity with a bounded duplicate-handle allowlist populated only by HID-specific calls; unvalidated regular-file writes are counted without any HID attribute query and owned duplicate references must close before unload.
+- Preserve a completed bundle across late cancellation, distinguish cleanup-confirmed evidence failures from unconfirmed native teardown, and mark saturated diagnostics incomplete even when reports were retained.
+
+### Security
+
+- Keep byte retention target-scoped to exact `VID_0B05`/`PID_1B4C` handles and all expanded metadata counter-bounded, categorical, diagnostic-only and permanently incapable of approving custom or recovery writes.
+
 ## [v0.3.0-preview.19] - 2026-08-03
 
 ### Fixed
@@ -399,3 +419,4 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Thi
 [v0.3.0-preview.17]: https://github.com/dggomes/ally-bindings/releases/tag/v0.3.0-preview.17
 [v0.3.0-preview.18]: https://github.com/dggomes/ally-bindings/releases/tag/v0.3.0-preview.18
 [v0.3.0-preview.19]: https://github.com/dggomes/ally-bindings/releases/tag/v0.3.0-preview.19
+[v0.3.0-preview.20]: https://github.com/dggomes/ally-bindings/releases/tag/v0.3.0-preview.20

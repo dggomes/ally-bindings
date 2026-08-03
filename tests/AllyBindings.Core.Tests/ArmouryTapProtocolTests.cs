@@ -1,3 +1,5 @@
+using System.Buffers.Binary;
+
 namespace AllyBindings.Core.Tests;
 
 public sealed class ArmouryTapProtocolTests
@@ -83,9 +85,112 @@ public sealed class ArmouryTapProtocolTests
     public void Wire_constants_are_stable()
     {
         Assert.Equal(0x31544241u, ArmouryTapProtocol.WireMagic);
-        Assert.Equal(1, ArmouryTapProtocol.WireVersion);
+        Assert.Equal(2, ArmouryTapProtocol.WireVersion);
         Assert.Equal(124, ArmouryTapProtocol.WireRecordSize);
         Assert.Equal(256, ArmouryTapProtocol.MaximumRecords);
+        Assert.Equal(0xFE, ArmouryTapProtocol.SummaryRecordApi);
+    }
+
+    [Fact]
+    public void Expanded_api_ids_are_distinct_and_bounded()
+    {
+        Assert.Equal(new byte[] { 1, 2, 3, 4, 5 },
+            Enum.GetValues<ArmouryTapApi>().Select(value => (byte)value));
+        Assert.All(Enum.GetValues<ArmouryTapApi>(), api =>
+            Assert.True((byte)api < ArmouryTapProtocol.SummaryRecordApi));
+    }
+
+    [Fact]
+    public void Diagnostics_schema_contains_aggregate_counts_but_no_raw_identity_or_payload_fields()
+    {
+        var properties = typeof(ArmouryTapPreFilterDiagnostics).GetProperties()
+            .Select(property => property.Name).ToArray();
+        Assert.Contains("ProcessName", properties);
+        Assert.Contains("DeviceIoControlSetOutputReportCallCount", properties);
+        Assert.Contains("AttributeReadFailureCount", properties);
+        Assert.Contains("UnvalidatedWriteHandleCount", properties);
+        Assert.Contains("CounterSaturated", properties);
+        Assert.DoesNotContain(properties, name =>
+            name.Contains("Pid", StringComparison.OrdinalIgnoreCase) ||
+            name.Contains("Path", StringComparison.OrdinalIgnoreCase) ||
+            name.Equals("Handle", StringComparison.OrdinalIgnoreCase) ||
+            name.Equals("RawHandle", StringComparison.OrdinalIgnoreCase) ||
+            name.Contains("Timestamp", StringComparison.OrdinalIgnoreCase) ||
+            name.Equals("Payload", StringComparison.OrdinalIgnoreCase) ||
+            name.Equals("Report", StringComparison.OrdinalIgnoreCase) ||
+            name.Equals("ReportBytes", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public void Diagnostic_summary_decodes_a_monotonic_target_only_funnel()
+    {
+        var raw = BuildSummary(0, 0, 0, 0, 0, 0, 0, 3, 0, 0, 2, 1, 1, 0);
+        var result = ArmouryTapProtocol.DecodeDiagnosticSummary(
+            "ArmouryCrateSE.Service", 3, 0, 0, raw, 1);
+
+        Assert.Equal(3u, result.HidDSetFeatureCallCount);
+        Assert.Equal(2u, result.ReportId5ACount);
+        Assert.Equal(1u, result.Prefix5AD1Count);
+        Assert.Equal(1u, result.RetainedRecordCount);
+        Assert.False(result.CounterSaturated);
+    }
+
+    [Fact]
+    public void Diagnostic_summary_rejects_nonmonotonic_or_nonzero_reserved_data()
+    {
+        var nonmonotonic = BuildSummary(0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 1, 0, 1, 0);
+        Assert.Throws<InvalidDataException>(() =>
+            ArmouryTapProtocol.DecodeDiagnosticSummary("ArmouryCrateSE.Service", 1, 0, 0, nonmonotonic, 1));
+
+        var reserved = BuildSummary(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
+        reserved[63] = 1;
+        Assert.Throws<InvalidDataException>(() =>
+            ArmouryTapProtocol.DecodeDiagnosticSummary("ArmouryCrateSE.Service", 0, 0, 0, reserved, 0));
+
+        var saturated = BuildSummary(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
+        saturated[1] = 1;
+        var saturatedResult = ArmouryTapProtocol.DecodeDiagnosticSummary(
+            "ArmouryCrateSE.Service", ArmouryTapProtocol.MaximumDiagnosticCounter, 0, 0, saturated, 0);
+        Assert.True(saturatedResult.CounterSaturated);
+    }
+
+    [Fact]
+    public void Diagnostic_summary_distinguishes_unvalidated_WriteFile_handles_without_attribute_probing()
+    {
+        var raw = BuildSummary(0, 0, 0, 0, 0, 1, 0, 1, 0, 0, 1, 0, 0, 0);
+        var result = ArmouryTapProtocol.DecodeDiagnosticSummary(
+            "ArmouryCrateSE.Service", 1L << 32, 0, 0, raw, 0);
+
+        Assert.Equal((uint)1, result.WriteFileCallCount);
+        Assert.Equal((uint)1, result.UnvalidatedWriteHandleCount);
+        Assert.Equal((uint)0, result.AttributeReadFailureCount);
+        Assert.Equal((uint)0, result.RetainedRecordCount);
+    }
+
+    [Fact]
+    public void Diagnostic_summary_reconciles_transported_and_native_dropped_records()
+    {
+        var nativeDrop = BuildSummary(0, 0, 0, 0, 0, 0, 0, 257, 0, 0, 257, 257, 257, 1);
+        var nativeDropResult = ArmouryTapProtocol.DecodeDiagnosticSummary(
+            "ArmouryCrateSE.Service", 257L << 32, 0, 0, nativeDrop, 256);
+        Assert.Equal((uint)257, nativeDropResult.RetainedRecordCount);
+        Assert.Equal((uint)1, nativeDropResult.NativeDroppedRecordCount);
+
+        var managedDrop = BuildSummary(0, 0, 0, 0, 0, 0, 0, 257, 0, 0, 257, 257, 257, 0);
+        var managedDropResult = ArmouryTapProtocol.DecodeDiagnosticSummary(
+            "ArmouryCrateSE.Service", 257L << 32, 0, 0, managedDrop, 257);
+        Assert.Equal((uint)257, managedDropResult.RetainedRecordCount);
+        Assert.Equal((uint)0, managedDropResult.NativeDroppedRecordCount);
+    }
+
+    private static byte[] BuildSummary(params uint[] counters)
+    {
+        Assert.Equal(14, counters.Length);
+        var raw = new byte[64];
+        raw[0] = ArmouryTapProtocol.SummarySchemaVersion;
+        for (var index = 0; index < counters.Length; index++)
+            BinaryPrimitives.WriteUInt32LittleEndian(raw.AsSpan(4 + index * 4), counters[index]);
+        return raw;
     }
 
     [Fact]

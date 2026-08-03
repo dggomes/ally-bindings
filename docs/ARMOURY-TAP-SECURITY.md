@@ -47,7 +47,9 @@ PID `0x1B6E` is not an Ally controller identifier and must not pass the rear-but
 - The tap has a static Windows `hid.dll` import for target-handle validation, so the Windows PE loader maps the system HID module before tap entry; CI proves it was absent before tap load and released after tap unload.
 - The hook DLL may hook only:
   - `hid.dll!HidD_SetFeature`
-  - the effective `WriteFile` implementation used by the target process.
+  - `hid.dll!HidD_SetOutputReport`
+  - the effective `WriteFile` implementation used by the target process;
+  - the effective `DeviceIoControl` implementation, inspecting input only for `IOCTL_HID_SET_FEATURE` and `IOCTL_HID_SET_OUTPUT_REPORT`.
 - Hook installation failure is reported; it never falls back to broader API hooks or arbitrary process memory scanning.
 - Original API arguments are never modified.
 - The original API is called exactly once.
@@ -66,12 +68,13 @@ A record may leave the target process only when all conditions pass:
 - Second byte is rear-mapping command `0xD1`.
 - Captured bytes are copied before the original call returns.
 
-No device path, arbitrary process memory, keyboard input, XInput history or non-target HID payload may be retained. `WriteFile` calls used by the tap's own named-pipe transport fail the exact HID-handle gate and are not queued.
+No device path, arbitrary process memory, keyboard input, XInput history or non-target HID payload may be retained. Cheap length and safe-prefix checks run first. HID-specific APIs may then validate a candidate handle and store only a bounded duplicate handle reference; direct `WriteFile` capture accepts only an object-identical handle previously validated by a HID-specific call. Unvalidated `WriteFile` handles are counted categorically and never passed to `HidD_GetAttributes`, including readable 50–64-byte `0x5A` regular-file writes. Stable duplicate references prevent stale numeric-handle reuse and are positively closed during teardown. After hooks are disabled and callbacks drain, each tapped process emits one authenticated terminal summary of bounded covered-API counts, categorical handle-validation outcomes and target filter-stage counts. It contains no rejected bytes or hashes, exact nonmatching lengths, handles, paths, PIDs or timestamps. The tap's own named-pipe transport is explicitly suppressed from capture accounting.
 
 ## Bounds
 
 - Maximum candidate processes: 12.
 - Maximum reports per process: 256.
+- Maximum simultaneously retained target-handle identity references per process: 16.
 - Maximum report bytes: 64.
 - Maximum capture duration: 10 minutes.
 - Maximum control-message length: 4 KiB.

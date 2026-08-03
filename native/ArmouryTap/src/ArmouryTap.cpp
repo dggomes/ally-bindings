@@ -11,16 +11,25 @@
 
 namespace {
 constexpr uint32_t kMagic = 0x31544241;
-constexpr uint16_t kVersion = 1;
+constexpr uint16_t kVersion = 2;
 constexpr USHORT kVendor = 0x0B05;
 constexpr USHORT kProduct = 0x1B4C;
 constexpr size_t kMinReport = 50;
 constexpr size_t kMaxReport = 64;
 constexpr uint8_t kRearMappingCommand = 0xD1;
 constexpr size_t kQueueCapacity = 256;
+constexpr size_t kMaximumValidatedHandles = 16;
+constexpr size_t kMaximumInspectedLength = 4096;
+constexpr uint32_t kCounterMaximum = 1'000'000;
+constexpr DWORD kIoctlHidSetFeature = 0x000B0191;
+constexpr DWORD kIoctlHidSetOutputReport = 0x000B0195;
 constexpr wchar_t kConfigSuffix[] = L".config";
 
-enum class Api : uint8_t { HidDSetFeature = 1, KernelBaseWriteFile = 2, Overflow = 0xFF };
+enum class Api : uint8_t {
+    HidDSetFeature = 1, KernelBaseWriteFile = 2, HidDSetOutputReport = 3,
+    DeviceIoControlSetFeature = 4, DeviceIoControlSetOutputReport = 5,
+    Summary = 0xFE
+};
 #pragma pack(push, 1)
 struct WireRecord {
     uint32_t magic;
@@ -38,9 +47,15 @@ struct WireRecord {
 static_assert(sizeof(WireRecord) == 124);
 
 using HidDSetFeatureFn = BOOLEAN(__stdcall*)(HANDLE, PVOID, ULONG);
+using HidDSetOutputReportFn = BOOLEAN(__stdcall*)(HANDLE, PVOID, ULONG);
 using WriteFileFn = BOOL(WINAPI*)(HANDLE, LPCVOID, DWORD, LPDWORD, LPOVERLAPPED);
+using DeviceIoControlFn = BOOL(WINAPI*)(HANDLE, DWORD, LPVOID, DWORD, LPVOID, DWORD, LPDWORD, LPOVERLAPPED);
+using CompareObjectHandlesFn = BOOL(WINAPI*)(HANDLE, HANDLE);
 HidDSetFeatureFn g_originalSetFeature = nullptr;
+HidDSetOutputReportFn g_originalSetOutputReport = nullptr;
 WriteFileFn g_originalWriteFile = nullptr;
+DeviceIoControlFn g_originalDeviceIoControl = nullptr;
+CompareObjectHandlesFn g_compareObjectHandles = nullptr;
 HANDLE g_stopEvent = nullptr;
 HANDLE g_queueEvent = nullptr;
 HANDLE g_worker = nullptr;
@@ -60,6 +75,18 @@ std::wstring g_pipeName;
 std::atomic<bool> g_stopping{false};
 std::atomic<uint32_t> g_activeCallbacks{0};
 std::atomic<uint32_t> g_droppedRecords{0};
+std::array<std::atomic<uint32_t>, 5> g_apiCalls{};
+std::atomic<uint32_t> g_invalidHandle{0}, g_attributeReadFailure{0};
+std::atomic<uint32_t> g_nonAsusDevice{0}, g_otherAsusProduct{0};
+std::atomic<uint32_t> g_unvalidatedWriteHandle{0};
+std::atomic<uint32_t> g_underLength{0}, g_boundedLength{0}, g_overLength{0};
+std::atomic<uint32_t> g_unreadableBuffer{0}, g_reportId5A{0}, g_prefix5AD1{0}, g_retained{0};
+std::atomic<bool> g_counterSaturated{false};
+thread_local uint32_t g_hidWrapperDepth = 0;
+thread_local uint32_t g_internalIoDepth = 0;
+SRWLOCK g_validatedHandleLock = SRWLOCK_INIT;
+std::array<HANDLE, kMaximumValidatedHandles> g_validatedHandles{};
+size_t g_validatedHandleCount = 0;
 
 class CallbackLease {
 public:
@@ -67,22 +94,100 @@ public:
     ~CallbackLease() { g_activeCallbacks.fetch_sub(1, std::memory_order_acq_rel); }
 };
 
-bool IsTargetHandle(HANDLE handle) {
+void SaturatingIncrement(std::atomic<uint32_t>& counter) {
+    uint32_t current = counter.load(std::memory_order_relaxed);
+    while (current < kCounterMaximum &&
+        !counter.compare_exchange_weak(current, current + 1, std::memory_order_relaxed)) {}
+    if (current >= kCounterMaximum) g_counterSaturated.store(true, std::memory_order_relaxed);
+}
+
+enum class HandleClassification { Target, Invalid, AttributeReadFailure, NonAsusDevice, OtherAsusProduct };
+
+HandleClassification ClassifyHandle(HANDLE handle) {
+    if (handle == nullptr || handle == INVALID_HANDLE_VALUE) return HandleClassification::Invalid;
     HIDD_ATTRIBUTES attributes{};
     attributes.Size = sizeof(attributes);
-    return handle != nullptr && handle != INVALID_HANDLE_VALUE &&
-        HidD_GetAttributes(handle, &attributes) &&
-        attributes.VendorID == kVendor && attributes.ProductID == kProduct;
+    if (!HidD_GetAttributes(handle, &attributes)) return HandleClassification::AttributeReadFailure;
+    if (attributes.VendorID != kVendor) return HandleClassification::NonAsusDevice;
+    if (attributes.ProductID != kProduct) return HandleClassification::OtherAsusProduct;
+    return HandleClassification::Target;
+}
+
+bool IsKnownTargetHandle(HANDLE candidate) {
+    if (!g_compareObjectHandles || candidate == nullptr || candidate == INVALID_HANDLE_VALUE) return false;
+    AcquireSRWLockShared(&g_validatedHandleLock);
+    bool found = false;
+    for (size_t index = 0; index < g_validatedHandleCount && !found; ++index)
+        found = g_compareObjectHandles(candidate, g_validatedHandles[index]) != FALSE;
+    ReleaseSRWLockShared(&g_validatedHandleLock);
+    return found;
+}
+
+void RememberTargetHandle(HANDLE candidate) {
+    if (!g_compareObjectHandles || candidate == nullptr || candidate == INVALID_HANDLE_VALUE) return;
+    AcquireSRWLockExclusive(&g_validatedHandleLock);
+    for (size_t index = 0; index < g_validatedHandleCount; ++index) {
+        if (g_compareObjectHandles(candidate, g_validatedHandles[index]) != FALSE) {
+            ReleaseSRWLockExclusive(&g_validatedHandleLock);
+            return;
+        }
+    }
+    HANDLE duplicate = nullptr;
+    if (g_validatedHandleCount < g_validatedHandles.size() &&
+        DuplicateHandle(GetCurrentProcess(), candidate, GetCurrentProcess(), &duplicate,
+            0, FALSE, DUPLICATE_SAME_ACCESS)) {
+        g_validatedHandles[g_validatedHandleCount++] = duplicate;
+    }
+    ReleaseSRWLockExclusive(&g_validatedHandleLock);
+}
+
+bool ReleaseValidatedHandles() {
+    AcquireSRWLockExclusive(&g_validatedHandleLock);
+    size_t failures = 0;
+    for (size_t index = 0; index < g_validatedHandleCount; ++index) {
+        const HANDLE handle = g_validatedHandles[index];
+        if (!CloseHandle(handle)) g_validatedHandles[failures++] = handle;
+    }
+    for (size_t index = failures; index < g_validatedHandleCount; ++index)
+        g_validatedHandles[index] = nullptr;
+    g_validatedHandleCount = failures;
+    ReleaseSRWLockExclusive(&g_validatedHandleLock);
+    return failures == 0;
 }
 
 bool PrepareRecord(Api api, HANDLE handle, const void* buffer, size_t length, WireRecord& record) {
-    if (g_stopping.load(std::memory_order_relaxed) || buffer == nullptr ||
-        length < kMinReport || length > kMaxReport) return false;
+    if (g_stopping.load(std::memory_order_relaxed)) return false;
+    const auto apiIndex = static_cast<size_t>(api) - 1;
+    if (apiIndex >= g_apiCalls.size()) return false;
+    SaturatingIncrement(g_apiCalls[apiIndex]);
+    if (length < kMinReport) { SaturatingIncrement(g_underLength); return false; }
+    if (length > kMaxReport || length > kMaximumInspectedLength) { SaturatingIncrement(g_overLength); return false; }
+    SaturatingIncrement(g_boundedLength);
+    if (buffer == nullptr) { SaturatingIncrement(g_unreadableBuffer); return false; }
     std::array<uint8_t, kMaxReport> copy{};
     SIZE_T bytesRead = 0;
-    if (!ReadProcessMemory(GetCurrentProcess(), buffer, copy.data(), length, &bytesRead) ||
-        bytesRead != length || copy[0] != 0x5A || copy[1] != kRearMappingCommand ||
-        !IsTargetHandle(handle)) return false;
+    if (!ReadProcessMemory(GetCurrentProcess(), buffer, copy.data(), length, &bytesRead) || bytesRead != length) {
+        SaturatingIncrement(g_unreadableBuffer);
+        return false;
+    }
+    if (copy[0] != 0x5A) return false;
+    SaturatingIncrement(g_reportId5A);
+    if (api == Api::KernelBaseWriteFile) {
+        if (!IsKnownTargetHandle(handle)) {
+            SaturatingIncrement(g_unvalidatedWriteHandle);
+            return false;
+        }
+    } else {
+        switch (ClassifyHandle(handle)) {
+            case HandleClassification::Invalid: SaturatingIncrement(g_invalidHandle); return false;
+            case HandleClassification::AttributeReadFailure: SaturatingIncrement(g_attributeReadFailure); return false;
+            case HandleClassification::NonAsusDevice: SaturatingIncrement(g_nonAsusDevice); return false;
+            case HandleClassification::OtherAsusProduct: SaturatingIncrement(g_otherAsusProduct); return false;
+            case HandleClassification::Target: RememberTargetHandle(handle); break;
+        }
+    }
+    if (copy[1] != kRearMappingCommand) return false;
+    SaturatingIncrement(g_prefix5AD1);
 
     record = {};
     record.magic = kMagic;
@@ -95,6 +200,7 @@ bool PrepareRecord(Api api, HANDLE handle, const void* buffer, size_t length, Wi
     record.qpc = qpc.QuadPart;
     memcpy(record.token, g_token.data(), g_token.size());
     memcpy(record.report, copy.data(), length);
+    SaturatingIncrement(g_retained);
     return true;
 }
 
@@ -106,7 +212,7 @@ void Enqueue(const WireRecord& record) {
         ++g_count;
         SetEvent(g_queueEvent);
     } else {
-        g_droppedRecords.fetch_add(1, std::memory_order_relaxed);
+        SaturatingIncrement(g_droppedRecords);
     }
     LeaveCriticalSection(&g_queueLock);
 }
@@ -117,7 +223,9 @@ BOOLEAN __stdcall HookSetFeature(HANDLE handle, PVOID buffer, ULONG length) {
     const DWORD incomingError = GetLastError();
     const bool retain = PrepareRecord(Api::HidDSetFeature, handle, buffer, length, record);
     SetLastError(incomingError);
+    ++g_hidWrapperDepth;
     const BOOLEAN result = g_originalSetFeature(handle, buffer, length);
+    --g_hidWrapperDepth;
     const DWORD error = GetLastError();
     if (retain) {
         record.apiResult = result != FALSE ? 1u : 0u;
@@ -127,8 +235,30 @@ BOOLEAN __stdcall HookSetFeature(HANDLE handle, PVOID buffer, ULONG length) {
     SetLastError(error);
     return result;
 }
+
+BOOLEAN __stdcall HookSetOutputReport(HANDLE handle, PVOID buffer, ULONG length) {
+    CallbackLease lease;
+    WireRecord record{};
+    const DWORD incomingError = GetLastError();
+    const bool retain = PrepareRecord(Api::HidDSetOutputReport, handle, buffer, length, record);
+    SetLastError(incomingError);
+    ++g_hidWrapperDepth;
+    const BOOLEAN result = g_originalSetOutputReport(handle, buffer, length);
+    --g_hidWrapperDepth;
+    const DWORD error = GetLastError();
+    if (retain) {
+        record.apiResult = result != FALSE ? 1u : 0u;
+        record.lastError = error;
+        Enqueue(record);
+    }
+    SetLastError(error);
+    return result;
+}
+
 BOOL WINAPI HookWriteFile(HANDLE handle, LPCVOID buffer, DWORD bytesToWrite,
     LPDWORD bytesWritten, LPOVERLAPPED overlapped) {
+    if (g_internalIoDepth != 0 || g_hidWrapperDepth != 0)
+        return g_originalWriteFile(handle, buffer, bytesToWrite, bytesWritten, overlapped);
     CallbackLease lease;
     WireRecord record{};
     const DWORD incomingError = GetLastError();
@@ -143,6 +273,40 @@ BOOL WINAPI HookWriteFile(HANDLE handle, LPCVOID buffer, DWORD bytesToWrite,
     }
     SetLastError(error);
     return result;
+}
+
+BOOL WINAPI HookDeviceIoControl(HANDLE handle, DWORD controlCode, LPVOID inputBuffer,
+    DWORD inputLength, LPVOID outputBuffer, DWORD outputLength, LPDWORD bytesReturned,
+    LPOVERLAPPED overlapped) {
+    CallbackLease lease;
+    const bool allowed = controlCode == kIoctlHidSetFeature || controlCode == kIoctlHidSetOutputReport;
+    if (!allowed || g_hidWrapperDepth != 0)
+        return g_originalDeviceIoControl(handle, controlCode, inputBuffer, inputLength,
+            outputBuffer, outputLength, bytesReturned, overlapped);
+    WireRecord record{};
+    const DWORD incomingError = GetLastError();
+    const Api api = controlCode == kIoctlHidSetFeature
+        ? Api::DeviceIoControlSetFeature : Api::DeviceIoControlSetOutputReport;
+    const bool retain = PrepareRecord(api, handle, inputBuffer, inputLength, record);
+    SetLastError(incomingError);
+    const BOOL result = g_originalDeviceIoControl(handle, controlCode, inputBuffer, inputLength,
+        outputBuffer, outputLength, bytesReturned, overlapped);
+    const DWORD error = GetLastError();
+    if (retain) {
+        record.apiResult = result != FALSE ? 1u : 0u;
+        record.lastError = error;
+        Enqueue(record);
+    }
+    SetLastError(error);
+    return result;
+}
+
+bool WritePipeRecord(const WireRecord& record) {
+    DWORD written = 0;
+    ++g_internalIoDepth;
+    const BOOL result = WriteFile(g_pipe, &record, sizeof(record), &written, nullptr);
+    --g_internalIoDepth;
+    return result != FALSE && written == sizeof(record);
 }
 
 bool ParseHexToken(const std::string& text) {
@@ -231,20 +395,37 @@ bool InstallHooks() {
     HMODULE kernelBase = GetModuleHandleW(L"KernelBase.dll");
     if (!kernelBase) return fail(3, GetLastError());
     auto setFeature = reinterpret_cast<LPVOID>(GetProcAddress(hid, "HidD_SetFeature"));
+    auto setOutputReport = reinterpret_cast<LPVOID>(GetProcAddress(hid, "HidD_SetOutputReport"));
     auto writeFile = reinterpret_cast<LPVOID>(GetProcAddress(kernelBase, "WriteFile"));
+    auto deviceIoControl = reinterpret_cast<LPVOID>(GetProcAddress(kernelBase, "DeviceIoControl"));
+    const auto compareObjectHandles = reinterpret_cast<LPVOID>(
+        GetProcAddress(kernelBase, "CompareObjectHandles"));
+    static_assert(sizeof(g_compareObjectHandles) == sizeof(compareObjectHandles));
+    memcpy(&g_compareObjectHandles, &compareObjectHandles, sizeof(g_compareObjectHandles));
     if (!setFeature) return fail(4, GetLastError());
-    if (!writeFile) return fail(5, GetLastError());
+    if (!setOutputReport) return fail(5, GetLastError());
+    if (!writeFile) return fail(6, GetLastError());
+    if (!deviceIoControl) return fail(7, GetLastError());
+    if (!g_compareObjectHandles) return fail(8, GetLastError());
 
     auto status = MH_CreateHook(setFeature, reinterpret_cast<void*>(&HookSetFeature),
         reinterpret_cast<void**>(&g_originalSetFeature));
-    if (status != MH_OK) return fail(6, static_cast<DWORD>(status));
+    if (status != MH_OK) return fail(9, static_cast<DWORD>(status));
+    status = MH_CreateHook(setOutputReport, reinterpret_cast<void*>(&HookSetOutputReport),
+        reinterpret_cast<void**>(&g_originalSetOutputReport));
+    if (status != MH_OK) return fail(10, static_cast<DWORD>(status));
     status = MH_CreateHook(writeFile, reinterpret_cast<void*>(&HookWriteFile),
         reinterpret_cast<void**>(&g_originalWriteFile));
-    if (status != MH_OK) return fail(7, static_cast<DWORD>(status));
-    status = MH_EnableHook(setFeature);
-    if (status != MH_OK) return fail(8, static_cast<DWORD>(status));
-    status = MH_EnableHook(writeFile);
-    if (status != MH_OK) return fail(9, static_cast<DWORD>(status));
+    if (status != MH_OK) return fail(11, static_cast<DWORD>(status));
+    status = MH_CreateHook(deviceIoControl, reinterpret_cast<void*>(&HookDeviceIoControl),
+        reinterpret_cast<void**>(&g_originalDeviceIoControl));
+    if (status != MH_OK) return fail(12, static_cast<DWORD>(status));
+    for (const auto hook : {setFeature, setOutputReport, writeFile, deviceIoControl}) {
+        status = MH_QueueEnableHook(hook);
+        if (status != MH_OK) return fail(13, static_cast<DWORD>(status));
+    }
+    status = MH_ApplyQueued();
+    if (status != MH_OK) return fail(14, static_cast<DWORD>(status));
     return true;
 }
 
@@ -272,11 +453,36 @@ bool DisableHooksAndDrain() {
         if (MH_Uninitialize() != MH_OK) return false;
         g_minHookInitialized = false;
     }
+    if (!ReleaseValidatedHandles()) return false;
     if (g_loadedHidModule) {
         if (!FreeLibrary(g_loadedHidModule)) return false;
         g_loadedHidModule = nullptr;
     }
     return true;
+}
+
+WireRecord BuildSummaryRecord() {
+    WireRecord summary{};
+    summary.magic = kMagic;
+    summary.version = kVersion;
+    summary.api = static_cast<uint8_t>(Api::Summary);
+    summary.processId = GetCurrentProcessId();
+    const uint64_t lowApiCounts = g_apiCalls[0].load(std::memory_order_relaxed);
+    const uint64_t highApiCounts = g_apiCalls[1].load(std::memory_order_relaxed);
+    summary.qpc = static_cast<int64_t>(lowApiCounts | (highApiCounts << 32));
+    summary.apiResult = g_apiCalls[2].load(std::memory_order_relaxed);
+    summary.lastError = static_cast<int32_t>(g_apiCalls[3].load(std::memory_order_relaxed));
+    memcpy(summary.token, g_token.data(), g_token.size());
+    summary.report[0] = 2; // Summary schema version.
+    summary.report[1] = g_counterSaturated.load(std::memory_order_relaxed) ? 1 : 0;
+    const std::array<uint32_t, 14> values{
+        g_apiCalls[4].load(), g_invalidHandle.load(), g_attributeReadFailure.load(),
+        g_nonAsusDevice.load(), g_otherAsusProduct.load(), g_unvalidatedWriteHandle.load(),
+        g_underLength.load(), g_boundedLength.load(), g_overLength.load(), g_unreadableBuffer.load(),
+        g_reportId5A.load(), g_prefix5AD1.load(), g_retained.load(), g_droppedRecords.load()
+    };
+    memcpy(summary.report + 4, values.data(), values.size() * sizeof(uint32_t));
+    return summary;
 }
 
 DWORD WINAPI WorkerMain(void* parameter) {
@@ -294,8 +500,7 @@ DWORD WINAPI WorkerMain(void* parameter) {
         failure.apiResult = g_hookFailureStage;
         failure.lastError = g_hookFailureDetail;
         memcpy(failure.token, g_token.data(), g_token.size());
-        DWORD failureWritten = 0;
-        WriteFile(g_pipe, &failure, sizeof(failure), &failureWritten, nullptr);
+        WritePipeRecord(failure);
         FlushFileBuffers(g_pipe);
         CloseHandle(g_pipe);
         g_pipe = INVALID_HANDLE_VALUE;
@@ -306,8 +511,7 @@ DWORD WINAPI WorkerMain(void* parameter) {
     ready.version = kVersion;
     ready.processId = GetCurrentProcessId();
     memcpy(ready.token, g_token.data(), g_token.size());
-    DWORD readyWritten = 0;
-    if (!WriteFile(g_pipe, &ready, sizeof(ready), &readyWritten, nullptr) || readyWritten != sizeof(ready)) {
+    if (!WritePipeRecord(ready)) {
         const bool hooksRemoved = DisableHooksAndDrain();
         CloseHandle(g_pipe);
         g_pipe = INVALID_HANDLE_VALUE;
@@ -324,8 +528,7 @@ DWORD WINAPI WorkerMain(void* parameter) {
         if (wait != WAIT_OBJECT_0 + 1) { transportFailure = true; break; }
         WireRecord record{};
         while (Pop(record)) {
-            DWORD written = 0;
-            if (!WriteFile(g_pipe, &record, sizeof(record), &written, nullptr) || written != sizeof(record)) {
+            if (!WritePipeRecord(record)) {
                 transportFailure = true;
                 SetEvent(g_stopEvent);
                 break;
@@ -335,26 +538,14 @@ DWORD WINAPI WorkerMain(void* parameter) {
     if (!DisableHooksAndDrain()) return 6;
     WireRecord record{};
     while (Pop(record)) {
-        DWORD written = 0;
-        if (!WriteFile(g_pipe, &record, sizeof(record), &written, nullptr) || written != sizeof(record)) {
+        if (!WritePipeRecord(record)) {
             transportFailure = true;
             break;
         }
     }
-    const uint32_t dropped = g_droppedRecords.load(std::memory_order_relaxed);
-    if (dropped != 0) {
-        WireRecord overflow{};
-        overflow.magic = kMagic;
-        overflow.version = kVersion;
-        overflow.api = static_cast<uint8_t>(Api::Overflow);
-        overflow.processId = GetCurrentProcessId();
-        overflow.apiResult = dropped;
-        memcpy(overflow.token, g_token.data(), g_token.size());
-        DWORD written = 0;
-        if (!WriteFile(g_pipe, &overflow, sizeof(overflow), &written, nullptr) || written != sizeof(overflow))
-            transportFailure = true;
-    }
-    if (!FlushFileBuffers(g_pipe)) transportFailure = true;
+    const auto summary = BuildSummaryRecord();
+    if (!WritePipeRecord(summary)) transportFailure = true;
+
     CloseHandle(g_pipe);
     g_pipe = INVALID_HANDLE_VALUE;
     const DWORD exitCode = transportFailure ? 7 : 0;
