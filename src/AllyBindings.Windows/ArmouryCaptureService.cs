@@ -892,7 +892,7 @@ internal sealed class ArmouryCaptureSession(
         {
             var failures = new[] { terminationFailure, cleanupFailure }.OfType<Exception>().ToArray();
             throw new AggregateException(
-                $"Cancelled capture teardown could not be verified. Native controller resets remain blocked; restart Ally Bindings. Evidence directory: {Directory}",
+                $"Cancelled capture teardown could not be verified. Native controller resets remain blocked; restart Windows. Evidence directory: {Directory}",
                 failures);
         }
     }
