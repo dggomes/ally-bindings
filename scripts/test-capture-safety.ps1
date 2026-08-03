@@ -21,6 +21,7 @@ $buildWorkflowPath = Join-Path $root '.github/workflows/build.yml'
 $releaseWorkflowPath = Join-Path $root '.github/workflows/release.yml'
 $packageScriptPath = Join-Path $root 'scripts/package.ps1'
 $nativeBuildScriptPath = Join-Path $root 'scripts/build-armoury-tap.ps1'
+$embeddedTapTestPath = Join-Path $root 'scripts/test-armoury-tap-embedded-resource.ps1'
 
 $core = Get-Content -Raw -LiteralPath $corePath
 $backend = Get-Content -Raw -LiteralPath $backendPath
@@ -42,6 +43,7 @@ $buildWorkflow = Get-Content -Raw -LiteralPath $buildWorkflowPath
 $releaseWorkflow = Get-Content -Raw -LiteralPath $releaseWorkflowPath
 $packageScript = Get-Content -Raw -LiteralPath $packageScriptPath
 $nativeBuildScript = Get-Content -Raw -LiteralPath $nativeBuildScriptPath
+$embeddedTapTest = Get-Content -Raw -LiteralPath $embeddedTapTestPath
 
 if ($core -notmatch 'CustomWritesApproved\s*=>\s*false') {
     throw 'Custom M1/M2 writes are not source-locked.'
@@ -208,15 +210,30 @@ foreach ($workflow in @($buildWorkflow, $releaseWorkflow)) {
     if ($workflow.IndexOf('test-armoury-tap-runtime.ps1', [StringComparison]::Ordinal) -lt 0) {
         throw 'A shipping workflow does not run the behavioral Armoury tap runtime test.'
     }
+    if ($workflow.IndexOf('test-armoury-tap-embedded-resource.ps1', [StringComparison]::Ordinal) -lt 0) {
+        throw 'A shipping workflow does not verify the packaged Armoury tap resource.'
+    }
 }
 foreach ($requiredNativeBuildToken in @(
     'Visual Studio 18 2026',
     'Visual Studio 17 2022',
+    'foreach ($generator in $generators)',
+    'trying the next supported generator',
     '-A x64',
     'Release/AllyBindings.ArmouryTap.dll'
 )) {
     if ($nativeBuildScript.IndexOf($requiredNativeBuildToken, [StringComparison]::Ordinal) -lt 0) {
         throw "The adaptive native build script is missing '$requiredNativeBuildToken'."
+    }
+}
+foreach ($requiredEmbeddedTestToken in @(
+    'AllyBindings.Windows.Native.AllyBindings.ArmouryTap.dll',
+    'GetManifestResourceStream',
+    'FixedTimeEquals',
+    'Published single-file executable does not contain the native tap DLL bytes'
+)) {
+    if ($embeddedTapTest.IndexOf($requiredEmbeddedTestToken, [StringComparison]::Ordinal) -lt 0) {
+        throw "The embedded native tap package test is missing '$requiredEmbeddedTestToken'."
     }
 }
 if ($buildWorkflow.IndexOf('build-armoury-tap.ps1', [StringComparison]::Ordinal) -lt 0 -or

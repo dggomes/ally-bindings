@@ -43,6 +43,9 @@ jobs:
       - name: Publish self-contained x64 app
         shell: pwsh
         run: ./scripts/package.ps1 -SkipTests
+      - name: Verify embedded Armoury tap resource
+        shell: pwsh
+        run: ./scripts/test-armoury-tap-embedded-resource.ps1
       - name: Verify built Windows version metadata
         shell: pwsh
         run: ./scripts/test-version-metadata.ps1
