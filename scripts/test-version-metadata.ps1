@@ -22,8 +22,13 @@ $actual = [Diagnostics.FileVersionInfo]::GetVersionInfo($resolvedExecutable)
 if ($actual.FileVersion -cne $expectedFile) {
     throw "Built FileVersion '$($actual.FileVersion)' does not match '$expectedFile'."
 }
-if (-not $actual.ProductVersion.StartsWith($expectedProduct, [StringComparison]::Ordinal)) {
-    throw "Built ProductVersion '$($actual.ProductVersion)' does not start with '$expectedProduct'."
+$expectedCommit = (git rev-parse HEAD).Trim()
+if ($LASTEXITCODE -ne 0 -or $expectedCommit -notmatch '^[0-9a-f]{40}$') {
+    throw "Could not resolve the exact 40-hex source commit for ProductVersion verification."
+}
+$expectedPublishedProduct = "$expectedProduct+$expectedCommit"
+if ($actual.ProductVersion -cne $expectedPublishedProduct) {
+    throw "Built ProductVersion '$($actual.ProductVersion)' does not exactly match '$expectedPublishedProduct'."
 }
 
 Write-Output "Windows version metadata validated: ProductVersion=$($actual.ProductVersion); FileVersion=$($actual.FileVersion)."

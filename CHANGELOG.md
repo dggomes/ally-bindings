@@ -6,6 +6,26 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Thi
 
 ## [Unreleased]
 
+## [v0.3.0-preview.16] - 2026-08-03
+
+### Added
+
+- Added an explicit, self-contained Armoury HID write tap that temporarily injects an embedded x64 capture-only DLL into exact allowlisted ASUS-signed Armoury processes after disclosure, consent and UAC; no external debugger, packet-capture driver or loose native DLL is required.
+- Added a Windows runtime regression that loads the native tap with its real ASCII configuration, verifies its authenticated ready record, confirms clean stop/unload, and exercises the effective-access gate against read-only and writable ACL fixtures.
+
+### Security
+
+- Restrict retained tap evidence to 50–64-byte `5A D1` writes for `VID_0B05&PID_1B4C`, exporting only allowlisted process name, capture phase, per-phase ordinal, API result/error and bounded report bytes—never PID, QPC, device path or unrelated HID data.
+- Require exact process-name, x64, trusted-root, reparse, ASUS Authenticode, image-lock/hash and Windows `AccessCheck` gates before injection; cap the candidate set at four and hash-lock the embedded DLL from extraction through unload.
+- Create each extraction directory atomically under Windows Temp with a cryptographically random name and protected Administrators-owned ACL; hold DLL/config bytes against replacement and require confirmed hook drain, unload, lock release and directory deletion before returning success.
+- Distinguish genuine pre-injection tap unavailability from teardown uncertainty in structured IPC. Unknown helper crashes, forced termination, transport failure, callback-drain failure or non-clean tap exit latch an app-wide persisted reset/write barrier until Windows restarts; restarting Ally Bindings alone cannot clear it, and failure to persist the barrier blocks ordinary app exit.
+- Enclose public release publication inside rollback handling and add same-runner plus independent fail-closed auditors that retry inspection and withdrawal instead of treating GitHub API failures as proof that no release exists.
+
+### Tests
+
+- Extended the capture safety suite for capability authentication, constant-time hash checks, target/signer/ACL/reparse gates, `5A D1` privacy filtering, callback drain, transport failure, phase attribution and fail-closed cancellation/completion barriers.
+- Added native x64 build hardening and reproducibility flags, single-file embedded-resource verification, exact package allowlisting and a target-Windows runtime smoke test in both PR and tag-release workflows.
+
 ## [v0.3.0-preview.15] - 2026-08-02
 
 ### Added
@@ -317,3 +337,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Thi
 [v0.3.0-preview.10]: https://github.com/dggomes/ally-bindings/releases/tag/v0.3.0-preview.10
 [v0.3.0-preview.11]: https://github.com/dggomes/ally-bindings/releases/tag/v0.3.0-preview.11
 [v0.3.0-preview.12]: https://github.com/dggomes/ally-bindings/releases/tag/v0.3.0-preview.12
+[v0.3.0-preview.13]: https://github.com/dggomes/ally-bindings/releases/tag/v0.3.0-preview.13
+[v0.3.0-preview.14]: https://github.com/dggomes/ally-bindings/releases/tag/v0.3.0-preview.14
+[v0.3.0-preview.15]: https://github.com/dggomes/ally-bindings/releases/tag/v0.3.0-preview.15
+[v0.3.0-preview.16]: https://github.com/dggomes/ally-bindings/releases/tag/v0.3.0-preview.16

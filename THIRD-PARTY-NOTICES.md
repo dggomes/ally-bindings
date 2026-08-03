@@ -21,3 +21,14 @@ Ally Bindings uses [TraceEvent](https://www.nuget.org/packages/Microsoft.Diagnos
 - Full bundled license: [`LICENSES/TraceEvent-MIT.txt`](LICENSES/TraceEvent-MIT.txt)
 
 TraceEvent's Microsoft .NET transitive dependencies are also distributed under MIT-compatible .NET Foundation licences. They provide ETW/event decoding, JSON, immutable collections, pipes, logging abstractions and Windows security APIs; Ally Bindings does not use them for telemetry or upload capture data.
+
+## MinHook 1.3.4
+
+Ally Bindings uses [MinHook](https://github.com/TsudaKageyu/minhook) for inline API hooking inside the temporary, capture-only Armoury tap DLL.
+
+- Copyright: TsudaKageyu
+- License: BSD 2-Clause
+- Source: <https://github.com/TsudaKageyu/minhook/tree/v1.3.4>
+- Full bundled license: [`LICENSES/MinHook-BSD-2-Clause.txt`](LICENSES/MinHook-BSD-2-Clause.txt)
+
+MinHook source is vendored under `native/ArmouryTap/third_party/minhook/` and compiled into `AllyBindings.ArmouryTap.dll`, which is embedded as a resource inside `AllyBindings.exe` and extracted only during an explicit capture session.

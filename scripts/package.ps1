@@ -19,6 +19,11 @@ if (-not $SkipTests) {
     Assert-NativeSuccess "dotnet test"
 }
 
+# Build the native Armoury tap DLL so it can be embedded as a resource.
+$cmakeBuild = Join-Path $repo "native/ArmouryTap/build"
+& (Join-Path $repo 'scripts/build-armoury-tap.ps1') -BuildDirectory $cmakeBuild
+Assert-NativeSuccess "native Armoury tap build"
+
 if (Test-Path $publishDir) { Remove-Item $publishDir -Recurse -Force }
 if (Test-Path $zipPath) { Remove-Item $zipPath -Force }
 New-Item -ItemType Directory -Path $publishDir -Force | Out-Null
@@ -43,6 +48,8 @@ Copy-Item (Join-Path $repo "LICENSE") $publishDir
 Copy-Item (Join-Path $repo "THIRD-PARTY-NOTICES.md") $publishDir
 Copy-Item (Join-Path $repo "CONTRIBUTING.md") $publishDir
 Copy-Item (Join-Path $repo "docs") (Join-Path $publishDir "docs") -Recurse
+Copy-Item (Join-Path $repo "docs/ARMOURY-TAP-SECURITY.md") (Join-Path $publishDir "docs/ARMOURY-TAP-SECURITY.md") -Force
+Copy-Item (Join-Path $repo "docs/ARMOURY-TAP-USER-GUIDE.md") (Join-Path $publishDir "docs/ARMOURY-TAP-USER-GUIDE.md") -Force
 New-Item -ItemType Directory -Path (Join-Path $publishDir "LICENSES") -Force | Out-Null
 Copy-Item (Join-Path $repo "LICENSES/*") (Join-Path $publishDir "LICENSES")
 Compress-Archive -Path "$publishDir/*" -DestinationPath $zipPath -CompressionLevel Optimal

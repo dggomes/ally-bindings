@@ -49,7 +49,7 @@ dotnet test AllyBindings.sln --configuration Release
 
 - Capture paths must remain passive and filter event data in memory to the exact ASUS rear-mapping report shape.
 - Never persist a broad USB ETW trace or unrelated USB event payload.
-- Never inject into Armoury Crate, Xbox or games.
+- Never inject into Xbox, games, anti-cheat or arbitrary processes. The explicit capture-only Armoury tap is the sole exception: it must retain the exact process/signer/path/ACL/hash gates, explicit consent/UAC, authenticated IPC, positive unload/delete confirmation and app-wide fail-closed restart barrier documented in `docs/ARMOURY-TAP-SECURITY.md`.
 - Never mutate Armoury databases.
 - Never install a driver automatically.
 - Never hide the physical controller before a healthy output path and fail-open recovery are proven.

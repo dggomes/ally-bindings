@@ -48,7 +48,29 @@ internal sealed class ArmouryCaptureService
         ArmouryCaptureTarget confirmedTarget,
         CancellationToken cancellationToken = default)
     {
+        try
+        {
+            return await StartWithHelperAsync(
+                confirmedTarget,
+                ArmouryTapCaptureHelper.HelperArgument,
+                cancellationToken).ConfigureAwait(false);
+        }
+        catch (ArmouryTapUnavailableException) when (!cancellationToken.IsCancellationRequested)
+        {
+            return await StartWithHelperAsync(
+                confirmedTarget,
+                ArmouryEtwCaptureHelper.HelperArgument,
+                cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    private async Task<ArmouryCaptureSession> StartWithHelperAsync(
+        ArmouryCaptureTarget confirmedTarget,
+        string helperArgument,
+        CancellationToken cancellationToken = default)
+    {
         ArgumentNullException.ThrowIfNull(confirmedTarget);
+        var isTapHelper = helperArgument.Equals(ArmouryTapCaptureHelper.HelperArgument, StringComparison.Ordinal);
         var sessionId = Guid.NewGuid();
         ArmouryCaptureDiagnostics.Record(sessionId, "parent-capture-starting");
         NamedPipeServerStream? pipe = null;
@@ -72,7 +94,7 @@ internal sealed class ArmouryCaptureService
                 Verb = "runas",
                 WindowStyle = ProcessWindowStyle.Hidden,
             };
-            startInfo.ArgumentList.Add(ArmouryEtwCaptureHelper.HelperArgument);
+            startInfo.ArgumentList.Add(helperArgument);
             startInfo.ArgumentList.Add(sessionId.ToString("D"));
             startInfo.ArgumentList.Add(Environment.ProcessId.ToString(System.Globalization.CultureInfo.InvariantCulture));
             helper = Process.Start(startInfo)
@@ -126,6 +148,12 @@ internal sealed class ArmouryCaptureService
                     "Capture startup was cancelled, but the elevated ETW helper exit could not be confirmed.",
                     terminationFailure);
             }
+            if (isTapHelper && helper is not null)
+            {
+                throw new ArmouryCaptureTeardownException(
+                    "Tap startup was cancelled after the elevated helper launched, so native hook absence cannot be proven. Restart Ally Bindings.",
+                    new OperationCanceledException(cancellationToken));
+            }
             throw;
         }
         catch (Exception ex)
@@ -147,6 +175,13 @@ internal sealed class ArmouryCaptureService
                 throw new ArmouryCaptureTeardownException(
                     "Capture startup failed, and the elevated ETW helper exit could not be confirmed.",
                     new AggregateException(ex, terminationFailure));
+            }
+            if (ex is ArmouryTapUnavailableException or ArmouryCaptureTeardownException) throw;
+            if (isTapHelper && helper is not null)
+            {
+                throw new ArmouryCaptureTeardownException(
+                    "The Armoury tap helper failed after launch without proving that no native hook remains. Restart Ally Bindings.",
+                    ex);
             }
             if (ex is ArmouryCaptureException) throw;
             throw new ArmouryCaptureException(
@@ -236,6 +271,8 @@ internal sealed class ArmouryCaptureService
         {
             var failure = new InvalidDataException(envelope.Error ?? "The in-app ETW helper returned no filtered evidence.");
             ArmouryCaptureDiagnostics.Record(session.SessionId, "parent-result-rejected", failure, TryGetExitCode(session.HelperProcess));
+            if (envelope.ErrorCode == ArmouryTapCaptureHelper.TeardownUnconfirmedErrorCode)
+                throw new ArmouryCaptureTeardownException(failure.Message, failure);
             throw new ArmouryCaptureException(session.SessionId, failure.Message, failure);
         }
         await WaitForHelperExitAsync(session.HelperProcess, cancellationToken).ConfigureAwait(false);
@@ -252,7 +289,9 @@ internal sealed class ArmouryCaptureService
         var reportBytes = SerializeJson(new
         {
             schemaVersion = 7,
-            actions = session.Actions,
+            actions = output.TapRecords is null
+                ? (object)session.Actions
+                : session.Actions.Select((marker, index) => new { ordinal = index + 1, marker.Action }).ToArray(),
             assessment,
             reports,
             schemaDiscovery = new UsbEtwSchemaDiscoveryReport(
@@ -278,7 +317,10 @@ internal sealed class ArmouryCaptureService
                 retainedSchemaShapeCount = output.SchemaShapes.Count,
                 retainedMarkerShapeCount = output.MarkerShapes.Count,
                 fullDataBusTraceKeyword = $"0x{ArmouryEtwCaptureHelper.FullDataTraceKeywords:X}",
-                privacy = "A system-wide USB ETW stream was inspected in memory. Schema discovery contains only bounded event/property/framing metadata grouped by action phase; it contains no generic payload bytes, payload hashes, raw ETL, timestamps, process IDs, device paths, pointers or scalar values.",
+                tapRecords = output.TapRecords,
+                privacy = output.TapRecords is null
+                    ? "A system-wide USB ETW stream was inspected in memory. Schema discovery contains only bounded event/property/framing metadata grouped by action phase; it contains no generic payload bytes, payload hashes, raw ETL, timestamps, process IDs, device paths, pointers or scalar values."
+                    : "Only exact 50-64 byte 5A D1 rear-mapping writes to VID 0B05 PID 1B4C handles were copied before the original ASUS API returned. Exported records contain an allowlisted process name, phase and ordinal but no raw PID, path, timestamp, QPC, pointer or handle. Return values and GetLastError are evidence only; no call or buffer was altered.",
             },
         });
         var manifestBytes = SerializeJson(new
@@ -286,7 +328,9 @@ internal sealed class ArmouryCaptureService
             schemaVersion = 7,
             capturedAtUtc = DateTimeOffset.UtcNow,
             applicationVersion = GetApplicationVersion(),
-            source = "Windows built-in USB ETW real-time FullDataBusTrace session",
+            source = output.TapRecords is null
+                ? "Windows built-in USB ETW real-time FullDataBusTrace session"
+                : "Self-contained ASUS-signed-process user-mode HID write tap",
             selectedAsusHid = session.Target,
             evidence = new
             {
@@ -294,7 +338,11 @@ internal sealed class ArmouryCaptureService
                 sha256 = evidenceHash,
                 bytes = outputBytes.Length,
                 rawSystemTraceWritten = false,
+                hardwareWriteAttemptedByAllyBindings = false,
                 hardwareUnlockEvidence = false,
+                reviewRequired = true,
+                driverInstalled = false,
+                externalCaptureToolRequired = false,
             },
             schemaDiscovery = new
             {
@@ -395,6 +443,10 @@ internal sealed class ArmouryCaptureService
                 writer.Dispose();
                 var failure = new InvalidOperationException(envelope.Error ?? "The in-app ETW helper did not become ready.");
                 ArmouryCaptureDiagnostics.Record(sessionId, "parent-ready-rejected", failure, TryGetExitCode(helper));
+                if (envelope.ErrorCode == ArmouryTapCaptureHelper.TeardownUnconfirmedErrorCode)
+                    throw new ArmouryCaptureTeardownException(failure.Message, failure);
+                if (envelope.ErrorCode == ArmouryTapCaptureHelper.TapUnavailableErrorCode)
+                    throw new ArmouryTapUnavailableException(failure.Message, failure);
                 throw new ArmouryCaptureException(sessionId, failure.Message, failure);
             }
             return new(reader, writer, envelope.Ready);
@@ -488,6 +540,9 @@ internal sealed class ArmouryCaptureService
         IReadOnlyList<CapturedReportAnalysis> reports,
         bool targetIdentityStable)
     {
+        if (output.TapRecords is not null)
+            return AssessTapCapture(output, reports, targetIdentityStable);
+
         static DateTimeOffset MonotonicTimestamp(long qpc) =>
             DateTimeOffset.UnixEpoch.AddSeconds((double)qpc / Stopwatch.Frequency);
         DateTimeOffset Marker(string name) => MonotonicTimestamp(
@@ -539,6 +594,43 @@ internal sealed class ArmouryCaptureService
             validation.SecondMappingMatched,
             validation.NativeResetMatched,
             validation.Reasons);
+    }
+
+    private static CaptureAssessment AssessTapCapture(
+        EtwCaptureOutput output,
+        IReadOnlyList<CapturedReportAnalysis> reports,
+        bool targetIdentityStable)
+    {
+        static DateTimeOffset PhaseStart(int phase) => DateTimeOffset.UnixEpoch.AddSeconds(phase * 10);
+        var tapRecords = output.TapRecords ?? [];
+        var evidence = tapRecords.Zip(reports)
+            .Where(pair => pair.First.Phase is >= 1 and <= 3)
+            .Select(pair => new ArmouryCaptureReportEvidence(
+                PhaseStart(pair.First.Phase).AddSeconds(5),
+                pair.Second.IsStructurallyValidRearMapping,
+                pair.Second.MatchesRequestedM1A_M2B,
+                pair.Second.MatchesRequestedM1X_M2Y,
+                pair.Second.MatchesExpectedNativeReset))
+            .ToList();
+        var windows = new[]
+        {
+            new ArmouryCaptureStepWindow("M1=A / M2=B", PhaseStart(1), PhaseStart(1).AddSeconds(9),
+                ArmouryCaptureExpectedReport.M1A_M2B),
+            new ArmouryCaptureStepWindow("M1=X / M2=Y", PhaseStart(2), PhaseStart(2).AddSeconds(9),
+                ArmouryCaptureExpectedReport.M1X_M2Y),
+            new ArmouryCaptureStepWindow("Reset to Default", PhaseStart(3), PhaseStart(3).AddSeconds(9),
+                ArmouryCaptureExpectedReport.NativeReset),
+        };
+        var captureFailure = output.EventsLost != 0 || output.OversizedEventCount != 0 ||
+            output.PayloadDecodeFailureCount != 0 || output.AmbiguousCandidateCount != 0 ||
+            output.DroppedMatchingReportCount != 0 || output.AggregateLimitExceeded;
+        var validation = ArmouryCaptureSequenceValidator.Validate(
+            evidence, windows, captureFailure ? 1 : 0,
+            captureScopeVerified: false,
+            targetIdentityStable,
+            schemaDiscoveryIncomplete: false);
+        return new(validation.IsConclusive, validation.FirstMappingMatched, validation.SecondMappingMatched,
+            validation.NativeResetMatched, validation.Reasons);
     }
 
     private async Task<bool> IsTargetIdentityStableAsync(
@@ -711,6 +803,8 @@ internal sealed class ArmouryCaptureSession(
     public string Directory { get; } = directory;
     public ArmouryCaptureTarget Target { get; } = target;
     public IReadOnlyList<string> EnabledProviders { get; } = enabledProviders;
+    public bool UsesArmouryTap { get; } = enabledProviders.Any(provider =>
+        provider.Equals("AllyBindings native user-mode HID write tap", StringComparison.Ordinal));
     public List<CaptureActionMarker> Actions { get; } = [];
 
     public void RecordAction(string action, long? qpcOverride = null)
@@ -776,6 +870,14 @@ internal sealed class ArmouryCaptureSession(
         {
             terminationFailure = new InvalidOperationException("The elevated ETW helper exit could not be verified.");
         }
+        if (helperExitVerified && UsesArmouryTap && HelperProcess.ExitCode != 2)
+        {
+            var unexpectedExit = new InvalidOperationException(
+                $"The tap helper exited with code {HelperProcess.ExitCode} instead of the cleanup-confirmed cancellation code 2.");
+            terminationFailure = terminationFailure is null
+                ? unexpectedExit
+                : new AggregateException(terminationFailure, unexpectedExit);
+        }
         try
         {
             Dispose();
@@ -790,7 +892,7 @@ internal sealed class ArmouryCaptureSession(
         {
             var failures = new[] { terminationFailure, cleanupFailure }.OfType<Exception>().ToArray();
             throw new AggregateException(
-                $"Cancelled capture teardown could not be verified. Native controller resets remain blocked; restart Ally Bindings. Evidence directory: {Directory}",
+                $"Cancelled capture teardown could not be verified. Native controller resets remain blocked; restart Windows. Evidence directory: {Directory}",
                 failures);
         }
     }

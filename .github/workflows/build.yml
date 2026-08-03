@@ -35,11 +35,17 @@ jobs:
           dotnet-version: 8.0.x
       - name: Restore
         run: dotnet restore AllyBindings.sln
+      - name: Build native Armoury tap DLL (x64)
+        shell: pwsh
+        run: ./scripts/build-armoury-tap.ps1
       - name: Test
         run: dotnet test AllyBindings.sln --no-restore --configuration Release --logger "trx;LogFileName=windows.trx"
       - name: Publish self-contained x64 app
         shell: pwsh
         run: ./scripts/package.ps1 -SkipTests
+      - name: Verify embedded Armoury tap resource
+        shell: pwsh
+        run: ./scripts/test-armoury-tap-embedded-resource.ps1
       - name: Verify built Windows version metadata
         shell: pwsh
         run: ./scripts/test-version-metadata.ps1
@@ -82,6 +88,9 @@ jobs:
       - name: Assert integrated capture write-lock and privacy boundaries
         shell: powershell
         run: ./scripts/test-capture-safety.ps1
+      - name: Exercise Armoury tap config, teardown and ACL runtime contracts
+        shell: pwsh
+        run: ./scripts/test-armoury-tap-runtime.ps1
       - name: Assert read-only feature snapshot isolation and zero authority
         shell: powershell
         run: ./scripts/test-feature-snapshot-safety.ps1

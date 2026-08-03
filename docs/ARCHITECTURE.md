@@ -129,7 +129,7 @@ Backend results distinguish a selected app profile from a mapping physically app
 ### ASUS rear-button protocol boundary
 
 - Positive DMI gate: exact manufacturer `ASUSTeK COMPUTER INC.` plus product `RC71L`, `RC72LA`, `RC73XA`, or `RC73YA`; firmware may expose the same supported token twice (`RC73XA_RC73XA`), which is accepted only when both tokens match.
-- Positive HID gate: ASUS VID `0x0B05`, corroborated Ally embedded-controller PID `0x1ABE`/`0x1B4C`/`0x1B6E`, openable interface, feature report `0x5A` whose own descriptor length is at least 50 bytes.
+- Positive HID gate: ASUS VID `0x0B05`, corroborated Ally embedded-controller PID `0x1ABE`/`0x1B4C`, openable interface, feature report `0x5A` whose own descriptor length is at least 50 bytes. PID `0x1B6E` is explicitly rejected as ProArt PZ13 hardware.
 - Mapping command: report `0x5A`, command `0xD1`, zone `0x08`.
 - Both primary and secondary paddle slots receive the selected action to avoid retaining a stale Armoury secondary action.
 - `CustomWritesApproved` and `RecoveryWritesApproved` are both `false`; profile, panic, exit and stale-marker paths therefore send no ASUS report.
@@ -153,9 +153,9 @@ A real backend must additionally stream normalized input through `MappingEngine`
 4. Ctrl+Alt+F12 does not depend on the controller chord/profile.
 5. Disconnect cancels uncommitted selections.
 6. Startup registration is per-user, opt-in and removable.
-7. Launching the app and explicit feature snapshots install no driver and require no elevation; only explicit USB ETW capture requests one-time elevation for the same executable's temporary helper and installs nothing.
+7. Launching the app and explicit feature snapshots install no driver and require no elevation. Explicit Armoury tap or USB ETW capture requests one-time elevation for the same executable's temporary helper and installs nothing.
 8. Normal diagnostics contain status/config metadata, not controller input history. Capture bundles are separate private artifacts created only on explicit request.
-9. No code injection, Armoury database mutation, macros or network service.
+9. No injection into games, Xbox, anti-cheat or arbitrary processes. The opt-in diagnostic tap may temporarily inject only its embedded capture DLL into exact allowlisted x64 ASUS-signed Armoury processes under trusted system install roots; it has zero write authority and must be positively unloaded before completion.
 10. No custom or recovery M1/M2 report can be emitted while either source-level validation gate is closed.
 
 ## Release gate

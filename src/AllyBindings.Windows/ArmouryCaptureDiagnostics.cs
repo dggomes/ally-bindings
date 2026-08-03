@@ -268,3 +268,6 @@ internal sealed class ArmouryCaptureException : InvalidOperationException
 
 internal sealed class ArmouryCaptureTeardownException(string message, Exception innerException)
     : InvalidOperationException(message, innerException);
+
+internal sealed class ArmouryTapUnavailableException(string message, Exception innerException)
+    : InvalidOperationException(message, innerException);

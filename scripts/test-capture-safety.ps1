@@ -19,6 +19,9 @@ $xamlPath = Join-Path $root 'src/AllyBindings.Windows/MainWindow.xaml'
 $projectPath = Join-Path $root 'src/AllyBindings.Windows/AllyBindings.Windows.csproj'
 $buildWorkflowPath = Join-Path $root '.github/workflows/build.yml'
 $releaseWorkflowPath = Join-Path $root '.github/workflows/release.yml'
+$packageScriptPath = Join-Path $root 'scripts/package.ps1'
+$nativeBuildScriptPath = Join-Path $root 'scripts/build-armoury-tap.ps1'
+$embeddedTapTestPath = Join-Path $root 'scripts/test-armoury-tap-embedded-resource.ps1'
 
 $core = Get-Content -Raw -LiteralPath $corePath
 $backend = Get-Content -Raw -LiteralPath $backendPath
@@ -38,6 +41,9 @@ $xaml = Get-Content -Raw -LiteralPath $xamlPath
 $project = Get-Content -Raw -LiteralPath $projectPath
 $buildWorkflow = Get-Content -Raw -LiteralPath $buildWorkflowPath
 $releaseWorkflow = Get-Content -Raw -LiteralPath $releaseWorkflowPath
+$packageScript = Get-Content -Raw -LiteralPath $packageScriptPath
+$nativeBuildScript = Get-Content -Raw -LiteralPath $nativeBuildScriptPath
+$embeddedTapTest = Get-Content -Raw -LiteralPath $embeddedTapTestPath
 
 if ($core -notmatch 'CustomWritesApproved\s*=>\s*false') {
     throw 'Custom M1/M2 writes are not source-locked.'
@@ -201,6 +207,38 @@ foreach ($workflow in @($buildWorkflow, $releaseWorkflow)) {
     if ($workflow.IndexOf('test-etw-helper-auth.ps1', [StringComparison]::Ordinal) -lt 0) {
         throw 'A shipping workflow does not run the behavioral ETW helper authentication test.'
     }
+    if ($workflow.IndexOf('test-armoury-tap-runtime.ps1', [StringComparison]::Ordinal) -lt 0) {
+        throw 'A shipping workflow does not run the behavioral Armoury tap runtime test.'
+    }
+    if ($workflow.IndexOf('test-armoury-tap-embedded-resource.ps1', [StringComparison]::Ordinal) -lt 0) {
+        throw 'A shipping workflow does not verify the packaged Armoury tap resource.'
+    }
+}
+foreach ($requiredNativeBuildToken in @(
+    'Visual Studio 18 2026',
+    'Visual Studio 17 2022',
+    'foreach ($generator in $generators)',
+    'trying the next supported generator',
+    '-A x64',
+    'Release/AllyBindings.ArmouryTap.dll'
+)) {
+    if ($nativeBuildScript.IndexOf($requiredNativeBuildToken, [StringComparison]::Ordinal) -lt 0) {
+        throw "The adaptive native build script is missing '$requiredNativeBuildToken'."
+    }
+}
+foreach ($requiredEmbeddedTestToken in @(
+    'AllyBindings.Windows.Native.AllyBindings.ArmouryTap.dll',
+    'GetManifestResourceStream',
+    'FixedTimeEquals',
+    'Published single-file executable does not contain the native tap DLL bytes'
+)) {
+    if ($embeddedTapTest.IndexOf($requiredEmbeddedTestToken, [StringComparison]::Ordinal) -lt 0) {
+        throw "The embedded native tap package test is missing '$requiredEmbeddedTestToken'."
+    }
+}
+if ($buildWorkflow.IndexOf('build-armoury-tap.ps1', [StringComparison]::Ordinal) -lt 0 -or
+    $packageScript.IndexOf('build-armoury-tap.ps1', [StringComparison]::Ordinal) -lt 0) {
+    throw 'PR and release packaging do not share the adaptive native Armoury tap build script.'
 }
 if ($app.IndexOf('TryParseArguments(e.Args', [StringComparison]::Ordinal) -gt
     $app.IndexOf('new Mutex(', [StringComparison]::Ordinal)) {
@@ -341,6 +379,266 @@ if ($app -notmatch 'enableRearButtons\s*&&\s*ArmouryProtocolValidation\.IsOperat
 }
 if ($xaml -notmatch 'IsEnabled="\{Binding CanEnableAsusRearButtonMappings\}"') {
     throw 'The ASUS write opt-in UI is not visibly locked.'
+}
+
+# ── Self-contained Armoury tap assertions ──
+
+$tapProtocolPath = Join-Path $root 'src/AllyBindings.Core/ArmouryTapProtocol.cs'
+$tapHelperPath = Join-Path $root 'src/AllyBindings.Windows/ArmouryTapCaptureHelper.cs'
+$tapNativePath = Join-Path $root 'native/ArmouryTap/src/ArmouryTap.cpp'
+$tapCmakePath = Join-Path $root 'native/ArmouryTap/CMakeLists.txt'
+$tapSecurityDocPath = Join-Path $root 'docs/ARMOURY-TAP-SECURITY.md'
+$tapUserGuidePath = Join-Path $root 'docs/ARMOURY-TAP-USER-GUIDE.md'
+
+$tapProtocol = Get-Content -Raw -LiteralPath $tapProtocolPath
+$tapHelper = Get-Content -Raw -LiteralPath $tapHelperPath
+$tapNative = Get-Content -Raw -LiteralPath $tapNativePath
+$tapCmake = Get-Content -Raw -LiteralPath $tapCmakePath
+$tapSecurityDoc = Get-Content -Raw -LiteralPath $tapSecurityDocPath
+$tapUserGuide = Get-Content -Raw -LiteralPath $tapUserGuidePath
+
+# PID 1B6E must not be in the Ally rear-button allowlist
+$hidDevicePath = Join-Path $root 'src/AllyBindings.Windows/AsusRearButtonHidDevice.cs'
+$hidDevice = Get-Content -Raw -LiteralPath $hidDevicePath
+if ($hidDevice -match '0x1B6E') {
+    throw 'PID 0x1B6E (ProArt PZ13) is still in the ASUS rear-button allowlist.'
+}
+
+# Tap protocol constants
+foreach ($required in @(
+    'AsusVendorId = 0x0B05',
+    'AllyProductId = 0x1B4C',
+    'ReportId = 0x5A',
+    'RearMappingCommand = 0xD1',
+    'MinimumReportLength = 50',
+    'MaximumReportLength = 64',
+    'MaximumRecords = 256',
+    'WireRecordSize = 124',
+    'WireMagic = 0x31544241',
+    'WireVersion = 1',
+    'ArmouryCrateSE.Service',
+    'ArmouryCrate.Service',
+    'ArmouryCrateSE',
+    'AsusOptimization')) {
+    if ($tapProtocol.IndexOf($required, [StringComparison]::Ordinal) -lt 0) {
+        throw "The tap protocol contract is missing: $required"
+    }
+}
+
+# Tap helper must authenticate, verify signatures, and fail closed
+foreach ($required in @(
+    'HelperArgument = "--armoury-tap-capture-helper"',
+    'NativeResourceName',
+    'WinVerifyTrust',
+    'ASUSTeK COMPUTER INC.',
+    'IsWow64Process2',
+    'IsNativeAmd64',
+    'HasAsusAuthenticodeSignature',
+    'IsTrustedInstallPath',
+    'HasReparseTraversal',
+    'OpenParentImpersonationToken',
+    'IsWritableByToken',
+    'GetMaximumAllowedAccess',
+    'AccessCheck',
+    'DuplicateToken',
+    'GetTrustedInstallRoot',
+    'ImageHashMatches',
+    'ImageLock',
+    'MaximumCandidateProcesses = 4',
+    'LockAndVerifyNativeDll',
+    'IncrementalHash.CreateHash',
+    'CryptographicOperations.FixedTimeEquals(actualHash, expectedHash)',
+    'Revalidate',
+    'StartTimeUtc',
+    'ExecutablePath',
+    'CryptographicOperations.FixedTimeEquals',
+    'GetNamedPipeClientProcessId',
+    'GetNamedPipeServerProcessId',
+    'VerifyParentExecutableIdentity',
+    'CreatePrivateExtractionDirectory',
+    'CreateDirectoryW',
+    'Environment.SpecialFolder.Windows',
+    'FileSystemRights.ReadAndExecute',
+    'Encoding.ASCII.GetBytes',
+    'DeleteExtractionDirectory',
+    'DirectorySecurity',
+    'SetAccessRuleProtection',
+    'PipeSecurity',
+    'NetworkSid',
+    'AccessControlType.Deny',
+    'OpenProcess',
+    'VirtualAllocEx',
+    'WriteProcessMemory',
+    'CreateRemoteThread',
+    'FreeLibrary',
+    'FindRemoteModule',
+    'FindRemoteModuleByPathWithRetry',
+    'GetModuleHandleExW',
+    'LifecycleHandle',
+    'helper={Environment.ProcessId}',
+    'RevocationChecks = 1',
+    'firstError == 18',
+    'teardown remains retryable',
+    'ReadExportRva',
+    'ArmouryTapStop',
+    'MaximumCaptureDuration',
+    'TapUnavailableErrorCode',
+    'TeardownUnconfirmedErrorCode',
+    'TapTeardownUnconfirmedException')) {
+    if ($tapHelper.IndexOf($required, [StringComparison]::Ordinal) -lt 0) {
+        throw "The tap helper is missing safety/lifecycle control: $required"
+    }
+}
+
+$tapRecordStart = $tapProtocol.IndexOf('public sealed record ArmouryTapRecord(', [StringComparison]::Ordinal)
+$tapRecordEnd = $tapProtocol.IndexOf(');', $tapRecordStart, [StringComparison]::Ordinal)
+if ($tapRecordStart -lt 0 -or $tapRecordEnd -le $tapRecordStart) {
+    throw 'Could not isolate the exported ArmouryTapRecord contract.'
+}
+$tapRecordContract = $tapProtocol.Substring($tapRecordStart, $tapRecordEnd - $tapRecordStart)
+foreach ($forbidden in @('ProcessId', 'PerformanceCounterTimestamp', 'ExecutablePath', 'Qpc')) {
+    if ($tapRecordContract.IndexOf($forbidden, [StringComparison]::OrdinalIgnoreCase) -ge 0) {
+        throw "The exported tap record leaks an internal identity/time field: $forbidden"
+    }
+}
+foreach ($required in @('ProcessName', 'Phase', 'Ordinal')) {
+    if ($tapRecordContract.IndexOf($required, [StringComparison]::Ordinal) -lt 0) {
+        throw "The exported tap record is missing sanitized attribution: $required"
+    }
+}
+
+# Native DLL must hook the right APIs, preserve return/LastError, and drain callbacks
+foreach ($required in @(
+    'HidD_SetFeature',
+    'WriteFile',
+    'MH_Initialize',
+    'MH_CreateHook',
+    'MH_EnableHook',
+    'MH_DisableHook',
+    'MH_Uninitialize',
+    'DisableHooksAndDrain',
+    'transportFailure',
+    'g_helperProcess',
+    'helperPrefix',
+    'FreeLibraryAndExitThread',
+    'ReadProcessMemory',
+    'SetLastError(incomingError)',
+    'SetLastError(error)',
+    'g_activeCallbacks',
+    'CallbackLease',
+    'g_droppedRecords',
+    'ArmouryTapStop',
+    'kVendor',
+    'kProduct',
+    '0x5A',
+    'kRearMappingCommand = 0xD1',
+    'std::string text',
+    'kMinReport',
+    'kMaxReport',
+    'kQueueCapacity')) {
+    if ($tapNative.IndexOf($required, [StringComparison]::Ordinal) -lt 0) {
+        throw "The native tap DLL is missing safety requirement: $required"
+    }
+}
+
+foreach ($required in @(
+    'ArmouryTapTeardownBlockedSinceUtc',
+    'ArmouryTapTeardownBootIdentifier',
+    'NtQuerySystemInformation',
+    'Restart Windows before controller writes can resume',
+    '_armouryCaptureTeardownUnconfirmed = true')) {
+    if ($app.IndexOf($required, [StringComparison]::Ordinal) -lt 0) {
+        throw "The app-wide persisted tap teardown barrier is missing requirement: $required"
+    }
+}
+foreach ($required in @('nativeWritesAllowed', '_armouryCaptureBarrierPersistenceFailed', 'Ordinary app exit is blocked')) {
+    if ($app.IndexOf($required, [StringComparison]::Ordinal) -lt 0) {
+        throw "The persisted teardown barrier does not block startup/exit path: $required"
+    }
+}
+$tapRuntime = Get-Content -Raw -LiteralPath (Join-Path $root 'scripts/test-armoury-tap-runtime.ps1')
+if ($tapRuntime.IndexOf("LoadLibraryW('hid.dll')", [StringComparison]::Ordinal) -ge 0) {
+    throw 'The runtime test still masks production hid.dll loading by preloading it.'
+}
+if ($tapRuntime.IndexOf('tap PE dependency did not cause Windows to map hid.dll', [StringComparison]::Ordinal) -lt 0) {
+    throw 'The runtime test does not prove loader-owned hid.dll dependency mapping.'
+}
+foreach ($required in @(
+    'id: publish',
+    'Fail-closed public release auditor',
+    'public-release-auditor',
+    'needs.release.result',
+    'for ($attempt = 1; $attempt -le 3; $attempt++)',
+    'Could not determine or enforce fail-closed release state')) {
+    if ($releaseWorkflow.IndexOf($required, [StringComparison]::Ordinal) -lt 0) {
+        throw "The release publication boundary is missing fail-closed control: $required"
+    }
+}
+
+# CMake must produce x64-only DLL with security mitigations
+foreach ($required in @('FATAL_ERROR', 'MultiThreaded', '/W4', '/WX', '/WX-', '/guard:cf', '/DYNAMICBASE', '/HIGHENTROPYVA', '/NXCOMPAT', '/CETCOMPAT', '/Brepro', 'AllyBindings.ArmouryTap')) {
+    if ($tapCmake.IndexOf($required, [StringComparison]::Ordinal) -lt 0) {
+        throw "The native CMake build is missing requirement: $required"
+    }
+}
+
+# Security contract and user guide must exist with key invariants
+foreach ($required in @(
+    'hardwareWriteAttemptedByAllyBindings: false',
+    'hardwareUnlockEvidence: false',
+    'reviewRequired: true',
+    'driverInstalled: false',
+    'externalCaptureToolRequired: false',
+    'rawSystemTraceWritten: false')) {
+    if ($tapSecurityDoc.IndexOf($required, [StringComparison]::Ordinal) -lt 0) {
+        throw "The tap security contract is missing invariant: $required"
+    }
+}
+if ($tapUserGuidePath -and (Test-Path -LiteralPath $tapUserGuidePath) -eq $false) {
+    throw 'The tap user guide document is missing.'
+}
+
+# App startup must recognize tap helper arguments before the single-instance mutex
+if ($app.IndexOf('ArmouryTapCaptureHelper.TryParseArguments', [StringComparison]::Ordinal) -lt 0 -or
+    $app.IndexOf('ArmouryTapCaptureHelper.TryParseArguments', [StringComparison]::Ordinal) -gt
+    $app.IndexOf('new Mutex(', [StringComparison]::Ordinal)) {
+    throw 'The tap helper is not recognized before the single-instance mutex.'
+}
+
+# Capture service must try tap first with ETW fallback
+if ($service -notmatch 'ArmouryTapCaptureHelper\.HelperArgument' -or
+    $service -notmatch 'ArmouryEtwCaptureHelper\.HelperArgument' -or
+    $service -notmatch 'catch \(ArmouryTapUnavailableException\)' -or
+    $service -notmatch 'TeardownUnconfirmedErrorCode' -or
+    $service -notmatch 'ArmouryCaptureTeardownException') {
+    throw 'The capture service does not try the user-mode tap first while limiting ETW fallback to explicit pre-injection unavailability.'
+}
+if ([regex]::Matches($service, 'TeardownUnconfirmedErrorCode').Count -lt 2 -or
+    [regex]::Matches($service, 'throw new ArmouryCaptureTeardownException').Count -lt 2) {
+    throw 'Structured teardown-unconfirmed status is not promoted during both startup and completion.'
+}
+if ($app -notmatch 'ex is ArmouryCaptureTeardownException' -or
+    $app -notmatch 'captureTeardownFailure = ex' -or
+    $app -notmatch '_armouryCaptureTeardownUnconfirmed = true') {
+    throw 'The app-wide reset/write barrier is not latched after structured tap teardown failure.'
+}
+if ($service -notmatch 'isTapHelper' -or
+    $service -notmatch 'ex is ArmouryTapUnavailableException or ArmouryCaptureTeardownException' -or
+    $service -notmatch 'UsesArmouryTap' -or
+    $service -notmatch 'HelperProcess\.ExitCode != 2' -or
+    $app -notmatch 'session\?\.UsesArmouryTap == true') {
+    throw 'An unstructured tap-helper crash can bypass the app-wide teardown barrier.'
+}
+$cleanupIndex = $tapHelper.IndexOf('await CleanupAsync().ConfigureAwait(false);', [StringComparison]::Ordinal)
+$resultIndex = $tapHelper.IndexOf('new EtwPipeEnvelope("result"', [StringComparison]::Ordinal)
+if ($cleanupIndex -lt 0 -or $resultIndex -lt 0 -or $cleanupIndex -gt $resultIndex) {
+    throw 'The tap helper can publish a successful result before hook/file cleanup is confirmed.'
+}
+
+# Manifest must distinguish tap vs ETW source
+if ($service -notmatch 'Self-contained ASUS-signed-process user-mode HID write tap' -or
+    $service -notmatch 'Windows built-in USB ETW real-time FullDataBusTrace session') {
+    throw 'The capture manifest does not distinguish tap vs ETW evidence source.'
 }
 
 Write-Output 'Integrated ETW capture safety and privacy assertions passed.'

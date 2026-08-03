@@ -752,6 +752,7 @@ internal sealed record EtwPipeEnvelope(
     EtwCaptureReady? Ready = null,
     EtwCaptureOutput? Output = null,
     string? Error = null,
+    string? ErrorCode = null,
     int? Phase = null,
     bool? PhaseStarted = null,
     long? BoundaryQpc = null);
@@ -769,7 +770,8 @@ internal sealed record EtwCaptureOutput(
     bool SchemaDiscoveryLimitExceeded,
     IReadOnlyList<UsbEtwFeatureReport> Reports,
     IReadOnlyList<UsbEtwSchemaShape> SchemaShapes,
-    IReadOnlyList<UsbEtwMarkerShape> MarkerShapes);
+    IReadOnlyList<UsbEtwMarkerShape> MarkerShapes,
+    IReadOnlyList<ArmouryTapRecord>? TapRecords = null);
 internal sealed record EtwSchemaShapeKey(
     int Phase,
     string ProviderName,

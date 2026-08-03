@@ -22,7 +22,6 @@ public sealed class AsusRearButtonHidDevice : IAsusRearButtonDevice
     [
         0x1ABE,
         0x1B4C,
-        0x1B6E,
     ];
     private readonly SemaphoreSlim _hidIoGate = new(1, 1);
     private IReadOnlyList<string> _snapshotInterfaceIdentityKeys = [];

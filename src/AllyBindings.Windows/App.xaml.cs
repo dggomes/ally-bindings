@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.IO;
 using System.IO.Pipes;
 using System.Reflection;
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading;
 using System.Windows;
@@ -34,6 +35,7 @@ public partial class App : System.Windows.Application
     private bool _updateCheckInProgress;
     private volatile bool _armouryCaptureInProgress;
     private volatile bool _armouryCaptureTeardownUnconfirmed;
+    private volatile bool _armouryCaptureBarrierPersistenceFailed;
     private CancellationTokenSource? _armouryCaptureCancellation;
     private TaskCompletionSource? _armouryCaptureCompletion;
     private bool _allowExitWithPendingRearMapping;
@@ -47,6 +49,12 @@ public partial class App : System.Windows.Application
     protected override void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);
+        if (ArmouryTapCaptureHelper.TryParseArguments(e.Args, out var tapSessionId, out var tapParentProcessId))
+        {
+            ShutdownMode = ShutdownMode.OnExplicitShutdown;
+            _ = RunTapCaptureHelperAsync(tapSessionId, tapParentProcessId);
+            return;
+        }
         if (ArmouryEtwCaptureHelper.TryParseArguments(e.Args, out var etwSessionId, out var parentProcessId))
         {
             ShutdownMode = ShutdownMode.OnExplicitShutdown;
@@ -94,6 +102,12 @@ public partial class App : System.Windows.Application
     private async Task RunEtwCaptureHelperAsync(Guid sessionId, int parentProcessId)
     {
         var exitCode = await ArmouryEtwCaptureHelper.RunAsync(sessionId, parentProcessId);
+        Shutdown(exitCode);
+    }
+
+    private async Task RunTapCaptureHelperAsync(Guid sessionId, int parentProcessId)
+    {
+        var exitCode = await ArmouryTapCaptureHelper.RunAsync(sessionId, parentProcessId);
         Shutdown(exitCode);
     }
 
@@ -189,6 +203,36 @@ public partial class App : System.Windows.Application
             Configuration = loaded.Configuration;
             _configurationWarnings = loaded.Warnings;
 
+            if (Configuration.ArmouryTapTeardownBlockedSinceUtc is not null)
+            {
+                var currentBootIdentifier = TryGetCurrentBootIdentifier();
+                if (Configuration.ArmouryTapTeardownBootIdentifier is { } blockedBootIdentifier &&
+                    currentBootIdentifier is { } currentBoot && currentBoot != blockedBootIdentifier)
+                {
+                    Configuration = Configuration with
+                    {
+                        ArmouryTapTeardownBlockedSinceUtc = null,
+                        ArmouryTapTeardownBootIdentifier = null,
+                    };
+                    await _profileStore.SaveAsync(Configuration);
+                    _configurationWarnings = _configurationWarnings
+                        .Append("Cleared the persisted Armoury tap write barrier after a Windows restart proved the affected processes exited.")
+                        .ToList();
+                }
+                else
+                {
+                    _armouryCaptureTeardownUnconfirmed = true;
+                    _armouryCaptureInProgress = true;
+                    _armouryCaptureCompletion = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                    _armouryCaptureCompletion.SetException(new InvalidOperationException(
+                        "A previous native tap unload was not confirmed. Restart Windows before controller writes can resume."));
+                    _ = _armouryCaptureCompletion.Task.Exception;
+                    _configurationWarnings = _configurationWarnings
+                        .Append("Controller writes remain blocked because a previous native tap unload was not confirmed. Restart Windows; restarting Ally Bindings alone is not sufficient.")
+                        .ToList();
+                }
+            }
+
             if (Configuration.EnableAsusRearButtonMappings && !ArmouryProtocolValidation.IsOperationApproved(isRecoveryReset: false))
             {
                 Configuration = Configuration with { EnableAsusRearButtonMappings = false };
@@ -212,14 +256,17 @@ public partial class App : System.Windows.Application
                 _configurationWarnings = _configurationWarnings.Append("Run-at-login preference was reconciled with the current Windows registration.").ToList();
             }
 
-            var recoveryWasPending = Configuration.AsusRearButtonMappingActive;
+            var recoveryWasPending = Configuration.AsusRearButtonMappingActive &&
+                !_armouryCaptureTeardownUnconfirmed;
+            var nativeWritesAllowed = !_armouryCaptureTeardownUnconfirmed;
             var backendStatus = await ReplaceBackendAsync(
-                Configuration.EnableAsusRearButtonMappings || recoveryWasPending,
+                nativeWritesAllowed && (Configuration.EnableAsusRearButtonMappings || recoveryWasPending),
                 restoreCurrent: false,
                 allowUnverifiedRecoveryReset:
                     recoveryWasPending && ArmouryProtocolValidation.RecoveryWritesApproved);
             _backendNeedsRestore = Configuration.AsusRearButtonMappingActive;
-            if (Configuration.AsusRearButtonMappingActive && ArmouryProtocolValidation.RecoveryWritesApproved)
+            if (nativeWritesAllowed && Configuration.AsusRearButtonMappingActive &&
+                ArmouryProtocolValidation.RecoveryWritesApproved)
             {
                 var recovery = await _backend.RestoreDefaultAsync();
                 if (recovery.CommandAccepted)
@@ -811,8 +858,8 @@ public partial class App : System.Windows.Application
             cancellationToken.ThrowIfCancellationRequested();
             var proceed = await _mainWindow.ShowControllerDialogAsync(
                 "Capture Armoury M1/M2 protocol",
-                "This starts a temporary Windows USB ETW session inside Ally Bindings. Windows will request administrator approval for the capture helper. No driver, Wireshark or USBPcap is installed, and no raw system-wide trace is written.\n\n" +
-                "You will deliberately change M1/M2 three times through Armoury Crate so we can collect candidate bus payloads for hardware review. Ally Bindings will send no HID reports, cannot clear recovery state from this capture, and its ASUS write backend remains source locked.\n\nContinue?",
+                "This starts a temporary user-mode capture inside Ally Bindings. Close games and anti-cheat software before continuing. Windows will request administrator approval to inject a capture-only DLL into the confirmed ASUS Armoury process. No driver, Wireshark, USBPcap, WinDbg, Frida or separate tool is installed. The tap observes Armoury's HID writes without altering them.\n\n" +
+                "You will deliberately change M1/M2 three times through Armoury Crate so we can collect exact wire payloads for hardware review. Ally Bindings will send no HID reports, cannot clear recovery state from this capture, and its ASUS write backend remains source locked.\n\nContinue?",
                 primaryLabel: "Continue");
             if (!proceed) return;
             cancellationToken.ThrowIfCancellationRequested();
@@ -828,7 +875,10 @@ public partial class App : System.Windows.Application
             session = await captureService.StartAsync(target, cancellationToken);
             cancellationToken.ThrowIfCancellationRequested();
             _mainWindow.SetArmouryCaptureStatus(
-                $"Integrated ETW capture running through {string.Join(" + ", session.EnabledProviders)}. Follow the Armoury prompts; this app remains write-locked.");
+                $"Capture running through {string.Join(" + ", session.EnabledProviders)}. Follow the staged baseline, A/B, X/Y, and reset prompts; this app remains write-locked.");
+            await RequireCaptureStepAsync(
+                "Baseline: leave the current M1/M2 assignments untouched briefly, then choose Done. Do not apply an Armoury change during this baseline window.",
+                "Capture baseline · no change");
 
             await captureService.MarkActionAsync(session, "step-started-m1-a-m2-b", cancellationToken);
             await RequireCaptureStepAsync(
@@ -865,7 +915,8 @@ public partial class App : System.Windows.Application
         }
         catch (Exception ex)
         {
-            if (ex is ArmouryCaptureTeardownException)
+            if (ex is ArmouryCaptureTeardownException ||
+                (session?.UsesArmouryTap == true && ex is not OperationCanceledException))
             {
                 captureTeardownFailure = ex;
             }
@@ -911,6 +962,19 @@ public partial class App : System.Windows.Application
                 else
                 {
                     _armouryCaptureTeardownUnconfirmed = true;
+                    Configuration = Configuration with
+                    {
+                        ArmouryTapTeardownBlockedSinceUtc =
+                            Configuration.ArmouryTapTeardownBlockedSinceUtc ?? DateTimeOffset.UtcNow,
+                        ArmouryTapTeardownBootIdentifier =
+                            Configuration.ArmouryTapTeardownBootIdentifier ?? TryGetCurrentBootIdentifier(),
+                    };
+                    try { await _profileStore.SaveAsync(Configuration); }
+                    catch (Exception persistenceFailure)
+                    {
+                        _armouryCaptureBarrierPersistenceFailed = true;
+                        captureTeardownFailure = new AggregateException(captureTeardownFailure, persistenceFailure);
+                    }
                 }
             }
             finally
@@ -924,10 +988,10 @@ public partial class App : System.Windows.Application
             else
             {
                 captureCompletion?.TrySetException(new InvalidOperationException(
-                    "The elevated ETW helper exit could not be confirmed. Native controller resets remain blocked until Ally Bindings restarts.",
+                    "The native tap unload could not be confirmed. Native controller resets remain blocked until Windows restarts.",
                     captureTeardownFailure));
                 _mainWindow.SetArmouryCaptureStatus(
-                    "CAPTURE TEARDOWN UNCONFIRMED — native controller resets are blocked. Restart Ally Bindings before continuing.");
+                    "CAPTURE TEARDOWN UNCONFIRMED — native controller resets are blocked. Restart Windows before continuing.");
             }
         }
         if (deferredFailureMessage is not null && !cancellationToken.IsCancellationRequested)
@@ -1159,10 +1223,19 @@ public partial class App : System.Windows.Application
         }
         catch (Exception ex) when (_armouryCaptureTeardownUnconfirmed)
         {
+            if (_armouryCaptureBarrierPersistenceFailed)
+            {
+                await _mainWindow.ShowControllerDialogAsync(
+                    "Restart Windows required",
+                    "A native tap unload was not confirmed and Ally Bindings could not persist its write barrier. Ordinary app exit is blocked because reopening could enable writes. Restart Windows from the Start menu; Windows session shutdown is allowed.",
+                    primaryLabel: "Stay open",
+                    secondaryLabel: "Stay open");
+                return;
+            }
             var exitWithoutReset = await _mainWindow.ShowControllerDialogAsync(
                 "ETW capture teardown unconfirmed",
-                "The elevated capture helper did not confirm exit, so Ally Bindings will not issue any controller reset or backend shutdown write. Exiting now severs the capture pipe so Windows can tear the helper down.\n\n" +
-                $"Details: {ex.Message}\n\nExit Ally Bindings now?",
+                "A native tap unload was not confirmed, so Ally Bindings will not issue any controller reset or backend shutdown write. The fail-closed barrier is persisted across app restarts.\n\n" +
+                $"Details: {ex.Message}\n\nExit without reset now? Restart Windows before reopening Ally Bindings or using native controller writes.",
                 primaryLabel: "Exit without reset",
                 secondaryLabel: "Stay open");
             if (!exitWithoutReset)
@@ -1363,4 +1436,26 @@ public partial class App : System.Windows.Application
             // Best-effort teardown: continue through every cleanup action.
         }
     }
+
+    private static Guid? TryGetCurrentBootIdentifier()
+    {
+        var information = new SystemBootEnvironmentInformation();
+        var status = NtQuerySystemInformation(90, ref information,
+            Marshal.SizeOf<SystemBootEnvironmentInformation>(), out _);
+        return status == 0 && information.BootIdentifier != Guid.Empty
+            ? information.BootIdentifier
+            : null;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct SystemBootEnvironmentInformation
+    {
+        public Guid BootIdentifier;
+        public int FirmwareType;
+        public ulong BootFlags;
+    }
+
+    [DllImport("ntdll.dll")]
+    private static extern int NtQuerySystemInformation(int informationClass,
+        ref SystemBootEnvironmentInformation information, int informationLength, out int returnLength);
 }

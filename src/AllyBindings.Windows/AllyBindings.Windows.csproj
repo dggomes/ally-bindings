@@ -19,6 +19,9 @@
   <ItemGroup>
     <Resource Include="Assets\AllyBindings.ico" />
     <Resource Include="Assets\AllyBindings.png" />
+    <EmbeddedResource Include="..\..\native\ArmouryTap\build\Release\AllyBindings.ArmouryTap.dll"
+                      LogicalName="AllyBindings.Windows.Native.AllyBindings.ArmouryTap.dll"
+                      Condition="Exists('..\..\native\ArmouryTap\build\Release\AllyBindings.ArmouryTap.dll')" />
     <PackageReference Include="Microsoft.Diagnostics.Tracing.TraceEvent" Version="3.2.5" />
     <ProjectReference Include="..\AllyBindings.Core\AllyBindings.Core.csproj" />
     <PackageReference Include="HidSharp" Version="2.6.4" />

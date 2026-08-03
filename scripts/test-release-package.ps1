@@ -18,12 +18,15 @@ $required = @(
     'docs/ARCHITECTURE.md',
     'docs/HARDWARE-SPIKE.md',
     'docs/PLAN.md',
+    'docs/ARMOURY-TAP-SECURITY.md',
+    'docs/ARMOURY-TAP-USER-GUIDE.md',
     'docs/images/ally-bindings-capture-update.png',
     'docs/images/ally-bindings-controller.png',
     'docs/images/ally-bindings-profiles.png',
     'docs/images/ally-bindings-shortcut.png',
     'LICENSES/HidSharp-Apache-2.0.txt',
-    'LICENSES/TraceEvent-MIT.txt'
+    'LICENSES/TraceEvent-MIT.txt',
+    'LICENSES/MinHook-BSD-2-Clause.txt'
 )
 foreach ($relative in $required) {
     $path = Join-Path $PackageRoot $relative
@@ -76,7 +79,7 @@ finally {
 }
 
 $notices = Get-Content -Raw -LiteralPath (Join-Path $PackageRoot 'THIRD-PARTY-NOTICES.md')
-foreach ($dependency in @('HidSharp', 'Microsoft.Diagnostics.Tracing.TraceEvent')) {
+foreach ($dependency in @('HidSharp', 'Microsoft.Diagnostics.Tracing.TraceEvent', 'MinHook')) {
     if ($notices.IndexOf($dependency, [StringComparison]::OrdinalIgnoreCase) -lt 0) {
         throw "Third-party notices do not identify $dependency."
     }

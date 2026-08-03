@@ -73,6 +73,22 @@ public sealed class ConfigurationValidatorTests
     }
 
     [Fact]
+    public void Normalize_preserves_persisted_tap_teardown_barrier()
+    {
+        var blockedSince = DateTimeOffset.Parse("2026-08-03T01:00:00Z");
+        var bootIdentifier = Guid.Parse("c2765510-09cc-43c8-a7d0-ac0df1b490fe");
+
+        var result = ConfigurationValidator.Normalize(AppConfiguration.CreateDefault() with
+        {
+            ArmouryTapTeardownBlockedSinceUtc = blockedSince,
+            ArmouryTapTeardownBootIdentifier = bootIdentifier,
+        });
+
+        Assert.Equal(blockedSince, result.Configuration.ArmouryTapTeardownBlockedSinceUtc);
+        Assert.Equal(bootIdentifier, result.Configuration.ArmouryTapTeardownBootIdentifier);
+    }
+
+    [Fact]
     public void Rear_sources_accept_controller_outputs_but_standard_sources_cannot_target_rear_buttons()
     {
         var custom = new MappingProfile
