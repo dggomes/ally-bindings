@@ -37,8 +37,53 @@ internal static class HardwareLabPolicy
 
     internal static byte[] GetLogicalPacket() => LogicalPacket.ToArray();
 
+    internal static string ToHex(ReadOnlySpan<byte> bytes) => Convert.ToHexString(bytes);
+
     internal static string Sha256Hex(ReadOnlySpan<byte> bytes) =>
         Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant();
+
+    internal static ApprovedOperation CreateApprovedOperation(LabTargetSnapshot target)
+    {
+        ArgumentNullException.ThrowIfNull(target);
+        if (!target.Approved || string.IsNullOrWhiteSpace(target.InterfaceIdentityKey))
+            throw new ArgumentException("An approved exact-target snapshot is required.", nameof(target));
+
+        return new ApprovedOperation(target, BuildWirePacket(target.FeatureReportLength));
+    }
+
+    internal sealed class ApprovedOperation
+    {
+        private readonly byte[] wirePacket;
+
+        internal ApprovedOperation(LabTargetSnapshot target, byte[] wirePacket)
+        {
+            Target = target;
+            this.wirePacket = wirePacket.ToArray();
+            WireHex = ToHex(this.wirePacket);
+            WireSha256 = Sha256Hex(this.wirePacket);
+        }
+
+        internal LabTargetSnapshot Target { get; }
+
+        internal int WireLength => wirePacket.Length;
+
+        internal string WireHex { get; }
+
+        internal string WireSha256 { get; }
+
+        internal byte[] CopyWirePacket()
+        {
+            var expected = BuildWirePacket(Target.FeatureReportLength);
+            if (!wirePacket.AsSpan().SequenceEqual(expected) ||
+                !string.Equals(WireHex, ToHex(wirePacket), StringComparison.Ordinal) ||
+                !string.Equals(WireSha256, Sha256Hex(wirePacket), StringComparison.Ordinal))
+            {
+                throw new InvalidOperationException("Approved wire evidence no longer matches the fixed packet.");
+            }
+
+            return wirePacket.ToArray();
+        }
+    }
 
     internal static bool IsApprovedProductName(string? productName)
     {

@@ -46,13 +46,11 @@ internal static class Program
             return TargetRejected;
         }
 
-        var wirePacket = HardwareLabPolicy.BuildWirePacket(target.FeatureReportLength);
-        var wirePacketHex = Convert.ToHexString(wirePacket);
-        var wirePacketSha256 = HardwareLabPolicy.Sha256Hex(wirePacket);
+        var approvedOperation = HardwareLabPolicy.CreateApprovedOperation(target);
         Console.WriteLine($"Logical fixed command ({HardwareLabPolicy.LogicalReportLength} bytes): {Convert.ToHexString(HardwareLabPolicy.GetLogicalPacket())}");
         Console.WriteLine($"Logical SHA-256: {HardwareLabPolicy.LogicalPacketSha256}");
-        Console.WriteLine($"Exact wire packet ({wirePacket.Length} bytes): {wirePacketHex}");
-        Console.WriteLine($"Exact wire SHA-256: {wirePacketSha256}");
+        Console.WriteLine($"Exact wire packet ({approvedOperation.WireLength} bytes): {approvedOperation.WireHex}");
+        Console.WriteLine($"Exact wire SHA-256: {approvedOperation.WireSha256}");
 
         if (args[0] == HardwareLabPolicy.InspectCommand)
         {
@@ -62,7 +60,7 @@ internal static class Program
         }
 
         var audit = new LabAudit(
-            SchemaVersion: 2,
+            SchemaVersion: 3,
             ValidatorVersion: Assembly.GetExecutingAssembly().GetName().Version?.ToString() ?? "unknown",
             SessionId: Guid.NewGuid().ToString("N"),
             CreatedAtUtc: DateTimeOffset.UtcNow,
@@ -73,8 +71,8 @@ internal static class Program
             FeatureReportLength: target.FeatureReportLength,
             FixedMapping: "M1=A; M2=B",
             LogicalPacketSha256: HardwareLabPolicy.LogicalPacketSha256,
-            WirePacketHex: wirePacketHex,
-            WirePacketSha256: wirePacketSha256,
+            WirePacketHex: approvedOperation.WireHex,
+            WirePacketSha256: approvedOperation.WireSha256,
             Outcome: "not-attempted",
             Detail: "Pre-write audit created before authorization.",
             AttemptedInterfaces: 0,
@@ -134,7 +132,7 @@ internal static class Program
         {
             operationEntered = true;
             write = await ExactRc73xaLabWriter.WriteAsync(
-                target,
+                approvedOperation,
                 cancellation.Token).ConfigureAwait(false);
         }
         catch (OperationCanceledException)
@@ -277,7 +275,7 @@ internal static class LabAuditStore
         Directory.CreateDirectory(root);
         var claim = new
         {
-            schemaVersion = 2,
+            schemaVersion = 3,
             claimedAtUtc = DateTimeOffset.UtcNow,
             audit.SessionId,
             audit.ValidatorVersion,
@@ -295,13 +293,21 @@ internal static class LabAuditStore
 
     private static async Task WriteCreateNewAsync(string path, byte[] bytes, CancellationToken cancellationToken)
     {
-        await using var stream = new FileStream(path, FileMode.CreateNew, FileAccess.Write, FileShare.Read, 4096, useAsync: true);
+        await using var stream = new FileStream(path, new FileStreamOptions
+        {
+            Mode = FileMode.CreateNew,
+            Access = FileAccess.Write,
+            Share = FileShare.Read,
+            BufferSize = 4096,
+            Options = FileOptions.Asynchronous | FileOptions.WriteThrough,
+        });
         await stream.WriteAsync(bytes, cancellationToken).ConfigureAwait(false);
         await stream.FlushAsync(cancellationToken).ConfigureAwait(false);
+        stream.Flush(flushToDisk: true);
     }
 
     private static string GetRoot() => Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+        Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
         "AllyBindings",
         "HardwareValidator");
 }

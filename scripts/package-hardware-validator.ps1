@@ -45,17 +45,22 @@ Assert-NativeSuccess 'hardware validator publish'
 
 Get-ChildItem -LiteralPath $publishDir -Filter '*.pdb' -File | Remove-Item -Force
 Copy-Item (Join-Path $repo 'lab/HARDWARE-VALIDATOR-RUNBOOK.md') (Join-Path $publishDir 'RUNBOOK.md')
-Copy-Item (Join-Path $repo 'THIRD-PARTY-NOTICES.md') $publishDir
+Copy-Item (Join-Path $repo 'lab/HARDWARE-VALIDATOR-NOTICES.txt') (Join-Path $publishDir 'VALIDATOR-NOTICES.txt')
+Copy-Item (Join-Path $repo 'lab/Verify-HardwareValidator-Package.ps1') (Join-Path $publishDir 'Verify-Package.ps1')
 Copy-Item (Join-Path $repo 'LICENSE') $publishDir
 New-Item -ItemType Directory -Path (Join-Path $publishDir 'LICENSES') -Force | Out-Null
-Copy-Item (Join-Path $repo 'LICENSES/HidSharp-Apache-2.0.txt') (Join-Path $publishDir 'LICENSES')
+$dotnetRoot = Split-Path -Parent $dotnet
+Copy-Item (Join-Path $dotnetRoot 'LICENSE.txt') (Join-Path $publishDir 'LICENSES/dotnet-LICENSE.txt')
+Copy-Item (Join-Path $dotnetRoot 'ThirdPartyNotices.txt') (Join-Path $publishDir 'LICENSES/dotnet-ThirdPartyNotices.txt')
 
 $hashedFiles = @(
     'AllyBindings.HardwareValidator.exe',
-    'RUNBOOK.md',
-    'THIRD-PARTY-NOTICES.md',
     'LICENSE',
-    'LICENSES/HidSharp-Apache-2.0.txt'
+    'LICENSES/dotnet-LICENSE.txt',
+    'LICENSES/dotnet-ThirdPartyNotices.txt',
+    'RUNBOOK.md',
+    'VALIDATOR-NOTICES.txt',
+    'Verify-Package.ps1'
 )
 $checksumLines = foreach ($relative in $hashedFiles) {
     $hash = (Get-FileHash -LiteralPath (Join-Path $publishDir $relative) -Algorithm SHA256).Hash.ToLowerInvariant()
@@ -66,4 +71,5 @@ $checksumLines = foreach ($relative in $hashedFiles) {
 Compress-Archive -Path "$publishDir/*" -DestinationPath $zipPath -CompressionLevel Optimal
 & (Join-Path $repo 'scripts/test-hardware-validator-safety.ps1') -PackageRoot $publishDir -ZipPath $zipPath
 Assert-NativeSuccess 'hardware validator safety validation'
+& (Join-Path $publishDir 'Verify-Package.ps1')
 Write-Output "Created controlled lab hardware validator: $zipPath"

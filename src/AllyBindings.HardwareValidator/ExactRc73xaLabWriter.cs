@@ -1,79 +1,74 @@
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text;
-using HidSharp;
-using HidSharp.Reports;
 using Microsoft.Win32;
 using Microsoft.Win32.SafeHandles;
 
 namespace AllyBindings.HardwareValidator;
 
-/// <summary>
-/// Exact RC73XA lab transport. The sole mutation accepts only the already-built
-/// pinned wire packet and performs one SET_FEATURE through a same-handle-validated
-/// VID_0B05/PID_1B4C handle. There is no readback, reset, arbitrary mapping, or retry.
-/// </summary>
 internal static class ExactRc73xaLabWriter
 {
-    private static readonly TimeSpan OperationTimeout = TimeSpan.FromSeconds(3);
-    private const string AsusManufacturer = "ASUSTeK COMPUTER INC.";
+    private const uint DigcfPresent = 0x00000002;
+    private const uint DigcfDeviceInterface = 0x00000010;
+    private const uint GenericWrite = 0x40000000;
+    private const uint FileShareRead = 0x00000001;
+    private const uint FileShareWrite = 0x00000002;
+    private const uint OpenExisting = 3;
+    private const int HidpFeature = 2;
+    private const int HidpStatusSuccess = 0x00110000;
+    private static readonly TimeSpan OperationTimeout = TimeSpan.FromSeconds(5);
 
-    internal static async Task<LabTargetSnapshot> InspectAsync(CancellationToken cancellationToken)
-    {
-        cancellationToken.ThrowIfCancellationRequested();
-        var operation = Task.Run(Inspect, CancellationToken.None);
-        if (await Task.WhenAny(operation, Task.Delay(OperationTimeout, cancellationToken)).ConfigureAwait(false) == operation)
-            return await operation.ConfigureAwait(false);
-        ObserveLateFailure(operation);
-        cancellationToken.ThrowIfCancellationRequested();
-        return new(false, ReadProductName(), string.Empty, 0, "Target inspection timed out; no hardware write was attempted.");
-    }
+    internal static Task<LabTargetSnapshot> InspectAsync(CancellationToken cancellationToken) =>
+        Task.Run(Inspect, cancellationToken);
 
     internal static async Task<LabWriteResult> WriteAsync(
-        LabTargetSnapshot approvedTarget,
+        HardwareLabPolicy.ApprovedOperation approvedOperation,
         CancellationToken cancellationToken)
     {
-        ArgumentNullException.ThrowIfNull(approvedTarget);
-        if (!approvedTarget.Approved || string.IsNullOrWhiteSpace(approvedTarget.InterfaceIdentityKey))
-            throw new ArgumentException("An approved exact-target snapshot is required.", nameof(approvedTarget));
+        ArgumentNullException.ThrowIfNull(approvedOperation);
+        var target = approvedOperation.Target;
+        if (!target.Approved || string.IsNullOrWhiteSpace(target.InterfaceIdentityKey))
+            throw new ArgumentException("An approved exact-target operation is required.", nameof(approvedOperation));
 
         cancellationToken.ThrowIfCancellationRequested();
-        var immutablePacket = HardwareLabPolicy.BuildWirePacket(approvedTarget.FeatureReportLength);
+        var immutablePacket = approvedOperation.CopyWirePacket();
         var operation = Task.Run(
-            () => WritePinnedHandle(
-                immutablePacket,
-                approvedTarget.InterfaceIdentityKey,
-                approvedTarget.FeatureReportLength),
+            () => WritePinnedHandle(immutablePacket, target.InterfaceIdentityKey, target.FeatureReportLength),
             CancellationToken.None);
         if (await Task.WhenAny(operation, Task.Delay(OperationTimeout, cancellationToken)).ConfigureAwait(false) == operation)
             return await operation.ConfigureAwait(false);
 
-        ObserveLateFailure(operation);
-        cancellationToken.ThrowIfCancellationRequested();
-        return new(1, 0, "The pinned RC73XA HID write timed out; its outcome is unknown and Armoury recovery remains required.");
+        _ = operation.ContinueWith(
+            task => _ = task.Exception,
+            CancellationToken.None,
+            TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously,
+            TaskScheduler.Default);
+        throw new TimeoutException("The single HID operation did not finish within five seconds; outcome is unknown.");
     }
 
     private static LabTargetSnapshot Inspect()
     {
-        var model = ReadProductName();
-        if (!IsExactSystemIdentity())
-            return new(false, model, string.Empty, 0, "System DMI is not the exact approved ASUS RC73XA identity.");
+        if (!OperatingSystem.IsWindows() || !Environment.Is64BitProcess || !HasExpectedNativeLayout())
+            return Rejected("The controlled validator requires 64-bit Windows.");
 
-        var candidates = FindExactCandidates();
+        var (manufacturer, productName) = ReadDmiIdentity();
+        if (!manufacturer.Equals("ASUSTeK COMPUTER INC.", StringComparison.OrdinalIgnoreCase) ||
+            !HardwareLabPolicy.IsApprovedProductName(productName))
+        {
+            return Rejected("DMI identity is not the exact approved ASUS RC73XA target.", productName);
+        }
+
+        var candidates = EnumerateValidatedCandidates(desiredAccess: 0);
         if (candidates.Count != 1)
-            return new(false, model, string.Empty, 0, $"Expected exactly one RC73XA/PID_1B4C report-0x5A interface; found {candidates.Count}.");
+            return Rejected($"Expected exactly one same-handle validated PID_1B4C/report-0x5A interface; found {candidates.Count}.", productName);
 
-        var device = candidates[0];
-        using var handle = OpenValidatedHandle(device, out var featureReportLength, out var failure);
-        if (handle is null)
-            return new(false, model, string.Empty, 0, failure);
-
+        var candidate = candidates[0];
         return new(
             true,
-            model,
-            BuildInterfaceIdentityKey(device),
-            featureReportLength,
-            "Exact ASUS RC73XA DMI, VID_0B05/PID_1B4C, report-0x5A descriptor, and native handle caps validated without reading a feature report.");
+            productName,
+            candidate.IdentityKey,
+            candidate.FeatureReportLength,
+            "Exact RC73XA/PID_1B4C/report-0x5A target approved using native same-handle descriptor validation.");
     }
 
     private static LabWriteResult WritePinnedHandle(
@@ -81,217 +76,313 @@ internal static class ExactRc73xaLabWriter
         string expectedInterfaceIdentityKey,
         int expectedFeatureReportLength)
     {
-        if (!IsExactSystemIdentity())
-            return new(0, 0, "Exact ASUS RC73XA DMI identity changed after confirmation; no write was attempted.");
-
-        var candidates = FindExactCandidates();
-        if (candidates.Count != 1)
-            return new(0, 0, $"Expected exactly one RC73XA/PID_1B4C interface at write time; found {candidates.Count}.");
-
-        var device = candidates[0];
-        if (!BuildInterfaceIdentityKey(device).Equals(expectedInterfaceIdentityKey, StringComparison.Ordinal))
-            return new(0, 0, "Exact HID interface identity changed after confirmation; no write was attempted.");
-
-        using var handle = OpenValidatedHandle(device, out var featureReportLength, out var failure);
-        if (handle is null)
-            return new(0, 0, failure);
-        if (featureReportLength != expectedFeatureReportLength || fixedWirePacket.Length != featureReportLength)
-            return new(0, 0, "Feature-report length changed after confirmation; no write was attempted.");
-
-        // DMI is checked again while the validated native handle remains pinned.
-        if (!IsExactSystemIdentity())
-            return new(0, 0, "Exact ASUS RC73XA DMI identity changed while the HID handle was pinned; no write was attempted.");
-
-        if (!NativeMethods.HidD_SetFeature(handle, fixedWirePacket, fixedWirePacket.Length))
-            return new(1, 0, $"The pinned VID_0B05/PID_1B4C handle rejected SET_FEATURE ({Marshal.GetLastWin32Error()}); Armoury recovery remains required.");
-
-        return new(1, 1, "The same-handle-validated VID_0B05/PID_1B4C interface accepted the sole fixed M1=A/M2=B SET_FEATURE call.");
-    }
-
-    private static SafeFileHandle? OpenValidatedHandle(
-        HidDevice device,
-        out int featureReportLength,
-        out string failure)
-    {
-        featureReportLength = 0;
-        var handle = NativeMethods.CreateFileW(
-            device.GetFileSystemName(),
-            NativeMethods.GenericRead | NativeMethods.GenericWrite,
-            NativeMethods.FileShareRead | NativeMethods.FileShareWrite,
-            IntPtr.Zero,
-            NativeMethods.OpenExisting,
-            0,
-            IntPtr.Zero);
-        if (handle.IsInvalid)
+        var (manufacturer, productName) = ReadDmiIdentity();
+        if (!manufacturer.Equals("ASUSTeK COMPUTER INC.", StringComparison.OrdinalIgnoreCase) ||
+            !HardwareLabPolicy.IsApprovedProductName(productName))
         {
-            failure = $"Exact RC73XA HID handle could not be opened ({Marshal.GetLastWin32Error()}).";
-            handle.Dispose();
-            return null;
+            return new(0, 0, "DMI identity changed before the write.");
         }
 
-        var attributes = new NativeMethods.HiddAttributes { Size = Marshal.SizeOf<NativeMethods.HiddAttributes>() };
-        if (!NativeMethods.HidD_GetAttributes(handle, ref attributes) ||
-            attributes.VendorId != HardwareLabPolicy.TargetVendorId ||
-            attributes.ProductId != HardwareLabPolicy.TargetProductId)
+        var candidates = EnumerateValidatedCandidates(desiredAccess: 0);
+        if (candidates.Count != 1 ||
+            !string.Equals(candidates[0].IdentityKey, expectedInterfaceIdentityKey, StringComparison.Ordinal) ||
+            candidates[0].FeatureReportLength != expectedFeatureReportLength)
         {
-            failure = "Opened HID handle did not revalidate as VID_0B05/PID_1B4C.";
-            handle.Dispose();
-            return null;
+            return new(0, 0, "Exact target topology or descriptor identity changed before the write.");
         }
 
-        if (!TryGetCaps(handle, out var caps) ||
-            !HardwareLabPolicy.IsApprovedInterface(
-                attributes.VendorId,
-                attributes.ProductId,
-                caps.FeatureReportByteLength,
-                caps.FeatureReportByteLength))
+        using var handle = OpenDevice(candidates[0].Path, GenericWrite);
+        if (handle.IsInvalid ||
+            !TryValidateHandle(handle, out var featureReportLength) ||
+            featureReportLength != expectedFeatureReportLength ||
+            fixedWirePacket.Length != expectedFeatureReportLength ||
+            fixedWirePacket[0] != HardwareLabPolicy.FeatureReportId)
         {
-            failure = "Opened HID handle feature caps were outside the bounded 50-64-byte contract.";
-            handle.Dispose();
-            return null;
+            return new(0, 0, "The pinned write handle failed exact VID/PID/report-0x5A/caps revalidation.");
         }
 
-        featureReportLength = caps.FeatureReportByteLength;
-        failure = string.Empty;
-        return handle;
+        var expectedPacket = HardwareLabPolicy.BuildWirePacket(featureReportLength);
+        if (!fixedWirePacket.AsSpan().SequenceEqual(expectedPacket))
+            return new(0, 0, "The approved wire packet changed before SET_FEATURE.");
+
+        var accepted = HidD_SetFeature(handle, fixedWirePacket, fixedWirePacket.Length);
+        var error = Marshal.GetLastWin32Error();
+        GC.KeepAlive(fixedWirePacket);
+        return accepted
+            ? new(1, 1, "hid-api-accepted")
+            : new(1, 0, $"hid-api-rejected-win32-{error}");
     }
 
-    private static List<HidDevice> FindExactCandidates()
+    private static List<NativeCandidate> EnumerateValidatedCandidates(uint desiredAccess)
     {
-        var candidates = new List<HidDevice>();
-        foreach (var device in DeviceList.Local.GetHidDevices(HardwareLabPolicy.TargetVendorId, HardwareLabPolicy.TargetProductId))
-        {
-            try
-            {
-                if (device.GetReportDescriptor().TryGetReport(
-                        ReportType.Feature,
-                        HardwareLabPolicy.FeatureReportId,
-                        out var featureReport) &&
-                    HardwareLabPolicy.IsApprovedInterface(
-                        device.VendorID,
-                        device.ProductID,
-                        device.GetMaxFeatureReportLength(),
-                        featureReport.Length))
-                    candidates.Add(device);
-            }
-            catch (Exception)
-            {
-                // A disappearing or unreadable interface is never an approved candidate.
-            }
-        }
-        return candidates.OrderBy(device => device.GetFileSystemName(), StringComparer.OrdinalIgnoreCase).ToList();
-    }
+        HidD_GetHidGuid(out var hidGuid);
+        var set = SetupDiGetClassDevsW(ref hidGuid, null, IntPtr.Zero, DigcfPresent | DigcfDeviceInterface);
+        if (set == new IntPtr(-1)) return [];
 
-    private static bool TryGetCaps(SafeFileHandle handle, out NativeMethods.HidpCaps caps)
-    {
-        caps = new NativeMethods.HidpCaps { Reserved = new ushort[17] };
-        if (!NativeMethods.HidD_GetPreparsedData(handle, out var preparsedData)) return false;
-        try { return NativeMethods.HidP_GetCaps(preparsedData, ref caps) == NativeMethods.HidpStatusSuccess; }
-        finally { _ = NativeMethods.HidD_FreePreparsedData(preparsedData); }
-    }
-
-    private static bool IsExactSystemIdentity()
-    {
         try
         {
-            var manufacturer = Registry.GetValue(
-                @"HKEY_LOCAL_MACHINE\HARDWARE\DESCRIPTION\System\BIOS", "SystemManufacturer", null) as string;
-            return manufacturer?.Trim().Equals(AsusManufacturer, StringComparison.OrdinalIgnoreCase) == true &&
-                   HardwareLabPolicy.IsApprovedProductName(ReadProductName());
+            var results = new List<NativeCandidate>();
+            for (uint index = 0; ; index++)
+            {
+                var interfaceData = new SpDeviceInterfaceData { Size = NativeHidLayout.DeviceInterfaceDataSize };
+                if (!SetupDiEnumDeviceInterfaces(set, IntPtr.Zero, ref hidGuid, index, ref interfaceData))
+                {
+                    if (Marshal.GetLastWin32Error() == 259) break;
+                    return [];
+                }
+
+                _ = SetupDiGetDeviceInterfaceDetailW(set, ref interfaceData, IntPtr.Zero, 0, out var required, IntPtr.Zero);
+                if (required < 8 || required > 32_768) continue;
+
+                var detail = Marshal.AllocHGlobal(checked((int)required));
+                try
+                {
+                    Marshal.WriteInt32(detail, NativeHidLayout.DeviceInterfaceDetailCbSize);
+                    if (!SetupDiGetDeviceInterfaceDetailW(set, ref interfaceData, detail, required, out _, IntPtr.Zero))
+                        continue;
+
+                    var path = Marshal.PtrToStringUni(IntPtr.Add(detail, NativeHidLayout.DeviceInterfacePathOffset));
+                    if (string.IsNullOrWhiteSpace(path)) continue;
+
+                    using var handle = OpenDevice(path, desiredAccess);
+                    if (handle.IsInvalid || !TryValidateHandle(handle, out var featureReportLength))
+                        continue;
+
+                    results.Add(new(path, StableIdentityKey(path), featureReportLength));
+                }
+                finally
+                {
+                    Marshal.FreeHGlobal(detail);
+                }
+            }
+
+            return results;
         }
-        catch (Exception ex) when (ex is System.Security.SecurityException or UnauthorizedAccessException)
+        finally
+        {
+            _ = SetupDiDestroyDeviceInfoList(set);
+        }
+    }
+
+    private static bool TryValidateHandle(SafeFileHandle handle, out int featureReportLength)
+    {
+        featureReportLength = 0;
+        var attributes = new HiddAttributes { Size = Marshal.SizeOf<HiddAttributes>() };
+        if (!HidD_GetAttributes(handle, ref attributes) ||
+            attributes.VendorId != HardwareLabPolicy.TargetVendorId ||
+            attributes.ProductId != HardwareLabPolicy.TargetProductId ||
+            !HidD_GetPreparsedData(handle, out var preparsedData))
         {
             return false;
         }
-    }
 
-    private static string ReadProductName()
-    {
         try
         {
-            return (Registry.GetValue(
-                @"HKEY_LOCAL_MACHINE\HARDWARE\DESCRIPTION\System\BIOS", "SystemProductName", null) as string)?.Trim() ?? "Unknown";
+            var caps = new HidpCaps { Reserved = new ushort[17] };
+            if (HidP_GetCaps(preparsedData, ref caps) != HidpStatusSuccess ||
+                !HardwareLabPolicy.IsApprovedInterface(
+                    attributes.VendorId,
+                    attributes.ProductId,
+                    caps.FeatureReportByteLength,
+                    caps.FeatureReportByteLength) ||
+                !HasFeatureReportId(preparsedData, caps, HardwareLabPolicy.FeatureReportId))
+            {
+                return false;
+            }
+
+            featureReportLength = caps.FeatureReportByteLength;
+            return true;
         }
-        catch (Exception ex) when (ex is System.Security.SecurityException or UnauthorizedAccessException)
+        finally
         {
-            return "Unknown";
+            _ = HidD_FreePreparsedData(preparsedData);
         }
     }
 
-    private static string BuildInterfaceIdentityKey(HidDevice device)
+    private static bool HasFeatureReportId(IntPtr preparsedData, HidpCaps caps, byte reportId) =>
+        ContainsValueReportId(preparsedData, caps.NumberFeatureValueCaps, reportId) ||
+        ContainsButtonReportId(preparsedData, caps.NumberFeatureButtonCaps, reportId);
+
+    private static bool ContainsValueReportId(IntPtr preparsedData, ushort capacity, byte reportId)
     {
-        var normalizedPath = device.GetFileSystemName().Trim().ToUpperInvariant();
-        return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(normalizedPath)));
-    }
-
-    private static void ObserveLateFailure(Task operation)
-    {
-        _ = operation.ContinueWith(
-            static completed => _ = completed.Exception,
-            CancellationToken.None,
-            TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously,
-            TaskScheduler.Default);
-    }
-
-    private static class NativeMethods
-    {
-        internal const uint GenericRead = 0x80000000;
-        internal const uint GenericWrite = 0x40000000;
-        internal const uint FileShareRead = 1;
-        internal const uint FileShareWrite = 2;
-        internal const uint OpenExisting = 3;
-        internal const int HidpStatusSuccess = 0x00110000;
-
-        [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
-        internal static extern SafeFileHandle CreateFileW(string fileName, uint desiredAccess, uint shareMode, IntPtr securityAttributes, uint creationDisposition, uint flagsAndAttributes, IntPtr templateFile);
-
-        [DllImport("hid.dll", SetLastError = true)]
-        [return: MarshalAs(UnmanagedType.Bool)]
-        internal static extern bool HidD_GetAttributes(SafeFileHandle device, ref HiddAttributes attributes);
-
-        [DllImport("hid.dll", SetLastError = true)]
-        [return: MarshalAs(UnmanagedType.Bool)]
-        internal static extern bool HidD_GetPreparsedData(SafeFileHandle device, out IntPtr preparsedData);
-
-        [DllImport("hid.dll")]
-        [return: MarshalAs(UnmanagedType.Bool)]
-        internal static extern bool HidD_FreePreparsedData(IntPtr preparsedData);
-
-        [DllImport("hid.dll")]
-        internal static extern int HidP_GetCaps(IntPtr preparsedData, ref HidpCaps caps);
-
-        [DllImport("hid.dll", SetLastError = true)]
-        [return: MarshalAs(UnmanagedType.Bool)]
-        internal static extern bool HidD_SetFeature(SafeFileHandle device, byte[] reportBuffer, int reportBufferLength);
-
-        [StructLayout(LayoutKind.Sequential)]
-        internal struct HiddAttributes
+        if (capacity == 0 || capacity > 1_024) return false;
+        var buffer = Marshal.AllocHGlobal(checked(capacity * NativeHidLayout.ValueCapsSize));
+        try
         {
-            internal int Size;
-            internal ushort VendorId;
-            internal ushort ProductId;
-            internal ushort VersionNumber;
+            ushort length = capacity;
+            return HidP_GetSpecificValueCaps(HidpFeature, 0, 0, 0, buffer, ref length, preparsedData) == HidpStatusSuccess &&
+                   length <= capacity &&
+                   NativeHidLayout.ContainsReportId(buffer, length, NativeHidLayout.ValueCapsSize, reportId);
         }
-
-        [StructLayout(LayoutKind.Sequential)]
-        internal struct HidpCaps
+        finally
         {
-            internal ushort Usage;
-            internal ushort UsagePage;
-            internal ushort InputReportByteLength;
-            internal ushort OutputReportByteLength;
-            internal ushort FeatureReportByteLength;
-            [MarshalAs(UnmanagedType.ByValArray, SizeConst = 17)] internal ushort[] Reserved;
-            internal ushort NumberLinkCollectionNodes;
-            internal ushort NumberInputButtonCaps;
-            internal ushort NumberInputValueCaps;
-            internal ushort NumberInputDataIndices;
-            internal ushort NumberOutputButtonCaps;
-            internal ushort NumberOutputValueCaps;
-            internal ushort NumberOutputDataIndices;
-            internal ushort NumberFeatureButtonCaps;
-            internal ushort NumberFeatureValueCaps;
-            internal ushort NumberFeatureDataIndices;
+            Marshal.FreeHGlobal(buffer);
         }
     }
+
+    private static bool ContainsButtonReportId(IntPtr preparsedData, ushort capacity, byte reportId)
+    {
+        if (capacity == 0 || capacity > 1_024) return false;
+        var buffer = Marshal.AllocHGlobal(checked(capacity * NativeHidLayout.ButtonCapsSize));
+        try
+        {
+            ushort length = capacity;
+            return HidP_GetSpecificButtonCaps(HidpFeature, 0, 0, 0, buffer, ref length, preparsedData) == HidpStatusSuccess &&
+                   length <= capacity &&
+                   NativeHidLayout.ContainsReportId(buffer, length, NativeHidLayout.ButtonCapsSize, reportId);
+        }
+        finally
+        {
+            Marshal.FreeHGlobal(buffer);
+        }
+    }
+
+    private static SafeFileHandle OpenDevice(string path, uint desiredAccess) =>
+        CreateFileW(path, desiredAccess, FileShareRead | FileShareWrite, IntPtr.Zero, OpenExisting, 0, IntPtr.Zero);
+
+    private static bool HasExpectedNativeLayout() =>
+        Marshal.SizeOf<HidpCaps>() == NativeHidLayout.HidpCapsSize &&
+        Marshal.SizeOf<HiddAttributes>() == NativeHidLayout.HiddAttributesSize &&
+        Marshal.SizeOf<SpDeviceInterfaceData>() == NativeHidLayout.DeviceInterfaceDataSize;
+
+    private static LabTargetSnapshot Rejected(string message, string model = "unknown") =>
+        new(false, model, string.Empty, 0, message);
+
+    private static (string Manufacturer, string ProductName) ReadDmiIdentity()
+    {
+        using var key = Registry.LocalMachine.OpenSubKey(@"HARDWARE\DESCRIPTION\System\BIOS", writable: false);
+        return (
+            Convert.ToString(key?.GetValue("SystemManufacturer"))?.Trim() ?? string.Empty,
+            Convert.ToString(key?.GetValue("SystemProductName"))?.Trim() ?? string.Empty);
+    }
+
+    private static string StableIdentityKey(string path)
+    {
+        var normalized = path.Trim().ToUpperInvariant();
+        return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(normalized))).ToLowerInvariant();
+    }
+
+    private sealed record NativeCandidate(string Path, string IdentityKey, int FeatureReportLength);
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct SpDeviceInterfaceData
+    {
+        internal uint Size;
+        internal Guid InterfaceClassGuid;
+        internal uint Flags;
+        internal UIntPtr Reserved;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct HiddAttributes
+    {
+        internal int Size;
+        internal ushort VendorId;
+        internal ushort ProductId;
+        internal ushort VersionNumber;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct HidpCaps
+    {
+        internal ushort Usage;
+        internal ushort UsagePage;
+        internal ushort InputReportByteLength;
+        internal ushort OutputReportByteLength;
+        internal ushort FeatureReportByteLength;
+        [MarshalAs(UnmanagedType.ByValArray, SizeConst = 17)]
+        internal ushort[] Reserved;
+        internal ushort NumberLinkCollectionNodes;
+        internal ushort NumberInputButtonCaps;
+        internal ushort NumberInputValueCaps;
+        internal ushort NumberInputDataIndices;
+        internal ushort NumberOutputButtonCaps;
+        internal ushort NumberOutputValueCaps;
+        internal ushort NumberOutputDataIndices;
+        internal ushort NumberFeatureButtonCaps;
+        internal ushort NumberFeatureValueCaps;
+        internal ushort NumberFeatureDataIndices;
+    }
+
+    [DllImport("hid.dll")]
+    private static extern void HidD_GetHidGuid(out Guid hidGuid);
+
+    [DllImport("setupapi.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern IntPtr SetupDiGetClassDevsW(
+        ref Guid classGuid,
+        string? enumerator,
+        IntPtr parent,
+        uint flags);
+
+    [DllImport("setupapi.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool SetupDiEnumDeviceInterfaces(
+        IntPtr deviceInfoSet,
+        IntPtr deviceInfoData,
+        ref Guid interfaceClassGuid,
+        uint memberIndex,
+        ref SpDeviceInterfaceData deviceInterfaceData);
+
+    [DllImport("setupapi.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool SetupDiGetDeviceInterfaceDetailW(
+        IntPtr deviceInfoSet,
+        ref SpDeviceInterfaceData deviceInterfaceData,
+        IntPtr deviceInterfaceDetailData,
+        uint deviceInterfaceDetailDataSize,
+        out uint requiredSize,
+        IntPtr deviceInfoData);
+
+    [DllImport("setupapi.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool SetupDiDestroyDeviceInfoList(IntPtr deviceInfoSet);
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern SafeFileHandle CreateFileW(
+        string fileName,
+        uint desiredAccess,
+        uint shareMode,
+        IntPtr securityAttributes,
+        uint creationDisposition,
+        uint flagsAndAttributes,
+        IntPtr templateFile);
+
+    [DllImport("hid.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool HidD_GetAttributes(SafeFileHandle hidDeviceObject, ref HiddAttributes attributes);
+
+    [DllImport("hid.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool HidD_GetPreparsedData(SafeFileHandle hidDeviceObject, out IntPtr preparsedData);
+
+    [DllImport("hid.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool HidD_FreePreparsedData(IntPtr preparsedData);
+
+    [DllImport("hid.dll")]
+    private static extern int HidP_GetCaps(IntPtr preparsedData, ref HidpCaps capabilities);
+
+    [DllImport("hid.dll")]
+    private static extern int HidP_GetSpecificValueCaps(
+        int reportType,
+        ushort usagePage,
+        ushort linkCollection,
+        ushort usage,
+        IntPtr valueCaps,
+        ref ushort valueCapsLength,
+        IntPtr preparsedData);
+
+    [DllImport("hid.dll")]
+    private static extern int HidP_GetSpecificButtonCaps(
+        int reportType,
+        ushort usagePage,
+        ushort linkCollection,
+        ushort usage,
+        IntPtr buttonCaps,
+        ref ushort buttonCapsLength,
+        IntPtr preparsedData);
+
+    [DllImport("hid.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool HidD_SetFeature(SafeFileHandle hidDeviceObject, byte[] reportBuffer, int reportBufferLength);
 }

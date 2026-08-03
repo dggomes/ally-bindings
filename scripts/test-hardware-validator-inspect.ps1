@@ -7,7 +7,7 @@ if (-not (Test-Path -LiteralPath $ExecutablePath -PathType Leaf)) {
     throw "Hardware validator executable is missing: $ExecutablePath"
 }
 
-$auditRoot = Join-Path $env:LOCALAPPDATA 'AllyBindings/HardwareValidator'
+$auditRoot = Join-Path $env:ProgramData 'AllyBindings/HardwareValidator'
 $before = if (Test-Path -LiteralPath $auditRoot) {
     @(Get-ChildItem -LiteralPath $auditRoot -File | Select-Object -ExpandProperty FullName)
 }

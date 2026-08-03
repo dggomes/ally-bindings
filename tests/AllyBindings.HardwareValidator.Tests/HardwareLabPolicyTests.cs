@@ -1,4 +1,5 @@
 using System.Security.Cryptography;
+using System.Runtime.InteropServices;
 
 namespace AllyBindings.HardwareValidator.Tests;
 
@@ -74,5 +75,64 @@ public sealed class HardwareLabPolicyTests
         Assert.False(HardwareLabPolicy.Authorize(HardwareLabPolicy.WriteCommand, "wrong", false, 1).Approved);
         Assert.False(HardwareLabPolicy.Authorize(HardwareLabPolicy.WriteCommand, HardwareLabPolicy.ConfirmationPhrase, true, 1).Approved);
         Assert.False(HardwareLabPolicy.Authorize(HardwareLabPolicy.WriteCommand, HardwareLabPolicy.ConfirmationPhrase, false, 2).Approved);
+    }
+
+    [Fact]
+    public void Approved_operation_binds_displayed_hashed_audited_and_writer_bytes_for_every_accepted_length()
+    {
+        foreach (var length in Enumerable.Range(
+                     HardwareLabPolicy.LogicalReportLength,
+                     HardwareLabPolicy.MaximumWireReportLength - HardwareLabPolicy.LogicalReportLength + 1))
+        {
+            var target = new LabTargetSnapshot(true, "RC73XA", "identity", length, "approved");
+            var operation = HardwareLabPolicy.CreateApprovedOperation(target);
+            var writerBytes = operation.CopyWirePacket();
+
+            Assert.Equal(length, operation.WireLength);
+            Assert.Equal(operation.WireHex, Convert.ToHexString(writerBytes));
+            Assert.Equal(operation.WireSha256, HardwareLabPolicy.Sha256Hex(writerBytes));
+            Assert.Equal(HardwareLabPolicy.BuildWirePacket(length), writerBytes);
+
+            writerBytes[0] ^= 0xFF;
+            Assert.Equal(HardwareLabPolicy.FeatureReportId, operation.CopyWirePacket()[0]);
+        }
+    }
+
+    [Fact]
+    public void Approved_operation_rejects_any_internally_nonfixed_packet()
+    {
+        var target = new LabTargetSnapshot(true, "RC73XA", "identity", 50, "approved");
+        var operation = new HardwareLabPolicy.ApprovedOperation(target, new byte[50]);
+
+        Assert.Throws<InvalidOperationException>(() => operation.CopyWirePacket());
+    }
+
+    [Fact]
+    public void Native_caps_layout_finds_only_the_requested_report_id()
+    {
+        Assert.Equal(72, NativeHidLayout.ValueCapsSize);
+        Assert.Equal(72, NativeHidLayout.ButtonCapsSize);
+        Assert.Equal(2, NativeHidLayout.ReportIdOffset);
+        Assert.Equal(64, NativeHidLayout.HidpCapsSize);
+        Assert.Equal(12, NativeHidLayout.HiddAttributesSize);
+        Assert.Equal(32, NativeHidLayout.DeviceInterfaceDataSize);
+        Assert.Equal(8, NativeHidLayout.DeviceInterfaceDetailCbSize);
+        Assert.Equal(4, NativeHidLayout.DeviceInterfacePathOffset);
+
+        var buffer = Marshal.AllocHGlobal(NativeHidLayout.ValueCapsSize * 2);
+        try
+        {
+            for (var index = 0; index < NativeHidLayout.ValueCapsSize * 2; index++)
+                Marshal.WriteByte(buffer, index, 0);
+            Marshal.WriteByte(buffer, NativeHidLayout.ReportIdOffset, 0x01);
+            Marshal.WriteByte(buffer, NativeHidLayout.ValueCapsSize + NativeHidLayout.ReportIdOffset, 0x5A);
+
+            Assert.True(NativeHidLayout.ContainsReportId(buffer, 2, NativeHidLayout.ValueCapsSize, 0x5A));
+            Assert.False(NativeHidLayout.ContainsReportId(buffer, 2, NativeHidLayout.ValueCapsSize, 0x5B));
+        }
+        finally
+        {
+            Marshal.FreeHGlobal(buffer);
+        }
     }
 }

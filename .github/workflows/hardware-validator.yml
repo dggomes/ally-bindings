@@ -9,7 +9,13 @@ on:
         type: string
 
 permissions:
+  attestations: write
   contents: read
+  id-token: write
+
+concurrency:
+  group: controlled-hardware-validator-${{ github.sha }}
+  cancel-in-progress: false
 
 env:
   DOTNET_NOLOGO: true
@@ -27,7 +33,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6
         with:
-          dotnet-version: 8.0.x
+          dotnet-version: 8.0.423
       - name: Assert approved revision
         shell: pwsh
         run: |
@@ -57,6 +63,10 @@ jobs:
           "- Commit: `${{ github.sha }}`" >> $env:GITHUB_STEP_SUMMARY
           "- ZIP SHA-256: `$hash`" >> $env:GITHUB_STEP_SUMMARY
           "- Approval environment: `hardware-lab-approval`" >> $env:GITHUB_STEP_SUMMARY
+      - name: Attest exact ZIP provenance
+        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4.1.1
+        with:
+          subject-path: artifacts/AllyBindings-HardwareValidator-win-x64.zip
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: AllyBindings-HardwareValidator-win-x64-${{ github.sha }}

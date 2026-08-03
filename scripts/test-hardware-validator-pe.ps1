@@ -21,13 +21,16 @@ $tempManifest = Join-Path $env:TEMP ("ally-validator-manifest-" + [Guid]::NewGui
 try {
     & $mt "-inputresource:$ExecutablePath;#1" "-out:$tempManifest"
     if ($LASTEXITCODE -ne 0) { throw "mt.exe failed with exit code $LASTEXITCODE." }
-    $embedded = Get-Content -Raw -LiteralPath $tempManifest
-    if ($embedded.IndexOf('level="requireAdministrator"', [StringComparison]::Ordinal) -lt 0) {
-        throw 'Published PE does not embed requireAdministrator.'
+    [xml]$embedded = Get-Content -Raw -LiteralPath $tempManifest
+    $nodes = @($embedded.SelectNodes("/*[local-name()='assembly']/*[local-name()='trustInfo']/*[local-name()='security']/*[local-name()='requestedPrivileges']/*[local-name()='requestedExecutionLevel']"))
+    if ($nodes.Count -ne 1 -or
+        $nodes[0].GetAttribute('level') -cne 'requireAdministrator' -or
+        $nodes[0].GetAttribute('uiAccess') -cne 'false') {
+        throw 'Published PE must embed exactly one requireAdministrator requestedExecutionLevel with uiAccess=false.'
     }
 }
 finally {
     if (Test-Path -LiteralPath $tempManifest) { Remove-Item -LiteralPath $tempManifest -Force }
 }
 
-Write-Output 'Published validator PE embeds requireAdministrator.'
+Write-Output 'Published validator PE embeds exactly one requireAdministrator/uiAccess=false execution level.'

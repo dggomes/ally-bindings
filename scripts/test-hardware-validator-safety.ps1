@@ -37,6 +37,9 @@ foreach ($required in @(
     'ExactRc73xaLabWriter.WriteAsync',
     'ClaimOneShotAsync',
     'FileMode.CreateNew',
+    'CommonApplicationData',
+    'FileOptions.WriteThrough',
+    'Flush(flushToDisk: true)',
     'RECOVERY REQUIRED',
     'ArmouryRecoveryConfirmed: false'
 )) {
@@ -49,15 +52,19 @@ foreach ($required in @(
     'HidD_GetAttributes',
     'HidD_GetPreparsedData',
     'HidP_GetCaps',
+    'HidP_GetSpecificValueCaps',
+    'HidP_GetSpecificButtonCaps',
+    'SetupDiEnumDeviceInterfaces',
+    'HasExpectedNativeLayout()',
     'HidD_SetFeature',
-    'BuildWirePacket',
-    'IsExactSystemIdentity()'
+    'CopyWirePacket',
+    'ReadDmiIdentity()'
 )) {
     if ($writer.IndexOf($required, [StringComparison]::Ordinal) -lt 0) {
         throw "Same-handle writer is missing: $required"
     }
 }
-if ($writer -notmatch 'WriteAsync\s*\(\s*LabTargetSnapshot approvedTarget' -or
+if ($writer -notmatch 'WriteAsync\s*\(\s*HardwareLabPolicy\.ApprovedOperation approvedOperation' -or
     $writer -match 'WriteAsync\s*\(\s*byte\[\]') {
     throw 'The sole write entry point must construct its fixed packet internally and accept no packet bytes.'
 }
@@ -67,7 +74,8 @@ if ([regex]::Matches($writer, 'HidD_SetFeature\(').Count -ne 2) {
 foreach ($forbidden in @(
     'ProjectReference',
     'AsusRearButtonHidDevice.cs',
-    'AllyBindings.Core'
+    'AllyBindings.Core',
+    'HidSharp'
 )) {
     if ($project.IndexOf($forbidden, [StringComparison]::OrdinalIgnoreCase) -ge 0) {
         throw "Standalone validator project contains forbidden dependency: $forbidden"
@@ -79,7 +87,8 @@ foreach ($forbidden in @(
     'WriteFeatureReportAsync',
     'ReadFeatureReportAsync',
     'HidD_GetFeature',
-    'GetFeature('
+    'GetFeature(',
+    'HidStream'
 )) {
     if (($program + $writer + $policy).IndexOf($forbidden, [StringComparison]::OrdinalIgnoreCase) -ge 0) {
         throw "Standalone validator source contains forbidden general/read/reset capability: $forbidden"
@@ -95,16 +104,22 @@ if ($publicPackage.IndexOf('HardwareValidator', [StringComparison]::OrdinalIgnor
 $expectedAll = @(
     'AllyBindings.HardwareValidator.exe',
     'LICENSE',
-    'LICENSES/HidSharp-Apache-2.0.txt',
+    'LICENSES/dotnet-LICENSE.txt',
+    'LICENSES/dotnet-ThirdPartyNotices.txt',
     'RUNBOOK.md',
     'SHA256SUMS.txt',
-    'THIRD-PARTY-NOTICES.md'
+    'VALIDATOR-NOTICES.txt',
+    'Verify-Package.ps1'
 ) | Sort-Object
 $expectedHashed = @($expectedAll | Where-Object { $_ -ne 'SHA256SUMS.txt' })
 
 function Get-RelativeFiles([string]$Root) {
     $rootFull = [IO.Path]::GetFullPath($Root).TrimEnd([IO.Path]::DirectorySeparatorChar) + [IO.Path]::DirectorySeparatorChar
     return @(Get-ChildItem -LiteralPath $Root -Recurse -File |
+        ForEach-Object {
+            if (($_.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw "Reparse point is forbidden: $($_.FullName)" }
+            $_
+        } |
         ForEach-Object { [IO.Path]::GetFullPath($_.FullName).Substring($rootFull.Length).Replace([IO.Path]::DirectorySeparatorChar, '/') } |
         Sort-Object)
 }
@@ -147,7 +162,15 @@ $binaryText = [Text.Encoding]::UTF8.GetString([IO.File]::ReadAllBytes($executabl
 foreach ($required in @('ExactRc73xaLabWriter', 'HidD_SetFeature')) {
     if ($binaryText.IndexOf($required, [StringComparison]::Ordinal) -lt 0) { throw "Compiled validator is missing: $required" }
 }
-foreach ($forbidden in @('BuildMappingReport', 'BuildNativeResetReport', 'WriteFeatureReportAsync', 'ReadFeatureReportAsync')) {
+foreach ($forbidden in @(
+    'BuildMappingReport',
+    'BuildNativeResetReport',
+    'WriteFeatureReportAsync',
+    'ReadFeatureReportAsync',
+    'HidD_GetFeature',
+    'HidStream',
+    'HidSharp'
+)) {
     if ($binaryText.IndexOf($forbidden, [StringComparison]::Ordinal) -ge 0) { throw "Compiled validator contains forbidden symbol: $forbidden" }
 }
 
@@ -155,6 +178,7 @@ $temp = Join-Path ([IO.Path]::GetTempPath()) ("ally-validator-" + [Guid]::NewGui
 try {
     Expand-Archive -LiteralPath $ZipPath -DestinationPath $temp
     Assert-Package $temp
+    & (Join-Path $temp 'Verify-Package.ps1') | Out-Null
 }
 finally {
     if (Test-Path -LiteralPath $temp) { Remove-Item -LiteralPath $temp -Recurse -Force }
