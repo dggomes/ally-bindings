@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.IO;
 using System.IO.Pipes;
 using System.Reflection;
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading;
 using System.Windows;
@@ -201,12 +202,17 @@ public partial class App : System.Windows.Application
             Configuration = loaded.Configuration;
             _configurationWarnings = loaded.Warnings;
 
-            if (Configuration.ArmouryTapTeardownBlockedSinceUtc is { } blockedSince)
+            if (Configuration.ArmouryTapTeardownBlockedSinceUtc is not null)
             {
-                var estimatedBootUtc = DateTimeOffset.UtcNow - TimeSpan.FromMilliseconds(Environment.TickCount64);
-                if (estimatedBootUtc > blockedSince)
+                var currentBootIdentifier = TryGetCurrentBootIdentifier();
+                if (Configuration.ArmouryTapTeardownBootIdentifier is { } blockedBootIdentifier &&
+                    currentBootIdentifier is { } currentBoot && currentBoot != blockedBootIdentifier)
                 {
-                    Configuration = Configuration with { ArmouryTapTeardownBlockedSinceUtc = null };
+                    Configuration = Configuration with
+                    {
+                        ArmouryTapTeardownBlockedSinceUtc = null,
+                        ArmouryTapTeardownBootIdentifier = null,
+                    };
                     await _profileStore.SaveAsync(Configuration);
                     _configurationWarnings = _configurationWarnings
                         .Append("Cleared the persisted Armoury tap write barrier after a Windows restart proved the affected processes exited.")
@@ -957,6 +963,8 @@ public partial class App : System.Windows.Application
                     {
                         ArmouryTapTeardownBlockedSinceUtc =
                             Configuration.ArmouryTapTeardownBlockedSinceUtc ?? DateTimeOffset.UtcNow,
+                        ArmouryTapTeardownBootIdentifier =
+                            Configuration.ArmouryTapTeardownBootIdentifier ?? TryGetCurrentBootIdentifier(),
                     };
                     try { await _profileStore.SaveAsync(Configuration); }
                     catch (Exception persistenceFailure)
@@ -1415,4 +1423,26 @@ public partial class App : System.Windows.Application
             // Best-effort teardown: continue through every cleanup action.
         }
     }
+
+    private static Guid? TryGetCurrentBootIdentifier()
+    {
+        var information = new SystemBootEnvironmentInformation();
+        var status = NtQuerySystemInformation(90, ref information,
+            Marshal.SizeOf<SystemBootEnvironmentInformation>(), out _);
+        return status == 0 && information.BootIdentifier != Guid.Empty
+            ? information.BootIdentifier
+            : null;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct SystemBootEnvironmentInformation
+    {
+        public Guid BootIdentifier;
+        public int FirmwareType;
+        public ulong BootFlags;
+    }
+
+    [DllImport("ntdll.dll")]
+    private static extern int NtQuerySystemInformation(int informationClass,
+        ref SystemBootEnvironmentInformation information, int informationLength, out int returnLength);
 }

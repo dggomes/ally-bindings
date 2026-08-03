@@ -543,6 +543,8 @@ foreach ($required in @(
 
 foreach ($required in @(
     'ArmouryTapTeardownBlockedSinceUtc',
+    'ArmouryTapTeardownBootIdentifier',
+    'NtQuerySystemInformation',
     'Restart Windows before controller writes can resume',
     '_armouryCaptureTeardownUnconfirmed = true')) {
     if ($app.IndexOf($required, [StringComparison]::Ordinal) -lt 0) {

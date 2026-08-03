@@ -76,13 +76,16 @@ public sealed class ConfigurationValidatorTests
     public void Normalize_preserves_persisted_tap_teardown_barrier()
     {
         var blockedSince = DateTimeOffset.Parse("2026-08-03T01:00:00Z");
+        var bootIdentifier = Guid.Parse("c2765510-09cc-43c8-a7d0-ac0df1b490fe");
 
         var result = ConfigurationValidator.Normalize(AppConfiguration.CreateDefault() with
         {
             ArmouryTapTeardownBlockedSinceUtc = blockedSince,
+            ArmouryTapTeardownBootIdentifier = bootIdentifier,
         });
 
         Assert.Equal(blockedSince, result.Configuration.ArmouryTapTeardownBlockedSinceUtc);
+        Assert.Equal(bootIdentifier, result.Configuration.ArmouryTapTeardownBootIdentifier);
     }
 
     [Fact]
