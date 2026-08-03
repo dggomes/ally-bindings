@@ -206,29 +206,43 @@ public partial class App : System.Windows.Application
             if (Configuration.ArmouryTapTeardownBlockedSinceUtc is not null)
             {
                 var currentBootIdentifier = TryGetCurrentBootIdentifier();
-                if (Configuration.ArmouryTapTeardownBootIdentifier is { } blockedBootIdentifier &&
-                    currentBootIdentifier is { } currentBoot && currentBoot != blockedBootIdentifier)
+                var recoveryDecision = TapTeardownBarrierRecovery.Evaluate(
+                    Configuration.ArmouryTapTeardownBootIdentifier,
+                    currentBootIdentifier);
+                if (recoveryDecision == TapTeardownBarrierRecoveryDecision.ClearBarrier)
                 {
                     Configuration = Configuration with
                     {
                         ArmouryTapTeardownBlockedSinceUtc = null,
                         ArmouryTapTeardownBootIdentifier = null,
                     };
-                    await _profileStore.SaveAsync(Configuration);
+                    await _profileStore.ClearTapTeardownBarrierAsync(Configuration);
                     _configurationWarnings = _configurationWarnings
                         .Append("Cleared the persisted Armoury tap write barrier after a Windows restart proved the affected processes exited.")
                         .ToList();
                 }
                 else
                 {
+                    var restartInstruction =
+                        "Controller writes remain blocked because a previous native tap unload was not confirmed. Restart Windows; restarting Ally Bindings alone is not sufficient.";
+                    if (recoveryDecision == TapTeardownBarrierRecoveryDecision.EstablishBootBaseline)
+                    {
+                        Configuration = Configuration with
+                        {
+                            ArmouryTapTeardownBootIdentifier = currentBootIdentifier,
+                        };
+                        await _profileStore.EstablishTapTeardownBootBaselineAsync(Configuration);
+                        restartInstruction =
+                            "The older barrier had no boot identifier. Ally Bindings safely established the current Windows boot as its baseline; restart Windows once more to prove every affected process exited.";
+                    }
+
                     _armouryCaptureTeardownUnconfirmed = true;
                     _armouryCaptureInProgress = true;
                     _armouryCaptureCompletion = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-                    _armouryCaptureCompletion.SetException(new InvalidOperationException(
-                        "A previous native tap unload was not confirmed. Restart Windows before controller writes can resume."));
+                    _armouryCaptureCompletion.SetException(new InvalidOperationException(restartInstruction));
                     _ = _armouryCaptureCompletion.Task.Exception;
                     _configurationWarnings = _configurationWarnings
-                        .Append("Controller writes remain blocked because a previous native tap unload was not confirmed. Restart Windows; restarting Ally Bindings alone is not sufficient.")
+                        .Append(restartInstruction)
                         .ToList();
                 }
             }
@@ -878,6 +892,7 @@ public partial class App : System.Windows.Application
         }
         var cancellationToken = _armouryCaptureCancellation!.Token;
         ArmouryCaptureSession? session = null;
+        AppConfiguration? armedBarrierConfiguration = null;
         Exception? captureTeardownFailure = null;
         string? deferredFailureMessage = null;
         ArmouryCaptureException? deferredDiagnostic = null;
@@ -898,7 +913,7 @@ public partial class App : System.Windows.Application
             cancellationToken.ThrowIfCancellationRequested();
             var proceed = await _mainWindow.ShowControllerDialogAsync(
                 "Capture Armoury M1/M2 protocol",
-                "This starts a temporary user-mode capture inside Ally Bindings. Close games and anti-cheat software before continuing. Windows will request administrator approval to inject a capture-only DLL into one or more verified ASUS Armoury candidate processes. Ally Bindings examines no more than twelve processes selected from nine exact allowlisted executable names and may temporarily inject into each verified candidate to locate the component that owns the HID writes. No driver, Wireshark, USBPcap, WinDbg, Frida or separate tool is installed. The tap observes Armoury's HID writes without altering them.\n\n" +
+                "This starts a temporary user-mode capture inside Ally Bindings. Close games and anti-cheat software before continuing. Windows will request administrator approval to inject a capture-only DLL into one or more verified ASUS Armoury candidate processes. Ally Bindings enumerates running processes matching nine exact allowlisted executable names. Capture is rejected if more than twelve candidates pass path, signature and identity verification; otherwise, it may temporarily inject into each verified candidate to locate the component that owns the HID writes. No driver, Wireshark, USBPcap, WinDbg, Frida or separate tool is installed. The tap observes Armoury's HID writes without altering them.\n\n" +
                 "You will deliberately change M1/M2 three times through Armoury Crate so we can collect exact wire payloads for hardware review. Ally Bindings will send no HID reports, cannot clear recovery state from this capture, and its ASUS write backend remains source locked.\n\nContinue?",
                 primaryLabel: "Continue");
             if (!proceed) return;
@@ -912,6 +927,29 @@ public partial class App : System.Windows.Application
             await RequireCaptureStepAsync(
                 $"Confirm this is the ROG Ally controller you intend to inspect:\n\nModel: {target.Model}\nCompatible ASUS HID interfaces: {string.Join(" | ", target.DeviceIds)}\n\nNo ETW session has started yet. Click Cancel if this identity is unexpected.",
                 "Confirm integrated Windows capture");
+
+            // Publish the fail-closed marker and authoritative in-memory snapshot
+            // under the same application gate. The store arm is deliberately
+            // non-cancellable and sticky so no stale settings/update save can
+            // interleave, erase it, or leave primary and backup disagreeing.
+            cancellationToken.ThrowIfCancellationRequested();
+            await _operationGate.WaitAsync(cancellationToken);
+            try
+            {
+                armedBarrierConfiguration = Configuration with
+                {
+                    ArmouryTapTeardownBlockedSinceUtc = DateTimeOffset.UtcNow,
+                    ArmouryTapTeardownBootIdentifier = TryGetCurrentBootIdentifier(),
+                };
+                await _profileStore.ArmTapTeardownBarrierAsync(armedBarrierConfiguration);
+                Configuration = armedBarrierConfiguration;
+            }
+            finally
+            {
+                _operationGate.Release();
+            }
+            cancellationToken.ThrowIfCancellationRequested();
+
             try
             {
                 session = await captureService.StartAsync(target, cancellationToken);
@@ -1017,6 +1055,30 @@ public partial class App : System.Windows.Application
                 _armouryCaptureCancellation?.Dispose();
                 _armouryCaptureCancellation = null;
                 captureCompletion = _armouryCaptureCompletion;
+
+                var armedConfiguration = armedBarrierConfiguration;
+                if (captureTeardownFailure is null && armedConfiguration is not null)
+                {
+                    var clearedConfiguration = Configuration with
+                    {
+                        ArmouryTapTeardownBlockedSinceUtc = null,
+                        ArmouryTapTeardownBootIdentifier = null,
+                    };
+                    try
+                    {
+                        await _profileStore.ClearTapTeardownBarrierAsync(clearedConfiguration);
+                        Configuration = clearedConfiguration;
+                        armedBarrierConfiguration = null;
+                    }
+                    catch (Exception persistenceFailure)
+                    {
+                        Configuration = armedConfiguration;
+                        captureTeardownFailure = new InvalidOperationException(
+                            "Native tap teardown completed, but the write-ahead safety barrier could not be cleared. Restart Windows before another capture.",
+                            persistenceFailure);
+                    }
+                }
+
                 if (captureTeardownFailure is null)
                 {
                     _armouryCaptureInProgress = false;

@@ -6,6 +6,29 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Thi
 
 ## [Unreleased]
 
+## [v0.3.0-preview.19] - 2026-08-03
+
+### Fixed
+
+- Prevent a missing Windows boot GUID from leaving the native-tap barrier permanently unresolvable: preview.19 establishes the current authoritative boot GUID as a fail-closed baseline, keeps writes blocked, and clears only after a subsequent Windows restart produces a different GUID.
+- Make the native-tap barrier crash-durable by arming both primary and backup configuration copies before injection can begin, then clearing it only after teardown has completed and a separate fsync'd commit-marker sentinel has kept every partial clear fail-closed.
+- Make the armed barrier sticky inside the serialized profile store so a concurrent stale settings or update save cannot erase it; only explicit boot-baseline and post-teardown lifecycle operations may update or release it.
+- Treat every missing or corrupt primary configuration as fail-closed even when an older backup is readable, preventing preview.18's single-copy armed barrier from being discarded by restoration of its preceding unarmed backup.
+- Close the tap config writer before injection and reopen it under a compatible read-only anti-tamper lock; the previous write handle caused Windows sharing checks to reject every injected DLL's config read and surface only `tap-handshake-timeout`.
+- Label the elevated helper's tap pipe at medium integrity while retaining its network deny, SID ACL, verified client PID and per-capture capability token, allowing verified normal-integrity Armoury processes to connect without weakening authentication.
+- Load the trusted system `hid.dll` when a verified Armoury candidate has not mapped it yet, report pipe-connect, ready-record and native hook-stage failures separately, and route partial hook-install failures through the same checked disable-and-drain teardown; unsafe or unknown worker exits now refuse DLL unloading and retain the write barrier.
+- Correct the capture disclosure to distinguish exact-name process enumeration from the twelve-candidate verified injection cap.
+
+### Tests
+
+- Added unit coverage for authoritative boot-GUID changes, same-boot retention, missing/all-zero identifier baseline establishment and unavailable-current-identifier fail-closed behavior.
+- Extended the capture safety gate to require write-ahead barrier persistence before native injection, baseline establishment without wall-clock reboot inference, stage-specific native startup diagnostics, and truthful candidate-cap wording.
+- Added concurrent stale-save and corrupt-primary recovery coverage proving an armed barrier survives in both configuration copies until explicit teardown clearance.
+
+### Security
+
+- Permanently withdrew `v0.3.0-preview.18` because a missing boot GUID could leave its fail-closed capture barrier latched after a real restart; release automation rejects reuse of the immutable tag.
+
 ## [v0.3.0-preview.18] - 2026-08-03
 
 ### Fixed
@@ -375,3 +398,4 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Thi
 [v0.3.0-preview.16]: https://github.com/dggomes/ally-bindings/releases/tag/v0.3.0-preview.16
 [v0.3.0-preview.17]: https://github.com/dggomes/ally-bindings/releases/tag/v0.3.0-preview.17
 [v0.3.0-preview.18]: https://github.com/dggomes/ally-bindings/releases/tag/v0.3.0-preview.18
+[v0.3.0-preview.19]: https://github.com/dggomes/ally-bindings/releases/tag/v0.3.0-preview.19

@@ -46,6 +46,10 @@ HANDLE g_queueEvent = nullptr;
 HANDLE g_worker = nullptr;
 HANDLE g_pipe = INVALID_HANDLE_VALUE;
 HANDLE g_helperProcess = nullptr;
+HMODULE g_loadedHidModule = nullptr;
+bool g_minHookInitialized = false;
+uint32_t g_hookFailureStage = 0;
+DWORD g_hookFailureDetail = 0;
 CRITICAL_SECTION g_queueLock{};
 std::array<WireRecord, kQueueCapacity> g_queue{};
 size_t g_head = 0;
@@ -208,23 +212,39 @@ bool LoadConfig(HMODULE module) {
 }
 
 bool InstallHooks() {
-    if (MH_Initialize() != MH_OK) return false;
-    const auto rollback = []() {
-        MH_DisableHook(MH_ALL_HOOKS);
-        MH_Uninitialize();
+    const auto fail = [&](uint32_t stage, DWORD detail) {
+        g_hookFailureStage = stage;
+        g_hookFailureDetail = detail;
         return false;
     };
+
+    const auto initializeStatus = MH_Initialize();
+    if (initializeStatus != MH_OK) return fail(1, static_cast<DWORD>(initializeStatus));
+    g_minHookInitialized = true;
+
     HMODULE hid = GetModuleHandleW(L"hid.dll");
+    if (!hid) {
+        hid = LoadLibraryExW(L"hid.dll", nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32);
+        if (!hid) return fail(2, GetLastError());
+        g_loadedHidModule = hid;
+    }
     HMODULE kernelBase = GetModuleHandleW(L"KernelBase.dll");
-    if (!hid || !kernelBase) return rollback();
+    if (!kernelBase) return fail(3, GetLastError());
     auto setFeature = reinterpret_cast<LPVOID>(GetProcAddress(hid, "HidD_SetFeature"));
     auto writeFile = reinterpret_cast<LPVOID>(GetProcAddress(kernelBase, "WriteFile"));
-    if (!setFeature || !writeFile) return rollback();
-    if (MH_CreateHook(setFeature, reinterpret_cast<void*>(&HookSetFeature),
-        reinterpret_cast<void**>(&g_originalSetFeature)) != MH_OK) return rollback();
-    if (MH_CreateHook(writeFile, reinterpret_cast<void*>(&HookWriteFile),
-        reinterpret_cast<void**>(&g_originalWriteFile)) != MH_OK) return rollback();
-    if (MH_EnableHook(setFeature) != MH_OK || MH_EnableHook(writeFile) != MH_OK) return rollback();
+    if (!setFeature) return fail(4, GetLastError());
+    if (!writeFile) return fail(5, GetLastError());
+
+    auto status = MH_CreateHook(setFeature, reinterpret_cast<void*>(&HookSetFeature),
+        reinterpret_cast<void**>(&g_originalSetFeature));
+    if (status != MH_OK) return fail(6, static_cast<DWORD>(status));
+    status = MH_CreateHook(writeFile, reinterpret_cast<void*>(&HookWriteFile),
+        reinterpret_cast<void**>(&g_originalWriteFile));
+    if (status != MH_OK) return fail(7, static_cast<DWORD>(status));
+    status = MH_EnableHook(setFeature);
+    if (status != MH_OK) return fail(8, static_cast<DWORD>(status));
+    status = MH_EnableHook(writeFile);
+    if (status != MH_OK) return fail(9, static_cast<DWORD>(status));
     return true;
 }
 
@@ -243,12 +263,20 @@ bool Pop(WireRecord& record) {
 
 bool DisableHooksAndDrain() {
     g_stopping.store(true, std::memory_order_release);
-    if (MH_DisableHook(MH_ALL_HOOKS) != MH_OK) return false;
-    for (int attempt = 0; attempt < 200 && g_activeCallbacks.load(std::memory_order_acquire) != 0; ++attempt) {
-        Sleep(10);
+    if (g_minHookInitialized) {
+        if (MH_DisableHook(MH_ALL_HOOKS) != MH_OK) return false;
+        for (int attempt = 0; attempt < 200 && g_activeCallbacks.load(std::memory_order_acquire) != 0; ++attempt) {
+            Sleep(10);
+        }
+        if (g_activeCallbacks.load(std::memory_order_acquire) != 0) return false;
+        if (MH_Uninitialize() != MH_OK) return false;
+        g_minHookInitialized = false;
     }
-    if (g_activeCallbacks.load(std::memory_order_acquire) != 0) return false;
-    return MH_Uninitialize() == MH_OK;
+    if (g_loadedHidModule) {
+        if (!FreeLibrary(g_loadedHidModule)) return false;
+        g_loadedHidModule = nullptr;
+    }
+    return true;
 }
 
 DWORD WINAPI WorkerMain(void* parameter) {
@@ -258,9 +286,20 @@ DWORD WINAPI WorkerMain(void* parameter) {
         FILE_ATTRIBUTE_NORMAL, nullptr);
     if (g_pipe == INVALID_HANDLE_VALUE) return 3;
     if (!InstallHooks()) {
+        const bool hooksRemoved = DisableHooksAndDrain();
+        WireRecord failure{};
+        failure.magic = kMagic;
+        failure.version = kVersion;
+        failure.processId = GetCurrentProcessId();
+        failure.apiResult = g_hookFailureStage;
+        failure.lastError = g_hookFailureDetail;
+        memcpy(failure.token, g_token.data(), g_token.size());
+        DWORD failureWritten = 0;
+        WriteFile(g_pipe, &failure, sizeof(failure), &failureWritten, nullptr);
+        FlushFileBuffers(g_pipe);
         CloseHandle(g_pipe);
         g_pipe = INVALID_HANDLE_VALUE;
-        return 4;
+        return hooksRemoved ? 4 : 6;
     }
     WireRecord ready{};
     ready.magic = kMagic;
@@ -328,8 +367,20 @@ extern "C" __declspec(dllexport) DWORD WINAPI ArmouryTapStop(void*) {
     if (!g_stopEvent || !g_worker) return 0;
     SetEvent(g_stopEvent);
     if (WaitForSingleObject(g_worker, 10'000) != WAIT_OBJECT_0) return 0;
-    DWORD workerExitCode = 1;
-    return GetExitCodeThread(g_worker, &workerExitCode) && workerExitCode != 6 ? 1u : 0u;
+    DWORD workerExitCode = STILL_ACTIVE;
+    if (!GetExitCodeThread(g_worker, &workerExitCode)) return 0;
+    switch (workerExitCode) {
+        case 0: // Normal stop.
+        case 2: // Config rejected before hook initialization.
+        case 3: // Pipe rejected before hook initialization.
+        case 4: // Hook startup failed but checked rollback succeeded.
+        case 5: // Ready transport failed but checked rollback succeeded.
+        case 7: // Runtime transport failed after checked rollback.
+            return 1;
+        default:
+            // Exit 6 and every unknown status are unsafe to unload.
+            return 0;
+    }
 }
 
 BOOL WINAPI DllMain(HINSTANCE instance, DWORD reason, LPVOID) {

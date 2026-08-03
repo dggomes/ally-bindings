@@ -9,7 +9,7 @@ A lightweight, local-first Windows controller-profile selector for Xbox Remote P
 
 Ally Bindings lets you save named mappings, rotate them from the controller, and see the pending choice in a small overlay. It is intentionally conservative: the current public build exercises the complete profile-selection experience without hiding the physical controller, creating a virtual controller, or writing unvalidated ASUS controller settings.
 
-> **Project status: preview.** This source tree targets `v0.3.0-preview.18`. Standard-button remapping is preview-only. Five physical Armoury captures were clean but contained no exact rear-mapping packets; v14 isolated action-correlated UCX control-transfer metadata, but Windows emitted none of the data-bearing completion events needed to recover payload bytes. M1/M2 writes remain locked. The preferred next experiment is the explicit, self-contained Armoury HID write tap: it temporarily injects an embedded capture-only DLL into exact ASUS-signed Armoury processes after consent and UAC, retains only target `5A D1` writes, and must unload cleanly before success. See [Current capabilities](#current-capabilities) before installing.
+> **Project status: preview.** This source tree targets `v0.3.0-preview.19`. Standard-button remapping is preview-only. Five physical Armoury captures were clean but contained no exact rear-mapping packets; v14 isolated action-correlated UCX control-transfer metadata, but Windows emitted none of the data-bearing completion events needed to recover payload bytes. M1/M2 writes remain locked. The preferred next experiment is the explicit, self-contained Armoury HID write tap: it temporarily injects an embedded capture-only DLL into exact ASUS-signed Armoury processes after consent and UAC, retains only target `5A D1` writes, and must unload cleanly before success. See [Current capabilities](#current-capabilities) before installing.
 
 Ally Bindings is an independent project and is not affiliated with ASUS, ROG, Microsoft or Xbox.
 
@@ -76,7 +76,7 @@ Selecting a profile currently updates Ally Bindings' state and UX. It does **not
 - Windows 11 x64. Windows 10 2004+ is the build target, but the physical validation target is Windows 11 on the ROG Xbox Ally X.
 - An XInput-compatible controller; the built-in Ally X controller is the intended target.
 - No administrator rights for normal launch.
-- Optional protocol capture first uses an embedded capture-only DLL that may be temporarily injected into one or more verified ASUS Armoury candidate processes—up to twelve selected from nine exact allowlisted executable names—with explicit disclosure and one-time UAC. It installs no driver or separate application, unloads/deletes the DLL at teardown, and falls back to Windows USB ETW when safe injection is unavailable.
+- Optional protocol capture enumerates running processes matching nine exact allowlisted ASUS Armoury executable names. With explicit disclosure and one-time UAC, it may temporarily inject an embedded capture-only DLL into every verified candidate; capture is rejected if more than twelve candidates pass verification. It installs no driver or separate application, unloads/deletes the DLL at teardown, and offers Windows USB ETW only as an explicitly accepted fallback when safe injection is unavailable.
 
 ## Install
 

@@ -240,6 +240,7 @@ internal static class ArmouryTapCaptureHelper
 
     private static string DescribeSafeAttachRejection(Exception exception) => exception switch
     {
+        TapAttachmentRejectedException rejection => rejection.Reason,
         UnauthorizedAccessException => "access-denied",
         System.ComponentModel.Win32Exception => "windows-api-rejected",
         TimeoutException => "tap-handshake-timeout",
@@ -677,20 +678,48 @@ internal static class ArmouryTapCaptureHelper
             {
                 var configBytes = Encoding.ASCII.GetBytes(
                     $"pipe=\\\\.\\pipe\\{pipeName}\ntoken={Convert.ToHexString(token)}\nhelper={Environment.ProcessId}\n");
-                using var configLock = new FileStream(configPath, FileMode.CreateNew, FileAccess.Write, FileShare.Read);
-                await configLock.WriteAsync(configBytes, cancellationToken).ConfigureAwait(false);
-                configLock.Flush(true);
+                await using (var configWriter = new FileStream(
+                    configPath, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+                {
+                    await configWriter.WriteAsync(configBytes, cancellationToken).ConfigureAwait(false);
+                    configWriter.Flush(true);
+                }
+                // Hold a read-only anti-tamper lock. Keeping the original write
+                // handle open makes the injected DLL's FILE_SHARE_READ open fail
+                // Windows' symmetric sharing check before it can handshake.
+                using var configLock = new FileStream(
+                    configPath, FileMode.Open, FileAccess.Read, FileShare.Read);
                 remoteModule = Inject(identity, dllPath);
                 var holder = new TappedProcess(identity, dllPath, token, pipe, remoteModule, Task.CompletedTask);
                 var connectTask = pipe.WaitForConnectionAsync(cancellationToken);
-                await connectTask.WaitAsync(ArmouryTapProtocol.CandidateHandshakeStepTimeout, cancellationToken);
+                try
+                {
+                    await connectTask.WaitAsync(ArmouryTapProtocol.CandidateHandshakeStepTimeout, cancellationToken);
+                }
+                catch (TimeoutException ex)
+                {
+                    throw new TapAttachmentRejectedException("tap-pipe-connect-timeout", ex);
+                }
                 if (!GetNamedPipeClientProcessId(pipe.SafePipeHandle, out var clientPid) || clientPid != (uint)identity.ProcessId)
                     throw new InvalidOperationException("A tap record pipe connected from an unexpected process.");
-                var ready = await ReadRecordAsync(pipe, cancellationToken)
-                    .WaitAsync(ArmouryTapProtocol.CandidateHandshakeStepTimeout, cancellationToken).ConfigureAwait(false);
-                if (ready is null || ready.ProcessId != identity.ProcessId || ready.Api != 0 ||
+                Wire? ready;
+                try
+                {
+                    ready = await ReadRecordAsync(pipe, cancellationToken)
+                        .WaitAsync(ArmouryTapProtocol.CandidateHandshakeStepTimeout, cancellationToken).ConfigureAwait(false);
+                }
+                catch (TimeoutException ex)
+                {
+                    throw new TapAttachmentRejectedException("tap-ready-timeout", ex);
+                }
+                if (ready is null)
+                    throw new TapAttachmentRejectedException("tap-worker-exited-before-ready");
+                if (ready.ProcessId != identity.ProcessId || ready.Api != 0 ||
                     !CryptographicOperations.FixedTimeEquals(ready.Token, token))
                     throw new InvalidDataException("The injected tap did not authenticate its ready record.");
+                if (ready.ApiResult != 0)
+                    throw new TapAttachmentRejectedException(
+                        $"tap-hook-stage-{ready.ApiResult}-detail-{unchecked((uint)ready.LastError)}");
                 holder._readerTask = holder.ReadLoopAsync();
                 configLock.Dispose();
                 File.Delete(configPath);
@@ -803,6 +832,28 @@ internal static class ArmouryTapCaptureHelper
 
         private static NamedPipeServerStream CreateTapServer(string name)
         {
+            var security = CreateTapPipeSecurity();
+            var server = NamedPipeServerStreamAcl.Create(name, PipeDirection.In, 1, PipeTransmissionMode.Byte,
+                PipeOptions.Asynchronous, 0, 0, security, HandleInheritability.None);
+            try
+            {
+                ApplyMediumIntegrityLabel(server.SafePipeHandle);
+                var label = ReadTapPipeIntegrityLabel(server.SafePipeHandle);
+                if (!label.Contains("(ML;;NW;;;ME)", StringComparison.Ordinal) &&
+                    !label.Contains("(ML;;NW;;;S-1-16-8192)", StringComparison.Ordinal))
+                    throw new System.Security.SecurityException(
+                        $"Tap pipe mandatory label verification failed: {label}");
+                return server;
+            }
+            catch
+            {
+                server.Dispose();
+                throw;
+            }
+        }
+
+        private static PipeSecurity CreateTapPipeSecurity()
+        {
             using var identity = WindowsIdentity.GetCurrent();
             var security = new PipeSecurity();
             security.SetAccessRuleProtection(true, false);
@@ -811,11 +862,77 @@ internal static class ArmouryTapCaptureHelper
             foreach (var sid in new[] { identity.User!, new SecurityIdentifier(WellKnownSidType.LocalSystemSid, null),
                 new SecurityIdentifier(WellKnownSidType.BuiltinAdministratorsSid, null) })
                 security.AddAccessRule(new(sid, PipeAccessRights.ReadWrite, AccessControlType.Allow));
-            return NamedPipeServerStreamAcl.Create(name, PipeDirection.In, 1, PipeTransmissionMode.Byte,
-                PipeOptions.Asynchronous, 0, 0, security, HandleInheritability.None);
+            return security;
+        }
+
+        private static void ApplyMediumIntegrityLabel(SafePipeHandle pipe)
+        {
+            const uint labelSecurityInformation = 0x00000010;
+            if (!ConvertStringSecurityDescriptorToSecurityDescriptor(
+                    "S:(ML;;NW;;;ME)", 1, out var descriptor, out _))
+                throw new System.ComponentModel.Win32Exception();
+            try
+            {
+                if (!GetSecurityDescriptorSacl(descriptor, out var present, out var sacl, out _) ||
+                    !present || sacl == IntPtr.Zero)
+                    throw new System.ComponentModel.Win32Exception();
+                var result = SetSecurityInfo(pipe.DangerousGetHandle(), 6, labelSecurityInformation,
+                    IntPtr.Zero, IntPtr.Zero, IntPtr.Zero, sacl);
+                if (result != 0) throw new System.ComponentModel.Win32Exception(checked((int)result));
+            }
+            finally
+            {
+                LocalFree(descriptor);
+            }
+        }
+
+        private static string ReadTapPipeIntegrityLabel(SafePipeHandle pipe)
+        {
+            const uint labelSecurityInformation = 0x00000010;
+            var result = GetSecurityInfo(pipe.DangerousGetHandle(), 6, labelSecurityInformation,
+                out _, out _, out _, out _, out var descriptor);
+            if (result != 0) throw new System.ComponentModel.Win32Exception(checked((int)result));
+            try
+            {
+                if (!ConvertSecurityDescriptorToStringSecurityDescriptor(descriptor, 1,
+                        labelSecurityInformation, out var text, out _))
+                    throw new System.ComponentModel.Win32Exception();
+                try
+                {
+                    return Marshal.PtrToStringUni(text)
+                        ?? throw new InvalidDataException("Windows returned an empty tap pipe mandatory label.");
+                }
+                finally
+                {
+                    LocalFree(text);
+                }
+            }
+            finally
+            {
+                LocalFree(descriptor);
+            }
         }
 
         [DllImport("kernel32.dll", SetLastError = true)] private static extern bool GetNamedPipeClientProcessId(SafePipeHandle pipe, out uint clientProcessId);
+        [DllImport("advapi32.dll", CharSet = CharSet.Unicode, SetLastError = true,
+            EntryPoint = "ConvertStringSecurityDescriptorToSecurityDescriptorW")]
+        private static extern bool ConvertStringSecurityDescriptorToSecurityDescriptor(
+            string text, uint revision, out IntPtr descriptor, out uint descriptorSize);
+        [DllImport("advapi32.dll", SetLastError = true)]
+        private static extern bool GetSecurityDescriptorSacl(
+            IntPtr descriptor, out bool present, out IntPtr sacl, out bool defaulted);
+        [DllImport("advapi32.dll")]
+        private static extern uint SetSecurityInfo(IntPtr handle, int objectType, uint securityInformation,
+            IntPtr owner, IntPtr group, IntPtr dacl, IntPtr sacl);
+        [DllImport("advapi32.dll")]
+        private static extern uint GetSecurityInfo(IntPtr handle, int objectType, uint securityInformation,
+            out IntPtr owner, out IntPtr group, out IntPtr dacl, out IntPtr sacl, out IntPtr descriptor);
+        [DllImport("advapi32.dll", CharSet = CharSet.Unicode, SetLastError = true,
+            EntryPoint = "ConvertSecurityDescriptorToStringSecurityDescriptorW")]
+        private static extern bool ConvertSecurityDescriptorToStringSecurityDescriptor(
+            IntPtr descriptor, uint revision, uint securityInformation, out IntPtr text, out uint textLength);
+        [DllImport("kernel32.dll")]
+        private static extern IntPtr LocalFree(IntPtr memory);
     }
 
     private static IntPtr Inject(VerifiedProcess identity, string dllPath)
@@ -1052,6 +1169,11 @@ internal static class ArmouryTapCaptureHelper
     [DllImport("kernel32.dll")] private static extern bool CloseHandle(IntPtr handle);
 
     private sealed class TapUnavailableException(string message) : InvalidOperationException(message);
+    private sealed class TapAttachmentRejectedException(string reason, Exception? innerException = null)
+        : InvalidOperationException(reason, innerException)
+    {
+        public string Reason { get; } = reason;
+    }
     private sealed class TapTeardownUnconfirmedException(string message, Exception? innerException = null)
         : InvalidOperationException(message, innerException);
 }

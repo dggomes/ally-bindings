@@ -75,7 +75,7 @@ Conclusion: keep both write gates locked. Do not spend another physical run resh
 The preferred next experiment is the self-contained Armoury HID write tap:
 
 1. Run **Capture Armoury M1/M2** and accept the explicit injection/process-risk disclosure and UAC prompt. Close games and anti-cheat software first.
-2. Ally Bindings extracts and hash-verifies its embedded capture-only x64 DLL, then evaluates at most twelve processes across nine exact allowlisted ASUS Armoury executable names under trusted system install roots. Only candidates that independently pass the signature, path, architecture, token and identity gates are injected.
+2. Ally Bindings enumerates running processes across nine exact allowlisted ASUS Armoury executable names, then extracts and hash-verifies its embedded capture-only x64 DLL. Capture is rejected if more than twelve candidates independently pass the signature, path, architecture, token and identity gates; otherwise, every verified candidate may be injected.
 3. Follow the prompts for `M1=A/M2=B`, `M1=X/M2=Y`, and Armoury Reset to Default. The tap copies only 50–64-byte `5A D1` rear-mapping writes on `VID_0B05&PID_1B4C` handles and leaves each original API call unchanged.
 4. Retain the single ZIP, record its displayed SHA-256 separately, and verify the manifest says `rawSystemTraceWritten: false` and `hardwareUnlockEvidence: false`.
 5. Exported tap evidence contains only allowlisted process name, phase, ordinal, API result/error and exact bounded report bytes—no raw PID, path, timestamp, QPC, pointer or handle.
