@@ -6,6 +6,17 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Thi
 
 ## [Unreleased]
 
+## [v0.3.0-preview.18] - 2026-08-03
+
+### Fixed
+
+- Corrected the pre-UAC capture disclosure and packaged operator guide to state that the tap may temporarily inject into each verified ASUS Armoury candidate—up to twelve processes selected from nine exact allowlisted executable names—instead of inaccurately describing a single confirmed process.
+- Carried forward the withdrawn preview.17 capture-reliability fixes: visible teardown barriers, explicit ETW-fallback consent, current Armoury process discovery, per-candidate safe rollback, bounded lifecycle deadlines and the corrected exit latch.
+
+### Security
+
+- Permanently withdrew `v0.3.0-preview.17` because its user-facing consent text understated the possible multi-process injection scope; release automation now rejects that immutable tag.
+
 ## [v0.3.0-preview.17] - 2026-08-03
 
 ### Fixed
@@ -363,3 +374,4 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Thi
 [v0.3.0-preview.15]: https://github.com/dggomes/ally-bindings/releases/tag/v0.3.0-preview.15
 [v0.3.0-preview.16]: https://github.com/dggomes/ally-bindings/releases/tag/v0.3.0-preview.16
 [v0.3.0-preview.17]: https://github.com/dggomes/ally-bindings/releases/tag/v0.3.0-preview.17
+[v0.3.0-preview.18]: https://github.com/dggomes/ally-bindings/releases/tag/v0.3.0-preview.18

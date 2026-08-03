@@ -29,7 +29,7 @@ This mode observes Armoury. It does not apply mappings itself and cannot enable 
 6. Return to Ally Bindings and choose **Done** after each Armoury operation.
 7. Keep the generated ZIP and its displayed SHA-256 together.
 
-The app temporarily extracts its embedded x64 capture DLL into a random protected directory, injects it only into the confirmed ASUS process, records exact target `5A D1` rear-mapping writes, unloads it and deletes the directory. A successful finish positively confirms helper exit and hook unload.
+The app temporarily extracts its embedded x64 capture DLL into a random protected directory. It may inject the DLL into each verified ASUS Armoury candidate—up to twelve processes drawn from nine exact allowlisted executable names—because Armoury versions can distribute controller writes across different components. It records only exact target `5A D1` rear-mapping writes, then unloads the DLL and deletes the directory. A successful finish positively confirms helper exit and hook unload from every attached candidate.
 
 ## What is retained
 

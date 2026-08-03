@@ -538,7 +538,7 @@
                   <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                   <StackPanel>
                     <TextBlock Text="Capture Armoury M1/M2" FontSize="23" FontWeight="SemiBold" />
-                    <TextBlock Text="Record Armoury's M1/M2 HID writes with a built-in user-mode tap. No USBPcap, Wireshark, driver, WinDbg, Frida or separate capture tool. Windows asks for temporary elevation to inject a capture-only DLL into the confirmed ASUS process. Ally Bindings sends no HID reports and remains write-locked."
+                    <TextBlock Text="Record Armoury's M1/M2 HID writes with a built-in user-mode tap. No USBPcap, Wireshark, driver, WinDbg, Frida or separate capture tool. Windows asks for temporary elevation to inject a capture-only DLL into one or more verified ASUS Armoury candidate processes (up to twelve from nine exact allowlisted names). Ally Bindings sends no HID reports and remains write-locked."
                                Foreground="#CEC7F7" TextWrapping="Wrap" Margin="0,7,24,8" />
                     <TextBlock x:Name="ArmouryCaptureStatusText" Text="Ready to capture the three-step Armoury mapping sequence."
                                AutomationProperties.LiveSetting="Polite"

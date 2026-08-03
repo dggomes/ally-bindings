@@ -656,6 +656,52 @@ foreach ($required in @(
 if ($tapUserGuidePath -and (Test-Path -LiteralPath $tapUserGuidePath) -eq $false) {
     throw 'The tap user guide document is missing.'
 }
+$readmePath = Join-Path $root 'README.md'
+$xamlPath = Join-Path $root 'src/AllyBindings.Windows/MainWindow.xaml'
+$readme = Get-Content -Raw -LiteralPath $readmePath
+$xaml = Get-Content -Raw -LiteralPath $xamlPath
+
+foreach ($required in @(
+    'one or more verified ASUS Armoury candidate processes',
+    'no more than twelve processes selected from nine exact allowlisted executable names',
+    'may temporarily inject into each verified candidate')) {
+    if ($app.IndexOf($required, [StringComparison]::Ordinal) -lt 0) {
+        throw "The in-app consent disclosure understates multi-process injection scope: $required"
+    }
+}
+foreach ($required in @(
+    'up to twelve processes drawn from nine exact allowlisted executable names',
+    'unload from every attached candidate')) {
+    if ($tapUserGuide.IndexOf($required, [StringComparison]::Ordinal) -lt 0) {
+        throw "The packaged user guide understates multi-process injection scope: $required"
+    }
+}
+foreach ($required in @(
+    'one or more verified ASUS Armoury candidate processes',
+    'up to twelve selected from nine exact allowlisted executable names')) {
+    if ($readme.IndexOf($required, [StringComparison]::Ordinal) -lt 0) {
+        throw "The packaged README understates multi-process injection scope: $required"
+    }
+}
+foreach ($required in @(
+    'one or more verified ASUS Armoury candidate processes',
+    'up to twelve from nine exact allowlisted names')) {
+    if ($xaml.IndexOf($required, [StringComparison]::Ordinal) -lt 0) {
+        throw "The capture panel XAML understates multi-process injection scope: $required"
+    }
+}
+$stalePhrases = @(
+    @{File='app'; Text='the confirmed ASUS Armoury process'},
+    @{File='tapUserGuide'; Text='only into the confirmed ASUS process'},
+    @{File='readme'; Text='inside an exact ASUS-signed Armoury process'},
+    @{File='xaml'; Text='the confirmed ASUS process'}
+)
+foreach ($entry in $stalePhrases) {
+    $content = switch ($entry.File) { 'app' { $app } 'tapUserGuide' { $tapUserGuide } 'readme' { $readme } 'xaml' { $xaml } }
+    if ($content.IndexOf($entry.Text, [StringComparison]::Ordinal) -ge 0) {
+        throw "A stale singular-process consent claim remains in user-facing material: $($entry.File) contains '$($entry.Text)'"
+    }
+}
 
 # App startup must recognize tap helper arguments before the single-instance mutex
 if ($app.IndexOf('ArmouryTapCaptureHelper.TryParseArguments', [StringComparison]::Ordinal) -lt 0 -or
