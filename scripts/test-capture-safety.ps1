@@ -19,6 +19,8 @@ $xamlPath = Join-Path $root 'src/AllyBindings.Windows/MainWindow.xaml'
 $projectPath = Join-Path $root 'src/AllyBindings.Windows/AllyBindings.Windows.csproj'
 $buildWorkflowPath = Join-Path $root '.github/workflows/build.yml'
 $releaseWorkflowPath = Join-Path $root '.github/workflows/release.yml'
+$packageScriptPath = Join-Path $root 'scripts/package.ps1'
+$nativeBuildScriptPath = Join-Path $root 'scripts/build-armoury-tap.ps1'
 
 $core = Get-Content -Raw -LiteralPath $corePath
 $backend = Get-Content -Raw -LiteralPath $backendPath
@@ -38,6 +40,8 @@ $xaml = Get-Content -Raw -LiteralPath $xamlPath
 $project = Get-Content -Raw -LiteralPath $projectPath
 $buildWorkflow = Get-Content -Raw -LiteralPath $buildWorkflowPath
 $releaseWorkflow = Get-Content -Raw -LiteralPath $releaseWorkflowPath
+$packageScript = Get-Content -Raw -LiteralPath $packageScriptPath
+$nativeBuildScript = Get-Content -Raw -LiteralPath $nativeBuildScriptPath
 
 if ($core -notmatch 'CustomWritesApproved\s*=>\s*false') {
     throw 'Custom M1/M2 writes are not source-locked.'
@@ -204,6 +208,20 @@ foreach ($workflow in @($buildWorkflow, $releaseWorkflow)) {
     if ($workflow.IndexOf('test-armoury-tap-runtime.ps1', [StringComparison]::Ordinal) -lt 0) {
         throw 'A shipping workflow does not run the behavioral Armoury tap runtime test.'
     }
+}
+foreach ($requiredNativeBuildToken in @(
+    'Visual Studio 18 2026',
+    'Visual Studio 17 2022',
+    '-A x64',
+    'Release/AllyBindings.ArmouryTap.dll'
+)) {
+    if ($nativeBuildScript.IndexOf($requiredNativeBuildToken, [StringComparison]::Ordinal) -lt 0) {
+        throw "The adaptive native build script is missing '$requiredNativeBuildToken'."
+    }
+}
+if ($buildWorkflow.IndexOf('build-armoury-tap.ps1', [StringComparison]::Ordinal) -lt 0 -or
+    $packageScript.IndexOf('build-armoury-tap.ps1', [StringComparison]::Ordinal) -lt 0) {
+    throw 'PR and release packaging do not share the adaptive native Armoury tap build script.'
 }
 if ($app.IndexOf('TryParseArguments(e.Args', [StringComparison]::Ordinal) -gt
     $app.IndexOf('new Mutex(', [StringComparison]::Ordinal)) {

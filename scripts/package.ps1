@@ -21,11 +21,8 @@ if (-not $SkipTests) {
 
 # Build the native Armoury tap DLL so it can be embedded as a resource.
 $cmakeBuild = Join-Path $repo "native/ArmouryTap/build"
-if (Test-Path $cmakeBuild) { Remove-Item $cmakeBuild -Recurse -Force }
-cmake -S (Join-Path $repo "native/ArmouryTap") -B $cmakeBuild -G "Visual Studio 17 2022" -A x64
-Assert-NativeSuccess "cmake configure"
-cmake --build $cmakeBuild --config Release
-Assert-NativeSuccess "cmake build"
+& (Join-Path $repo 'scripts/build-armoury-tap.ps1') -BuildDirectory $cmakeBuild
+Assert-NativeSuccess "native Armoury tap build"
 
 if (Test-Path $publishDir) { Remove-Item $publishDir -Recurse -Force }
 if (Test-Path $zipPath) { Remove-Item $zipPath -Force }
