@@ -8,20 +8,33 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Thi
 
 ### Added
 
-- Add a standalone, controlled `AllyBindings.HardwareValidator` for the first RC73XA/PID_1B4C write test. It has no Core, HidSharp or generic-adapter dependency; validates report `0x5A` through narrow native same-handle calls; supports only read-free target inspection and one literal interactive `M1=A/M2=B` operation; emits write-through machine-wide audit records; and is built with signed provenance only by an approved manual workflow outside the public package.
-- Add a physical validation runbook that makes Armoury Crate—not a guessed reset packet—the recovery authority.
-
-### Security
-
-- Keep both public application write gates locked; the lab artifact cannot enable normal profile writes.
-- Require exactly one compatible interface and revalidate the exact inspected HID interface identity set immediately before any lab write.
-- Reject redirected confirmation, changed/ambiguous device topology, unsupported models, and missing pre-write audit storage.
-- Pin the controlled workflow SDK and provenance policy to the approved main commit, and reject missing, extra, duplicated, tampered, or lookalike package contents.
-- Seal physical acceptance records, all three write-through audits, attestation output, and pre/write/restore media into one hashed evidence manifest whose outer hash can be timestamped independently without publishing private media.
+- Add the standalone `AllyBindings.M1M2Probe` software diagnostic with F17/F18 countdown emission, bounded key capture/suppression, XInput slot inventory, read-only ViGEmBus/HidHide service detection, and an explicit timed F18→A/F17→B virtual Xbox bridge.
+- Add a dedicated `AllyBindings.SoftwareProbe.Core` assembly for the privacy-bounded session model, atomic journal, named physical checkpoints, manifest and hashed evidence ZIP.
+- Add a guided PowerShell operator menu and complete Armoury/Remote Play/cold-boot/restoration runbook.
+- Build, package, verify and smoke-test the self-contained probe on the standard Windows PR workflow.
 
 ### Changed
 
-- Park further passive Armoury-capture expansion by default. Preview.20's nine oversized writes are documented as ambiguous routing evidence, not HID protocol proof.
+- Make the software-first F18/F17 path the next physical product gate and park further passive Armoury-capture work by default.
+- Keep Armoury as the sole authority for the one-time paddle assignment and final restoration; the probe performs no ASUS firmware operation.
+- Generate custom ASUS mapping reports with both secondary slots zeroed while preserving the exact known native/default reset report.
+
+### Removed
+
+- Retire the one-shot `write-m1-a-m2-b` command and remove its `HidD_SetFeature` import, audit store, approved manual workflow, package builder, evidence sealer and physical-write runbook.
+
+### Security
+
+- Isolate the software probe from `AllyBindings.Core`, HidSharp and every ASUS protocol writer so the shipped executable contains no dormant hardware-write symbol.
+- Reject software-probe source/package paths containing ASUS HID write, driver-install or physical-device hiding primitives.
+- Retain only F17/F18 transitions, capability status and fixed-choice named checkpoints—never free-form notes, broad key history, usernames, machine names, process lists or device paths.
+- Install/configure no driver and create virtual output only during the explicit bridge command, releasing A/B and disconnecting in `finally`.
+
+### Tests
+
+- Add deterministic evidence journal, bounded-event, checkpoint replacement, atomic round-trip and ZIP-manifest tests.
+- Add regression coverage for cleared secondary slots and unchanged native reset bytes, plus package/source scans proving the software artifact contains no SET_FEATURE entry point.
+- Add a packaged Windows smoke test for help, read-only capability inspection, rejection of the retired write command, session persistence and evidence finalization.
 
 ## [v0.3.0-preview.20] - 2026-08-03
 

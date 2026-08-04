@@ -1,5 +1,0 @@
-AllyBindings HardwareValidator third-party notices
-
-The validator has no third-party application-library dependency. It uses only the self-contained Microsoft .NET 8 runtime and narrow Windows SetupAPI/HID native APIs.
-
-The packaged .NET runtime licence and third-party notices are included under LICENSES/.
