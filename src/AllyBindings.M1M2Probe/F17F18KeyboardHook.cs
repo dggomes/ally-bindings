@@ -127,9 +127,20 @@ internal sealed class F17F18KeyboardHook : IDisposable
             KeyboardInput(virtualKey, keyUp: false),
             KeyboardInput(virtualKey, keyUp: true),
         };
-        var sent = SendInput((uint)inputs.Length, inputs, Marshal.SizeOf<Input>());
+        var inputSize = ValidateSendInputLayout();
+        var sent = SendInput((uint)inputs.Length, inputs, inputSize);
         if (sent != inputs.Length)
             throw new Win32Exception(Marshal.GetLastWin32Error(), $"SendInput emitted {sent} of {inputs.Length} events.");
+    }
+
+    internal static int ValidateSendInputLayout()
+    {
+        var inputSize = Marshal.SizeOf<Input>();
+        var expectedInputSize = IntPtr.Size == 8 ? 40 : 28;
+        if (inputSize != expectedInputSize)
+            throw new InvalidOperationException(
+                $"Invalid Win32 INPUT layout: managed size {inputSize}, expected {expectedInputSize}.");
+        return inputSize;
     }
 
     private void ProcessEvents()
@@ -270,7 +281,23 @@ internal sealed class F17F18KeyboardHook : IDisposable
     [StructLayout(LayoutKind.Explicit)]
     private struct InputUnion
     {
+        // INPUT's native union is sized by MOUSEINPUT (32 bytes on x64), not
+        // KEYBDINPUT (24 bytes on x64). Omitting this field makes cbSize 32
+        // instead of the required 40 and SendInput rejects every event.
+        [FieldOffset(0)] public MouseInputData Mouse;
         [FieldOffset(0)] public KeyboardInputData Keyboard;
+        [FieldOffset(0)] public HardwareInputData Hardware;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct MouseInputData
+    {
+        public int X;
+        public int Y;
+        public uint MouseData;
+        public uint Flags;
+        public uint Time;
+        public nuint ExtraInfo;
     }
 
     [StructLayout(LayoutKind.Sequential)]
@@ -281,6 +308,14 @@ internal sealed class F17F18KeyboardHook : IDisposable
         public uint Flags;
         public uint Time;
         public nuint ExtraInfo;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct HardwareInputData
+    {
+        public uint Message;
+        public ushort ParameterLow;
+        public ushort ParameterHigh;
     }
 
     [StructLayout(LayoutKind.Sequential)]

@@ -30,6 +30,11 @@ if (($inspect -join "`n") -notmatch 'READ-ONLY') {
     throw 'Inspect did not print its read-only result.'
 }
 
+$selfTest = Invoke-ExpectedSuccess @('self-test')
+if (($selfTest -join "`n") -notmatch 'SELF-TEST PASSED.+INPUT layout is 40 bytes') {
+    throw "SendInput x64 layout self-test failed: $($selfTest -join ' | ')"
+}
+
 $tempRoot = Join-Path ([IO.Path]::GetTempPath()) "ally-bindings-software-probe-ci-$([Guid]::NewGuid().ToString('N'))"
 try {
     $start = Invoke-ExpectedSuccess @('start', '--root', $tempRoot)

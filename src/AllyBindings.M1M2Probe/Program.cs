@@ -24,6 +24,7 @@ internal static class Program
             return args[0] switch
             {
                 "inspect" => Inspect(args),
+                "self-test" => SelfTest(args),
                 "start" => Start(args),
                 "listen" => Listen(args),
                 "emit-f17" => Emit("F17", args),
@@ -48,6 +49,15 @@ internal static class Program
         Console.WriteLine(JsonSerializer.Serialize(capabilities, JsonOptions));
         Console.WriteLine();
         Console.WriteLine("READ-ONLY — no ASUS HID access, driver install or device hiding occurred.");
+        return Success;
+    }
+
+    private static int SelfTest(string[] args)
+    {
+        ValidateArguments(args, [], []);
+        WindowsCapabilities.EnsureWindows();
+        var size = F17F18KeyboardHook.ValidateSendInputLayout();
+        Console.WriteLine($"SELF-TEST PASSED — Win32 INPUT layout is {size} bytes.");
         return Success;
     }
 
@@ -282,6 +292,7 @@ internal static class Program
         Console.WriteLine("Ally Bindings M1/M2 software probe — no ASUS HID writes; no driver installation; no device hiding");
         Console.WriteLine();
         Console.WriteLine("  inspect");
+        Console.WriteLine("  self-test");
         Console.WriteLine("  start [--root <directory>]");
         Console.WriteLine("  listen --session <directory> [--seconds 30] [--suppress]");
         Console.WriteLine("  emit-f17 [--delay 3]");

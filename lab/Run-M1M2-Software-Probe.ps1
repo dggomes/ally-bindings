@@ -93,9 +93,9 @@ while ($true) {
         '2' {
             Assert-CheckpointPassed 'armoury-baseline-saved' 'stage 1: baseline screenshots'
             Write-Host 'Clear both secondary assignments in Armoury first.' -ForegroundColor Yellow
-            Read-Host 'Focus the M1 keyboard assignment field, then press Enter'
+            Read-Host 'Prepare M1 keyboard capture, keep PowerShell focused, press Enter, then focus Armoury during the countdown'
             Invoke-Probe emit-f18 --delay 3
-            Read-Host 'Focus the M2 keyboard assignment field, then press Enter'
+            Read-Host 'Prepare M2 keyboard capture, keep PowerShell focused, press Enter, then focus Armoury during the countdown'
             Invoke-Probe emit-f17 --delay 3
             Set-Checkpoint 'f17-f18-assigned' 'Does Armoury show M1=F18, M2=F17, with both secondaries empty?'
         }
