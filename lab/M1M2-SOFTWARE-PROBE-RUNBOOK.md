@@ -10,10 +10,10 @@ The probe:
 - contains no `HidD_SetFeature` import or hardware-write command;
 - never installs or updates a driver;
 - never hides a physical controller;
-- records only F17/F18 timing, capability status and fixed-choice checkpoint outcomes;
+- records only F11/F12 timing, capability status and fixed-choice checkpoint outcomes;
 - releases virtual A/B and disconnects the temporary controller on every normal exit.
 
-Armoury Crate remains responsible for any M1/M2 assignment change. The probe only emits one ordinary Windows F17 or F18 key press when you explicitly run the corresponding command.
+Armoury Crate remains solely responsible for M1/M2 assignment changes. The probe never generates assignment input.
 
 ## 1. Verify the package
 
@@ -65,24 +65,14 @@ Then record:
 
 Screenshots are deliberately not copied into the evidence ZIP.
 
-## 5. Ask Armoury to assign F18/F17
+## 5. Ask Armoury to assign F12/F11
 
-In Armoury Crate, clear both secondary assignments. Select M1's keyboard assignment field, then run:
+In Armoury Crate, clear both secondary assignments. Use Armoury's own virtual keyboard to click F12 for M1 primary and F11 for M2 primary. The probe deliberately has no `SendInput` or assignment-emitter command.
 
-```powershell
-.\AllyBindings.M1M2Probe.exe emit-f18 --delay 3
-```
-
-Select M2's keyboard assignment field, then run:
+Confirm Armoury shows M1=F12 and M2=F11, then record:
 
 ```powershell
-.\AllyBindings.M1M2Probe.exe emit-f17 --delay 3
-```
-
-Confirm Armoury shows M1=F18 and M2=F17, then record:
-
-```powershell
-.\AllyBindings.M1M2Probe.exe checkpoint --session $session --name f17-f18-assigned --result pass
+.\AllyBindings.M1M2Probe.exe checkpoint --session $session --name f11-f12-assigned --result pass
 ```
 
 If Armoury rejects either key, record `fail`, restore the screenshots, and stop. Do not use the retired hardware validator.
@@ -93,7 +83,7 @@ If Armoury rejects either key, record `fail`, restore the screenshots, and stop.
 .\AllyBindings.M1M2Probe.exe listen --session $session --seconds 30
 ```
 
-Press and release M1 twice, M2 twice, then hold each once. Confirm clean F18/F17 down/up events and record the result:
+Press and release M1 twice, M2 twice, then hold each once. Confirm clean F12/F11 down/up events and record the result:
 
 Then open Notepad and run a suppression pass:
 
@@ -101,7 +91,7 @@ Then open Notepad and run a suppression pass:
 .\AllyBindings.M1M2Probe.exe listen --session $session --seconds 15 --suppress
 ```
 
-During those 15 seconds press M1/M2 and type `probe` with unrelated keys. F17/F18 must be swallowed while `probe` still appears. This proves the filter does not suppress broad keyboard input.
+During those 15 seconds press M1/M2 and type `probe` with unrelated keys. F11/F12 must be swallowed while `probe` still appears. This proves the filter does not suppress broad keyboard input.
 
 ```powershell
 .\AllyBindings.M1M2Probe.exe checkpoint --session $session --name keyboard-capture --result pass
@@ -123,7 +113,7 @@ The hook ignores and never retains every other key.
 .\AllyBindings.M1M2Probe.exe bridge --session $session --seconds 120
 ```
 
-During the two-minute window, M1/F18 becomes virtual A and M2/F17 becomes virtual B. Confirm Remote Play responds and record:
+During the two-minute window, M1/F12 becomes virtual A and M2/F11 becomes virtual B. Confirm Remote Play responds and record:
 
 ```powershell
 .\AllyBindings.M1M2Probe.exe checkpoint --session $session --name remote-play-virtual-only --result pass
@@ -154,7 +144,7 @@ If coexistence fails, record `fail`. Do not install or configure HidHide as part
 5. Boot without a remapper running.
 6. Run `%LOCALAPPDATA%\AllyBindings\Resume-M1M2-Software-Probe.ps1`, choose stage 7, and test M1/M2.
 
-Record `pass` if F18/F17 survived or `fail` if they disappeared:
+Record `pass` if F12/F11 survived or `fail` if they disappeared:
 
 ```powershell
 .\AllyBindings.M1M2Probe.exe checkpoint --session $session --name cold-boot-persistence --result pass

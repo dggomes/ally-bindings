@@ -71,12 +71,12 @@ foreach ($entry in $entries) {
 
 $executableBytes = [IO.File]::ReadAllBytes((Join-Path $root 'AllyBindings.M1M2Probe.exe'))
 $executableText = [Text.Encoding]::UTF8.GetString($executableBytes) + [Text.Encoding]::Unicode.GetString($executableBytes)
-foreach ($requiredSymbol in @('CreateXbox360Controller', 'F17F18KeyboardHook', 'SoftwareProbeSession')) {
+foreach ($requiredSymbol in @('CreateXbox360Controller', 'F11F12KeyboardHook', 'SoftwareProbeSession')) {
     if ($executableText.IndexOf($requiredSymbol, [StringComparison]::Ordinal) -lt 0) {
         throw "Probe executable is missing expected software-only symbol: $requiredSymbol"
     }
 }
-foreach ($forbiddenSymbol in @('AllyBindings.Core.dll', 'HidD_SetFeature', 'WriteFeatureReport', 'write-m1-a-m2-b', 'HidSharp', 'CreateServiceW')) {
+foreach ($forbiddenSymbol in @('AllyBindings.Core.dll', 'HidD_SetFeature', 'WriteFeatureReport', 'SendInput', 'write-m1-a-m2-b', 'HidSharp', 'CreateServiceW')) {
     if ($executableText.IndexOf($forbiddenSymbol, [StringComparison]::OrdinalIgnoreCase) -ge 0) {
         throw "Probe executable contains forbidden capability symbol: $forbiddenSymbol"
     }

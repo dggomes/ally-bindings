@@ -28,14 +28,14 @@ A lightweight Windows tray application that lets Daniel rotate named controller 
 - [x] Linux/macOS core tests plus Windows build/test/package CI.
 - [x] Use the public source repository's Releases feed with automatic checks enabled by default and repository-scoped `GITHUB_TOKEN` publishing.
 - [x] Retire the controlled hardware-write command, native SET_FEATURE import, approved writer workflow and writer package.
-- [x] Build a standalone software-only M1/M2 probe with F17/F18 emission/capture/suppression, XInput/ViGEmBus/HidHide inventory, temporary F18→A/F17→B virtual output, guided checkpoints and a hashed evidence ZIP.
+- [x] Build a standalone software-only M1/M2 probe with F11/F12 capture/suppression, XInput/ViGEmBus/HidHide inventory, temporary F12→A/F11→B virtual output, guided checkpoints and a hashed evidence ZIP.
 - [x] Clear custom secondary slots in generated ASUS mapping reports while preserving the byte-exact native reset report.
 
 ### Physical remapping — release gate
 
 - [ ] Inventory actual Ally X input/HID/XInput topology.
 - [x] Establish rear-paddle behavior: firmware-managed, not exposed as independent XInput buttons; configurable via ASUS HID mapping zone.
-- [x] Build the minimal F17/F18 → temporary ViGEm output probe without installing or configuring a driver.
+- [x] Build the minimal F11/F12 → temporary ViGEm output probe without installing or configuring a driver.
 - [ ] Decide whether coexistence works or HidHide is actually required, with acceptable maintenance, signing and licence posture.
 - [ ] Prove exactly one controller reaches Remote Play.
 - [ ] Prove Command Centre and Armoury remain functional.
@@ -58,7 +58,7 @@ Follow `HARDWARE-SPIKE.md` on the physical Ally X. The backend should be a narro
 
 Required runtime sequence:
 
-1. Configure M1→F18 and M2→F17 once through Armoury, with baseline screenshots and empty secondaries.
+1. Configure M1→F12 and M2→F11 once through Armoury, with baseline screenshots and empty secondaries.
 2. Capture/suppress only those two keys and start one healthy virtual output.
 3. Prove virtual-only Remote Play before evaluating coexistence.
 4. Avoid a filter entirely if physical+virtual coexistence works.

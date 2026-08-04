@@ -9,7 +9,7 @@ A lightweight, local-first Windows controller-profile selector for Xbox Remote P
 
 Ally Bindings lets you save named mappings, rotate them from the controller, and see the pending choice in a small overlay. It is intentionally conservative: the current public build exercises the complete profile-selection experience without hiding the physical controller, creating a virtual controller, or writing unvalidated ASUS controller settings.
 
-> **Project status: preview.** This source tree remains based on `v0.3.0-preview.20`. Standard-button remapping and public ASUS M1/M2 writes remain locked. The experimental one-shot hardware writer has been retired. The current hardware gate is a separate software-only probe: Armoury performs a one-time vendor-supported F18/F17 assignment, then the probe measures those keys and can temporarily bridge them to a virtual Xbox controller. It installs no driver, hides no device and never opens an ASUS HID interface. See [Current capabilities](#current-capabilities) and the [software-first validation plan](docs/HARDWARE-SPIKE.md).
+> **Project status: preview.** This source tree remains based on `v0.3.0-preview.20`. Standard-button remapping and public ASUS M1/M2 writes remain locked. The experimental one-shot hardware writer has been retired. The current hardware gate is a separate software-only probe: Armoury performs a one-time vendor-supported F12/F11 assignment, then the probe measures those keys and can temporarily bridge them to a virtual Xbox controller. It installs no driver, hides no device and never opens an ASUS HID interface. See [Current capabilities](#current-capabilities) and the [software-first validation plan](docs/HARDWARE-SPIKE.md).
 
 Ally Bindings is an independent project and is not affiliated with ASUS, ROG, Microsoft or Xbox.
 
@@ -65,8 +65,8 @@ The chord and timings are configurable. The app can remain in the notification a
 | Read-only ASUS report `0x5A` snapshot | **Working; physical validation required and zero write authority** |
 | Self-contained Armoury HID write tap | **Diagnostic preview; explicit UAC/consent, ASUS-process-only, zero write authority** |
 | USB ETW Armoury M1/M2 protocol capture | **Working; retained as deeper diagnostic fallback and write-locked** |
-| F17/F18 software-input capture and evidence bundle | **Working; packaged diagnostic** |
-| Temporary F18→A / F17→B virtual-controller bridge | **Working when ViGEmBus is already installed; physical validation required** |
+| F11/F12 software-input capture and evidence bundle | **Working; packaged diagnostic** |
+| Temporary F12→A / F11→B virtual-controller bridge | **Working when ViGEmBus is already installed; physical validation required** |
 | Standard XInput remapping | **Preview only** |
 | ASUS M1/M2 controller-setting writes | **Disabled pending physical validation** |
 | Physical-device hiding | **Not implemented** |
@@ -78,7 +78,7 @@ Selecting a profile currently updates Ally Bindings' state and UX. It does **not
 - Windows 11 x64. Windows 10 2004+ is the build target, but the physical validation target is Windows 11 on the ROG Xbox Ally X.
 - An XInput-compatible controller; the built-in Ally X controller is the intended target.
 - No administrator rights for normal launch.
-- The software probe installs nothing. Its optional bridge requires an existing healthy ViGEmBus installation; otherwise capability inspection and F17/F18 capture still work.
+- The software probe installs nothing. Its optional bridge requires an existing healthy ViGEmBus installation; otherwise capability inspection and F11/F12 capture still work.
 - Optional protocol capture enumerates running processes matching nine exact allowlisted ASUS Armoury executable names. With explicit disclosure and one-time UAC, it may temporarily inject an embedded capture-only DLL into every verified candidate; capture is rejected if more than twelve candidates pass verification. It installs no driver or separate application, unloads/deletes the DLL at teardown, and offers Windows USB ETW only as an explicitly accepted fallback when safe injection is unavailable.
 
 ## Install
@@ -132,10 +132,10 @@ Pull-request CI publishes `AllyBindings-M1M2-SoftwareProbe-win-x64`. It is a sep
 
 The probe:
 
-- emits F17 or F18 after a visible countdown so Armoury can record a vendor-supported rear-button keyboard assignment;
-- captures and optionally suppresses only F17/F18 key transitions through a low-level keyboard hook;
+- relies on Armoury's own virtual keyboard for the vendor-supported F12/F11 rear-button assignment and generates no assignment input;
+- captures and optionally suppresses only F11/F12 key transitions through a low-level keyboard hook;
 - enumerates the four XInput slots and detects ViGEmBus/HidHide service installation and state without changing either service;
-- can create one temporary virtual Xbox 360 controller, mapping M1/F18 to A and M2/F17 to B, only during an explicit timed `bridge` command;
+- can create one temporary virtual Xbox 360 controller, mapping M1/F12 to A and M2/F11 to B, only during an explicit timed `bridge` command;
 - always releases A/B and disconnects the virtual controller in `finally`;
 - records version/capability data, key events and named physical-test checkpoints in an atomic JSON session;
 - creates a three-file evidence ZIP plus SHA-256; it records no arbitrary key input, username, machine name, process list or device path.
@@ -190,7 +190,7 @@ The updater protects against corruption and mismatched downloads. Until releases
 - No injection into games, Xbox, anti-cheat or arbitrary processes. The explicit Armoury diagnostic may temporarily inject only an embedded, hash-verified capture DLL into exact allowlisted x64 ASUS-signed Armoury processes under trusted Windows/Program Files roots; it is unloaded and deleted at teardown.
 - No Armoury database mutation, macros, turbo or anti-cheat bypasses.
 - No driver is installed or updated by Ally Bindings.
-- The software probe never opens an ASUS HID interface and retains only F17/F18 transitions.
+- The software probe never opens an ASUS HID interface and retains only F11/F12 transitions.
 - The permanent Default profile cannot be edited or deleted.
 - `Ctrl+Alt+F12` provides a keyboard recovery/default path.
 - The current build sends no custom or recovery ASUS M1/M2 report.
@@ -223,7 +223,7 @@ The WPF app can be cross-compiled with Windows targeting enabled, but Windows pa
 
 - `src/AllyBindings.Core` — profile/configuration model, persistence, mapping engine, backend contracts, carousel state machine and privacy-filtered ETW payload extractor.
 - `src/AllyBindings.SoftwareProbe.Core` — software-only evidence model, atomic journal and deterministic evidence ZIP builder.
-- `src/AllyBindings.M1M2Probe` — F17/F18 helper/capture, XInput and installed-driver inspection, and explicit temporary ViGEm bridge.
+- `src/AllyBindings.M1M2Probe` — F11/F12 capture, XInput and installed-driver inspection, and explicit temporary ViGEm bridge.
 - `src/AllyBindings.Windows` — WPF UI, tray, overlay, XInput polling, startup registration, updater, the explicit Armoury tap helper and ETW fallback orchestration.
 - `native/ArmouryTap` — capture-only x64 hook DLL built into the managed executable; not shipped as a loose binary.
 - `tests/AllyBindings.Core.Tests` — deterministic core and protocol-parser tests.

@@ -10,7 +10,7 @@ namespace AllyBindings.SoftwareProbe;
 public static class SoftwareProbeCheckpoints
 {
     public const string ArmouryBaselineSaved = "armoury-baseline-saved";
-    public const string F17F18Assigned = "f17-f18-assigned";
+    public const string F11F12Assigned = "f11-f12-assigned";
     public const string KeyboardCapture = "keyboard-capture";
     public const string VirtualOnlyRemotePlay = "remote-play-virtual-only";
     public const string CoexistenceRemotePlay = "remote-play-coexistence";
@@ -21,7 +21,7 @@ public static class SoftwareProbeCheckpoints
     public static readonly ImmutableHashSet<string> Allowed = ImmutableHashSet.Create(
         StringComparer.Ordinal,
         ArmouryBaselineSaved,
-        F17F18Assigned,
+        F11F12Assigned,
         KeyboardCapture,
         VirtualOnlyRemotePlay,
         CoexistenceRemotePlay,
@@ -73,7 +73,7 @@ public sealed record SoftwareProbeSession(
     ImmutableArray<SoftwareProbeKeyEvent> KeyEvents,
     ImmutableArray<SoftwareProbeCheckpoint> Checkpoints)
 {
-    public const int CurrentSchemaVersion = 1;
+    public const int CurrentSchemaVersion = 2;
     public const int MaximumKeyEvents = 2_000;
     public const int MaximumNotesLength = 0;
     public const string RequiredSafetyMode = "software-only; no ASUS HID writes; no driver installation; no device hiding";
@@ -100,8 +100,8 @@ public sealed record SoftwareProbeSession(
             throw new InvalidOperationException("The evidence session is already finalized.");
         if (KeyEvents.Length >= MaximumKeyEvents)
             throw new InvalidOperationException($"The evidence session reached the {MaximumKeyEvents}-event safety limit.");
-        if (keyEvent.Key is not ("F17" or "F18"))
-            throw new ArgumentOutOfRangeException(nameof(keyEvent), "Only F17/F18 events may be retained.");
+        if (keyEvent.Key is not ("F11" or "F12"))
+            throw new ArgumentOutOfRangeException(nameof(keyEvent), "Only F11/F12 events may be retained.");
         if (keyEvent.TimestampUtc < CreatedAtUtc)
             throw new ArgumentOutOfRangeException(nameof(keyEvent), "Event timestamp predates the session.");
         if (!AllowedEventModes.Contains(keyEvent.Mode))
@@ -178,7 +178,7 @@ public sealed record SoftwareProbeSession(
             throw new InvalidDataException("The evidence event limit was exceeded.");
         foreach (var keyEvent in KeyEvents)
         {
-            if (keyEvent.Key is not ("F17" or "F18") || !AllowedEventModes.Contains(keyEvent.Mode) ||
+            if (keyEvent.Key is not ("F11" or "F12") || !AllowedEventModes.Contains(keyEvent.Mode) ||
                 keyEvent.TimestampUtc < CreatedAtUtc || keyEvent.TimestampUtc > UpdatedAtUtc)
                 throw new InvalidDataException("The evidence contains an invalid key event.");
         }
@@ -301,7 +301,7 @@ public static class SoftwareProbeEvidenceStore
         var sessionBytes = SerializeSession(finalized);
         var readmeBytes = Encoding.UTF8.GetBytes(
             "Ally Bindings M1/M2 software-probe evidence\r\n" +
-            "Collected data is limited to F17/F18 timing, capability status and fixed-choice checkpoint outcomes.\r\n" +
+            "Collected data is limited to F11/F12 timing, capability status and fixed-choice checkpoint outcomes.\r\n" +
             "It contains no HID packet bytes, broad keyboard history or device-interface paths.\r\n");
         var manifestBytes = JsonSerializer.SerializeToUtf8Bytes(new
         {

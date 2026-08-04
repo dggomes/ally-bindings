@@ -24,16 +24,18 @@ $unsupported = @(& $exe write-m1-a-m2-b 2>&1)
 if ($LASTEXITCODE -ne 64 -or ($unsupported -join "`n") -notmatch 'Unknown command') {
     throw 'The retired hardware-write command was not rejected as a usage error.'
 }
+foreach ($retiredEmitter in @('emit-f17', 'emit-f18')) {
+    $unsupportedEmitter = @(& $exe $retiredEmitter 2>&1)
+    if ($LASTEXITCODE -ne 64 -or ($unsupportedEmitter -join "`n") -notmatch 'Unknown command') {
+        throw "Retired assignment emitter was not rejected: $retiredEmitter"
+    }
+}
 
 $inspect = Invoke-ExpectedSuccess @('inspect')
 if (($inspect -join "`n") -notmatch 'READ-ONLY') {
     throw 'Inspect did not print its read-only result.'
 }
 
-$selfTest = Invoke-ExpectedSuccess @('self-test')
-if (($selfTest -join "`n") -notmatch 'SELF-TEST PASSED.+INPUT layout is 40 bytes') {
-    throw "SendInput x64 layout self-test failed: $($selfTest -join ' | ')"
-}
 
 $tempRoot = Join-Path ([IO.Path]::GetTempPath()) "ally-bindings-software-probe-ci-$([Guid]::NewGuid().ToString('N'))"
 try {
@@ -42,10 +44,14 @@ try {
     if (-not (Test-Path -LiteralPath (Join-Path $session 'session.json') -PathType Leaf)) {
         throw 'Start did not create session.json.'
     }
+    $sessionJson = Get-Content -LiteralPath (Join-Path $session 'session.json') -Raw | ConvertFrom-Json
+    if ($sessionJson.schemaVersion -ne 2) {
+        throw "Expected F11/F12 evidence schema 2; found $($sessionJson.schemaVersion)."
+    }
 
     $checkpoints = @(
         'armoury-baseline-saved',
-        'f17-f18-assigned',
+        'f11-f12-assigned',
         'keyboard-capture',
         'remote-play-virtual-only',
         'remote-play-coexistence',

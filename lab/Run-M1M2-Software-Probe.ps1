@@ -55,6 +55,10 @@ if ([string]::IsNullOrWhiteSpace($Session)) {
 if (-not (Test-Path -LiteralPath (Join-Path $Session 'session.json') -PathType Leaf)) {
     throw "Evidence session not found: $Session"
 }
+$sessionMetadata = Get-Content -LiteralPath (Join-Path $Session 'session.json') -Raw | ConvertFrom-Json
+if ($sessionMetadata.schemaVersion -ne 2) {
+    throw "Evidence session schema $($sessionMetadata.schemaVersion) uses the retired F17/F18 contract. Start this runner without -Session to create a fresh F11/F12 session."
+}
 $script:Session = $Session
 $resumeFile = Join-Path $Session 'RESUME.txt'
 $resumeLauncher = Join-Path $env:LOCALAPPDATA 'AllyBindings/Resume-M1M2-Software-Probe.ps1'
@@ -75,8 +79,8 @@ while ($true) {
     Write-Host ''
     Write-Host 'Choose the next controlled stage:'
     Write-Host '  1  Baseline screenshots recorded'
-    Write-Host '  2  Assign M1=F18 and M2=F17 through Armoury'
-    Write-Host '  3  Capture F17/F18 events'
+    Write-Host '  2  Assign M1=F12 and M2=F11 through Armoury'
+    Write-Host '  3  Capture F11/F12 events'
     Write-Host '  4  Remote Play virtual-only bridge test'
     Write-Host '  5  Remote Play coexistence bridge test'
     Write-Host '  6  Record HidHide requirement'
@@ -93,21 +97,19 @@ while ($true) {
         '2' {
             Assert-CheckpointPassed 'armoury-baseline-saved' 'stage 1: baseline screenshots'
             Write-Host 'Clear both secondary assignments in Armoury first.' -ForegroundColor Yellow
-            Read-Host 'Prepare M1 keyboard capture, keep PowerShell focused, press Enter, then focus Armoury during the countdown'
-            Invoke-Probe emit-f18 --delay 3
-            Read-Host 'Prepare M2 keyboard capture, keep PowerShell focused, press Enter, then focus Armoury during the countdown'
-            Invoke-Probe emit-f17 --delay 3
-            Set-Checkpoint 'f17-f18-assigned' 'Does Armoury show M1=F18, M2=F17, with both secondaries empty?'
+            Write-Host "In Armoury's virtual keyboard, click F12 for M1 primary and F11 for M2 primary." -ForegroundColor Yellow
+            Read-Host 'Press Enter only after Armoury visibly shows both assignments'
+            Set-Checkpoint 'f11-f12-assigned' 'Does Armoury show M1=F12, M2=F11, with both secondaries empty?'
         }
         '3' {
-            Assert-CheckpointPassed 'f17-f18-assigned' 'stage 2: F17/F18 assignment'
+            Assert-CheckpointPassed 'f11-f12-assigned' 'stage 2: F11/F12 assignment'
             Write-Host 'Press/release M1 twice, M2 twice, then hold each once during the capture.' -ForegroundColor Yellow
             Invoke-Probe listen --session $Session --seconds 30
             Write-Host 'Now open Notepad. During the suppression pass, press M1/M2 and type probe using unrelated keys.' -ForegroundColor Yellow
-            Write-Host 'F17/F18 must be swallowed while the unrelated text still appears.' -ForegroundColor Yellow
+            Write-Host 'F11/F12 must be swallowed while the unrelated text still appears.' -ForegroundColor Yellow
             Read-Host 'Press Enter when Notepad is focused and you are ready'
             Invoke-Probe listen --session $Session --seconds 15 --suppress
-            Set-Checkpoint 'keyboard-capture' 'Were clean F18/F17 edges observed, then suppressed while unrelated keys still worked?'
+            Set-Checkpoint 'keyboard-capture' 'Were clean F12/F11 edges observed, then suppressed while unrelated keys still worked?'
         }
         '4' {
             Assert-CheckpointPassed 'keyboard-capture' 'stage 3: capture and suppression proof'
@@ -143,13 +145,13 @@ while ($true) {
             $shutdownDone = (Read-Host 'Has a full shutdown already completed with Fast Startup and remapper startup disabled? [y/N]').Trim()
             if ($shutdownDone -notmatch '^[Yy]$') {
                 Write-Host '1. Disable Fast Startup temporarily.' -ForegroundColor Yellow
-                Write-Host '2. Disable remapper startup, but leave Armoury F17/F18 assignments intact.' -ForegroundColor Yellow
+                Write-Host '2. Disable remapper startup, but leave Armoury F11/F12 assignments intact.' -ForegroundColor Yellow
                 Write-Host '3. Run: shutdown /s /t 0' -ForegroundColor Yellow
                 Write-Host "4. After boot, run $resumeLauncher and choose stage 7 again." -ForegroundColor Yellow
                 return
             }
             Invoke-Probe listen --session $Session --seconds 30
-            Set-Checkpoint 'cold-boot-persistence' 'Did the F18/F17 mapping survive the cold boot?'
+            Set-Checkpoint 'cold-boot-persistence' 'Did the F12/F11 mapping survive the cold boot?'
         }
         '8' {
             Set-Checkpoint 'armoury-restored' 'Are all original Armoury assignments restored and physically verified?'

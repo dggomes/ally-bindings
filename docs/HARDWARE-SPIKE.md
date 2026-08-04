@@ -15,14 +15,14 @@ M1/M2 are not independent XInput buttons. ASUS configures them as firmware-level
 - Handheld Companion independently uses the same report family/zone and identifies Xbox ROG Ally X as DMI model token `RC73XA`; Daniel's firmware exposes the full DMI product name `ROG Xbox Ally X RC73XA_RC73XA` (including the equivalent repeated model token).
 - Linux ROG Ally support likewise treats M1/M2 as ASUS firmware-programmable keyboard/controller actions rather than gamepad button bits.
 
-This proves firmware controls the paddle outputs; it does **not** make M1/M2 readable through `XInputGetState`. The preferred product path is therefore to configure unique F18/F17 outputs once through Armoury and consume those ordinary Windows key events in software. Direct firmware writes remain a fallback, not the next experiment.
+This proves firmware controls the paddle outputs; it does **not** make M1/M2 readable through `XInputGetState`. The preferred product path is therefore to configure unique F12/F11 outputs once through Armoury and consume those ordinary Windows key events in software. Direct firmware writes remain a fallback, not the next experiment.
 
 Implementation safety gates:
 
 1. The public application's custom and recovery writes remain source locked.
 2. The former one-shot write command, `HidD_SetFeature` import, approved-writer workflow, package and runbook are retired.
 3. `AllyBindings.M1M2Probe` references a dedicated software-only evidence assembly, not `AllyBindings.Core`, HidSharp or an ASUS protocol writer.
-4. The probe emits/captures only F17/F18, detects ViGEmBus/HidHide without modifying them, and creates virtual output only during an explicit timed bridge.
+4. The probe emits/captures only F11/F12, detects ViGEmBus/HidHide without modifying them, and creates virtual output only during an explicit timed bridge.
 5. Armoury Crate is the sole mapping/restoration authority for the experiment. Baseline screenshots are mandatory.
 6. No physical device is hidden during the first virtual-only test. HidHide is considered only if virtual-only passes and coexistence fails.
 7. Standard mappings remain preview-only and are labelled as such.
@@ -77,15 +77,15 @@ Known limitation: feature report `0x5A` behaves as a last-command/status mailbox
 - `ArmouryCrateSE.Service` made nine `WriteFile` calls, all larger than the bounded 64-byte report window. No covered HID feature/output API retained a target `5A D1` packet.
 - Those writes may be IPC or a driver route; their size does not prove they target the controller.
 
-Conclusion: keep both public write gates locked and stop expanding passive capture by default. ETW and native-tap experiments established transport facts but did not answer the product question. The next useful evidence is whether vendor-configured F18/F17 events can be consumed, suppressed and bridged into Xbox Remote Play without duplicate input.
+Conclusion: keep both public write gates locked and stop expanding passive capture by default. ETW and native-tap experiments established transport facts but did not answer the product question. The next useful evidence is whether vendor-configured F12/F11 events can be consumed, suppressed and bridged into Xbox Remote Play without duplicate input.
 
 The preferred next experiment is the packaged software probe:
 
 1. Download the `AllyBindings-M1M2-SoftwareProbe-win-x64` artifact from successful PR CI, verify its outer SHA-256 and run `Verify-Package.ps1`.
 2. Follow [`lab/M1M2-SOFTWARE-PROBE-RUNBOOK.md`](../lab/M1M2-SOFTWARE-PROBE-RUNBOOK.md): save baseline screenshots and software/firmware versions first.
-3. In Armoury, assign M1 to F18 and M2 to F17 with both secondary functions empty. The probe's countdown emitter can supply the otherwise awkward keys while Armoury is listening.
-4. Capture press/release/hold behaviour and prove optional suppression affects only F17/F18.
-5. If ViGEmBus is already installed, disable the Ally Embedded Controller through ASUS Command Centre and test the temporary F18→A/F17→B bridge in Remote Play.
+3. In Armoury, use its virtual keyboard to assign M1 to F12 and M2 to F11 with both secondary functions empty. The probe generates no assignment input.
+4. Capture press/release/hold behaviour and prove optional suppression affects only F11/F12.
+5. If ViGEmBus is already installed, disable the Ally Embedded Controller through ASUS Command Centre and test the temporary F12→A/F11→B bridge in Remote Play.
 6. Re-enable the physical controller and repeat to determine whether coexistence causes duplicate input or slot precedence.
 7. Perform a full cold boot with remappers disabled, record whether the Armoury assignment persists, restore the photographed assignments through Armoury, verify both paddles, and finalize the hashed evidence ZIP.
 
@@ -116,17 +116,17 @@ Capture a redacted inventory before changing anything:
 2. Windows Settings controller entries.
 3. Device Manager hardware IDs for gamepad/HID interfaces.
 4. XInput index used by the built-in controller.
-5. Confirm on this firmware that M1/M2 do not appear as independent XInput buttons, then validate F18/F17 output through Armoury.
+5. Confirm on this firmware that M1/M2 do not appear as independent XInput buttons, then validate F12/F11 output through Armoury.
 6. Whether Command Centre/Armoury buttons enter XInput at all.
 7. Behaviour in embedded and desktop control modes.
 
-Do not treat rear paddles as independent XInput buttons. Armoury configures what firmware emits; the probe captures the resulting F18/F17 keyboard events, not raw paddle hardware.
+Do not treat rear paddles as independent XInput buttons. Armoury configures what firmware emits; the probe captures the resulting F12/F11 keyboard events, not raw paddle hardware.
 
 ## Candidate backend decision order
 
 ### 1. Vendor-configured keys + temporary virtual Xbox output
 
-Use Armoury once to map M1→F18 and M2→F17, then capture/suppress those exact keys and bridge them to one virtual Xbox controller. This wins if Remote Play accepts the virtual-only path and the mapping/restoration survives the lifecycle matrix.
+Use Armoury once to map M1→F12 and M2→F11, then capture/suppress those exact keys and bridge them to one virtual Xbox controller. This wins if Remote Play accepts the virtual-only path and the mapping/restoration survives the lifecycle matrix.
 
 ### 2. Coexistence before hiding
 
@@ -155,9 +155,9 @@ Prefer a supported Windows API/driver path if it can meet the same safety proper
 `AllyBindings.M1M2Probe` is the smallest adapter for the first decision gate:
 
 1. detect XInput slots and existing ViGEmBus/HidHide service state;
-2. capture and optionally suppress only F18/F17;
+2. capture and optionally suppress only F12/F11;
 3. start one temporary virtual Xbox controller;
-4. map F18→A and F17→B;
+4. map F12→A and F11→B;
 5. ignore injected events and release all virtual buttons on exit/failure;
 6. run first with the physical controller disabled through ASUS Command Centre, then test coexistence;
 7. journal every transition/checkpoint and finalize a deterministic evidence bundle.
@@ -171,13 +171,13 @@ It deliberately does not implement `IControllerBackend` yet. Integration waits u
 | Baseline enumeration | Physical interfaces/buttons understood | Unknown duplicate/input path |
 | Rear paddles | Exposure model documented | Claimed mapping without visible signal |
 | M1/M2 opt-in off | No feature-report write; Armoury assignment unchanged | Any hardware mutation |
-| M1=F18, M2=F17 | Clean down/up events; hold behavior documented | Missing, doubled, leaked or ambiguous key |
-| Suppression | Only F17/F18 are swallowed while active | Other keyboard input affected or F17/F18 leaks |
+| M1=F12, M2=F11 | Clean down/up events; hold behavior documented | Missing, doubled, leaked or ambiguous key |
+| Suppression | Only F11/F12 are swallowed while active | Other keyboard input affected or F11/F12 leaks |
 | M1/M2 restore | Photographed Armoury behavior returns | Custom action remains/stuck input |
 | Cold boot | Persistence is explicitly known | Result not measured with remappers disabled |
 | Armoury after assignment | Opens normally; mapping/restoration works | Corruption, crash or unrecoverable mapping |
 | Start output | One healthy virtual Xbox pad | Output unavailable/unstable |
-| Virtual-only Remote Play | F18→A and F17→B accepted | Missing/stuck/wrong input |
+| Virtual-only Remote Play | F12→A and F11→B accepted | Missing/stuck/wrong input |
 | Physical + virtual coexistence | Duplicate/slot behavior documented | Ambiguous or dangerous behavior |
 | Optional hide physical | Only after virtual-only success; consumer sees one pad | No input, hidden recovery path or two pads |
 | Default | Exact baseline Xbox layout | Missing/stuck/wrong input |

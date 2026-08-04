@@ -8,15 +8,16 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Thi
 
 ### Added
 
-- Add the standalone `AllyBindings.M1M2Probe` software diagnostic with F17/F18 countdown emission, bounded key capture/suppression, XInput slot inventory, read-only ViGEmBus/HidHide service detection, and an explicit timed F18→A/F17→B virtual Xbox bridge.
+- Add the standalone `AllyBindings.M1M2Probe` software diagnostic with bounded F11/F12 capture/suppression, XInput slot inventory, read-only ViGEmBus/HidHide service detection, and an explicit timed F12→A/F11→B virtual Xbox bridge.
 - Add a dedicated `AllyBindings.SoftwareProbe.Core` assembly for the privacy-bounded session model, atomic journal, named physical checkpoints, manifest and hashed evidence ZIP.
 - Add a guided PowerShell operator menu and complete Armoury/Remote Play/cold-boot/restoration runbook.
 - Build, package, verify and smoke-test the self-contained probe on the standard Windows PR workflow.
 
 ### Changed
 
-- Make the software-first F18/F17 path the next physical product gate and park further passive Armoury-capture work by default.
+- Make the software-first F12/F11 path the next physical product gate and park further passive Armoury-capture work by default.
 - Keep Armoury as the sole authority for the one-time paddle assignment and final restoration; the probe performs no ASUS firmware operation.
+- Remove the unusable `SendInput` assignment helper after physical Armoury validation proved assignments are selected only through Armoury's virtual keyboard.
 - Generate custom ASUS mapping reports with both secondary slots zeroed while preserving the exact known native/default reset report.
 
 ### Removed
@@ -27,7 +28,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Thi
 
 - Isolate the software probe from `AllyBindings.Core`, HidSharp and every ASUS protocol writer so the shipped executable contains no dormant hardware-write symbol.
 - Reject software-probe source/package paths containing ASUS HID write, driver-install or physical-device hiding primitives.
-- Retain only F17/F18 transitions, capability status and fixed-choice named checkpoints—never free-form notes, broad key history, usernames, machine names, process lists or device paths.
+- Retain only F11/F12 transitions, capability status and fixed-choice named checkpoints—never free-form notes, broad key history, usernames, machine names, process lists or device paths.
 - Install/configure no driver and create virtual output only during the explicit bridge command, releasing A/B and disconnecting in `finally`.
 
 ### Tests

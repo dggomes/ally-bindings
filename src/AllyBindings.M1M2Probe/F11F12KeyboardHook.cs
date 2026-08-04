@@ -6,7 +6,7 @@ using AllyBindings.SoftwareProbe;
 
 namespace AllyBindings.M1M2Probe;
 
-internal sealed class F17F18KeyboardHook : IDisposable
+internal sealed class F11F12KeyboardHook : IDisposable
 {
     private const int WhKeyboardLl = 13;
     private const uint WmKeyDown = 0x0100;
@@ -14,10 +14,9 @@ internal sealed class F17F18KeyboardHook : IDisposable
     private const uint WmSysKeyDown = 0x0104;
     private const uint WmSysKeyUp = 0x0105;
     private const uint WmQuit = 0x0012;
-    private const uint VkF17 = 0x80;
-    private const uint VkF18 = 0x81;
+    private const uint VkF11 = 0x7A;
+    private const uint VkF12 = 0x7B;
     private const uint LlkInjected = 0x10;
-    private static readonly nuint InjectionMarker = unchecked((nuint)0x414C4C594D314D32UL);
 
     private readonly bool _suppress;
     private readonly string _mode;
@@ -31,11 +30,11 @@ internal sealed class F17F18KeyboardHook : IDisposable
     private Exception? _failure;
     private uint _messageThreadId;
     private int _stopping;
-    private bool _f17Down;
-    private bool _f18Down;
+    private bool _f11Down;
+    private bool _f12Down;
     private bool _disposed;
 
-    internal F17F18KeyboardHook(
+    internal F11F12KeyboardHook(
         bool suppress,
         string mode,
         Action<SoftwareProbeKeyEvent> eventSink,
@@ -65,7 +64,7 @@ internal sealed class F17F18KeyboardHook : IDisposable
             var module = GetModuleHandle(Process.GetCurrentProcess().MainModule?.ModuleName);
             _hook = SetWindowsHookEx(WhKeyboardLl, _callback, module, 0);
             if (_hook == IntPtr.Zero)
-                throw new Win32Exception(Marshal.GetLastWin32Error(), "Could not install the F17/F18 keyboard hook.");
+                throw new Win32Exception(Marshal.GetLastWin32Error(), "Could not install the F11/F12 keyboard hook.");
 
             using var cancellation = cancellationToken.Register(RequestStop);
             using var timer = new Timer(_ => RequestStop(), null, duration, Timeout.InfiniteTimeSpan);
@@ -76,7 +75,7 @@ internal sealed class F17F18KeyboardHook : IDisposable
                 DispatchMessage(ref message);
             }
             if (messageResult < 0)
-                throw new Win32Exception(Marshal.GetLastWin32Error(), "The F17/F18 message loop failed.");
+                throw new Win32Exception(Marshal.GetLastWin32Error(), "The F11/F12 message loop failed.");
         }
         catch (Exception exception)
         {
@@ -88,7 +87,7 @@ internal sealed class F17F18KeyboardHook : IDisposable
             if (_hook != IntPtr.Zero)
             {
                 if (!UnhookWindowsHookEx(_hook))
-                    SetFailure(new Win32Exception(Marshal.GetLastWin32Error(), "Could not remove the F17/F18 keyboard hook."));
+                    SetFailure(new Win32Exception(Marshal.GetLastWin32Error(), "Could not remove the F11/F12 keyboard hook."));
                 _hook = IntPtr.Zero;
             }
             _events.CompleteAdding();
@@ -106,42 +105,9 @@ internal sealed class F17F18KeyboardHook : IDisposable
         if (loopFailure is not null) failures.Add(loopFailure);
         if (_failure is not null) failures.Add(_failure);
         if (failures.Count != 0)
-            throw new AggregateException("The F17/F18 hook stopped after a failure.", failures);
+            throw new AggregateException("The F11/F12 hook stopped after a failure.", failures);
     }
 
-    internal static void Emit(string key, TimeSpan delay)
-    {
-        WindowsCapabilities.EnsureWindows();
-        var virtualKey = key switch
-        {
-            "F17" => (ushort)VkF17,
-            "F18" => (ushort)VkF18,
-            _ => throw new ArgumentOutOfRangeException(nameof(key), "Only F17 or F18 may be emitted."),
-        };
-        if (delay < TimeSpan.Zero || delay > TimeSpan.FromSeconds(30))
-            throw new ArgumentOutOfRangeException(nameof(delay));
-        if (delay > TimeSpan.Zero) Thread.Sleep(delay);
-
-        var inputs = new[]
-        {
-            KeyboardInput(virtualKey, keyUp: false),
-            KeyboardInput(virtualKey, keyUp: true),
-        };
-        var inputSize = ValidateSendInputLayout();
-        var sent = SendInput((uint)inputs.Length, inputs, inputSize);
-        if (sent != inputs.Length)
-            throw new Win32Exception(Marshal.GetLastWin32Error(), $"SendInput emitted {sent} of {inputs.Length} events.");
-    }
-
-    internal static int ValidateSendInputLayout()
-    {
-        var inputSize = Marshal.SizeOf<Input>();
-        var expectedInputSize = IntPtr.Size == 8 ? 40 : 28;
-        if (inputSize != expectedInputSize)
-            throw new InvalidOperationException(
-                $"Invalid Win32 INPUT layout: managed size {inputSize}, expected {expectedInputSize}.");
-        return inputSize;
-    }
 
     private void ProcessEvents()
     {
@@ -171,14 +137,14 @@ internal sealed class F17F18KeyboardHook : IDisposable
             var data = Marshal.PtrToStructure<KbdLlHookStruct>(lParam);
             var key = data.VirtualKey switch
             {
-                VkF17 => "F17",
-                VkF18 => "F18",
+                VkF11 => "F11",
+                VkF12 => "F12",
                 _ => null,
             };
             if (key is null)
                 return CallNextHookEx(_hook, code, wParam, lParam);
 
-            var injected = (data.Flags & LlkInjected) != 0 || data.ExtraInfo == InjectionMarker;
+            var injected = (data.Flags & LlkInjected) != 0;
             if (injected)
                 return CallNextHookEx(_hook, code, wParam, lParam);
 
@@ -188,7 +154,7 @@ internal sealed class F17F18KeyboardHook : IDisposable
             if (!isDown && !isUp)
                 return CallNextHookEx(_hook, code, wParam, lParam);
 
-            ref var wasDown = ref data.VirtualKey == VkF17 ? ref _f17Down : ref _f18Down;
+            ref var wasDown = ref data.VirtualKey == VkF11 ? ref _f11Down : ref _f12Down;
             if (wasDown == isDown)
                 return _suppress ? new IntPtr(1) : CallNextHookEx(_hook, code, wParam, lParam);
             wasDown = isDown;
@@ -201,7 +167,7 @@ internal sealed class F17F18KeyboardHook : IDisposable
                     WasSuppressed: _suppress,
                     Mode: _mode)))
             {
-                SetFailure(new InvalidOperationException("The bounded F17/F18 event queue is full."));
+                SetFailure(new InvalidOperationException("The bounded F11/F12 event queue is full."));
                 Interlocked.Exchange(ref _stopping, 1);
                 RequestStop();
             }
@@ -224,26 +190,11 @@ internal sealed class F17F18KeyboardHook : IDisposable
             if (PostThreadMessage(_messageThreadId, WmQuit, UIntPtr.Zero, IntPtr.Zero)) return;
             Thread.Sleep(5);
         }
-        SetFailure(new Win32Exception(Marshal.GetLastWin32Error(), "Could not stop the F17/F18 message loop."));
+        SetFailure(new Win32Exception(Marshal.GetLastWin32Error(), "Could not stop the F11/F12 message loop."));
     }
 
     private void SetFailure(Exception exception) => Interlocked.CompareExchange(ref _failure, exception, null);
 
-    private static Input KeyboardInput(ushort virtualKey, bool keyUp) => new()
-    {
-        Type = 1,
-        Union = new InputUnion
-        {
-            Keyboard = new KeyboardInputData
-            {
-                VirtualKey = virtualKey,
-                ScanCode = 0,
-                Flags = keyUp ? 0x0002u : 0,
-                Time = 0,
-                ExtraInfo = InjectionMarker,
-            },
-        },
-    };
 
     public void Dispose()
     {
@@ -271,52 +222,6 @@ internal sealed class F17F18KeyboardHook : IDisposable
         public nuint ExtraInfo;
     }
 
-    [StructLayout(LayoutKind.Sequential)]
-    private struct Input
-    {
-        public uint Type;
-        public InputUnion Union;
-    }
-
-    [StructLayout(LayoutKind.Explicit)]
-    private struct InputUnion
-    {
-        // INPUT's native union is sized by MOUSEINPUT (32 bytes on x64), not
-        // KEYBDINPUT (24 bytes on x64). Omitting this field makes cbSize 32
-        // instead of the required 40 and SendInput rejects every event.
-        [FieldOffset(0)] public MouseInputData Mouse;
-        [FieldOffset(0)] public KeyboardInputData Keyboard;
-        [FieldOffset(0)] public HardwareInputData Hardware;
-    }
-
-    [StructLayout(LayoutKind.Sequential)]
-    private struct MouseInputData
-    {
-        public int X;
-        public int Y;
-        public uint MouseData;
-        public uint Flags;
-        public uint Time;
-        public nuint ExtraInfo;
-    }
-
-    [StructLayout(LayoutKind.Sequential)]
-    private struct KeyboardInputData
-    {
-        public ushort VirtualKey;
-        public ushort ScanCode;
-        public uint Flags;
-        public uint Time;
-        public nuint ExtraInfo;
-    }
-
-    [StructLayout(LayoutKind.Sequential)]
-    private struct HardwareInputData
-    {
-        public uint Message;
-        public ushort ParameterLow;
-        public ushort ParameterHigh;
-    }
 
     [StructLayout(LayoutKind.Sequential)]
     private struct Message
@@ -359,8 +264,6 @@ internal sealed class F17F18KeyboardHook : IDisposable
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool PostThreadMessage(uint threadId, uint message, UIntPtr wParam, IntPtr lParam);
 
-    [DllImport("user32.dll", SetLastError = true)]
-    private static extern uint SendInput(uint inputCount, Input[] inputs, int size);
 
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     private static extern IntPtr GetModuleHandle(string? moduleName);

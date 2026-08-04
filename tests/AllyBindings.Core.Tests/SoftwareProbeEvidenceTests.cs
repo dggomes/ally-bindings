@@ -21,20 +21,20 @@ public sealed class SoftwareProbeEvidenceTests : IDisposable
         HidHideStatus: "Not installed");
 
     [Fact]
-    public void Session_retains_only_f17_f18_events_and_declares_software_only_safety()
+    public void Session_retains_only_f11_f12_events_and_declares_software_only_safety()
     {
         var now = DateTimeOffset.Parse("2026-08-04T12:00:00Z");
         var session = SoftwareProbeSession.Create(Capabilities, now);
 
-        session = session.AddKeyEvent(new(now.AddSeconds(1), "F18", true, false, true, "capture-suppress"));
-        session = session.AddKeyEvent(new(now.AddSeconds(2), "F17", false, true, false, "virtual-bridge"));
+        session = session.AddKeyEvent(new(now.AddSeconds(1), "F12", true, false, true, "capture-suppress"));
+        session = session.AddKeyEvent(new(now.AddSeconds(2), "F11", false, true, false, "virtual-bridge"));
 
         Assert.Equal(2, session.KeyEvents.Length);
         Assert.Contains("no ASUS HID writes", session.SafetyMode, StringComparison.Ordinal);
         Assert.Throws<ArgumentOutOfRangeException>(() =>
             session.AddKeyEvent(new(now.AddSeconds(3), "A", true, false, false, "capture-observe")));
         Assert.Throws<ArgumentOutOfRangeException>(() =>
-            session.AddKeyEvent(new(now.AddSeconds(3), "F17", true, false, false, "broad-keylogger")));
+            session.AddKeyEvent(new(now.AddSeconds(3), "F11", true, false, false, "broad-keylogger")));
     }
 
     [Fact]
@@ -58,7 +58,7 @@ public sealed class SoftwareProbeEvidenceTests : IDisposable
         var session = ReadyToFinalize(now).FinalizeSession(now.AddMinutes(10));
 
         Assert.Throws<InvalidOperationException>(() =>
-            session.AddKeyEvent(new(now.AddMinutes(11), "F17", true, false, true, "capture-observe")));
+            session.AddKeyEvent(new(now.AddMinutes(11), "F11", true, false, true, "capture-observe")));
         Assert.Throws<InvalidOperationException>(() =>
             session.SetCheckpoint(SoftwareProbeCheckpoints.ArmouryRestored, SoftwareProbeCheckpointResult.Pass, now.AddMinutes(11)));
     }
@@ -68,7 +68,7 @@ public sealed class SoftwareProbeEvidenceTests : IDisposable
     {
         var now = DateTimeOffset.UtcNow.AddMinutes(-5);
         var session = ReadyToFinalize(now)
-            .AddKeyEvent(new(now.AddSeconds(1), "F18", true, false, true, "capture-observe"));
+            .AddKeyEvent(new(now.AddSeconds(1), "F12", true, false, true, "capture-observe"));
         var directory = SoftwareProbeEvidenceStore.CreateSessionDirectory(_root, session);
 
         var roundTrip = SoftwareProbeEvidenceStore.Load(directory);
@@ -117,11 +117,13 @@ public sealed class SoftwareProbeEvidenceTests : IDisposable
         Assert.DoesNotContain("devicePath", json, StringComparison.OrdinalIgnoreCase);
     }
 
-    [Fact]
-    public void Evidence_store_rejects_unknown_schema()
+    [Theory]
+    [InlineData(1)]
+    [InlineData(999)]
+    public void Evidence_store_rejects_incompatible_schema(int schemaVersion)
     {
         Directory.CreateDirectory(_root);
-        File.WriteAllText(Path.Combine(_root, "session.json"), "{\"schemaVersion\":999}");
+        File.WriteAllText(Path.Combine(_root, "session.json"), $"{{\"schemaVersion\":{schemaVersion}}}");
         Assert.Throws<InvalidDataException>(() => SoftwareProbeEvidenceStore.Load(_root));
     }
 
@@ -184,7 +186,7 @@ public sealed class SoftwareProbeEvidenceTests : IDisposable
 
         Parallel.For(0, 64, index => SoftwareProbeEvidenceStore.Update(directory, current => current.AddKeyEvent(new(
             now.AddTicks(index + 1),
-            index % 2 == 0 ? "F17" : "F18",
+            index % 2 == 0 ? "F11" : "F12",
             IsKeyDown: index % 2 == 0,
             IsInjected: false,
             WasSuppressed: true,

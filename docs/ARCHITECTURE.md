@@ -2,7 +2,7 @@
 
 ## Product boundary
 
-Ally Bindings is a local controller-mapping selector for the case where multiple streamed Xbox titles share one Windows Remote Play process. It does not modify Armoury Crate records or infer the game inside the video stream. M1/M2 firmware writes remain behind closed source-level validation gates. Passive protocol capture is retained only as a deeper diagnostic. Product proof now follows a software-first path: Armoury creates vendor-supported F18/F17 paddle assignments once, then a separate probe measures and temporarily bridges those inputs without opening an ASUS HID interface.
+Ally Bindings is a local controller-mapping selector for the case where multiple streamed Xbox titles share one Windows Remote Play process. It does not modify Armoury Crate records or infer the game inside the video stream. M1/M2 firmware writes remain behind closed source-level validation gates. Passive protocol capture is retained only as a deeper diagnostic. Product proof now follows a software-first path: Armoury creates vendor-supported F12/F11 paddle assignments once, then a separate probe measures and temporarily bridges those inputs without opening an ASUS HID interface.
 
 ## Runtime shape
 
@@ -73,18 +73,18 @@ WPF was chosen over WinUI 3 for this narrow tray utility: fewer deployment/runti
 
 ### `AllyBindings.SoftwareProbe.Core`
 
-Cross-platform evidence-only assembly. It contains the immutable session/checkpoint model, bounded F17/F18 event journal, atomic JSON persistence, and deterministic three-file ZIP/manifest builder. It has no reference to `AllyBindings.Core`, Windows input APIs, HID APIs, ViGEm, HidHide or driver-management code.
+Cross-platform evidence-only assembly. It contains the immutable session/checkpoint model, bounded F11/F12 event journal, atomic JSON persistence, and deterministic three-file ZIP/manifest builder. It has no reference to `AllyBindings.Core`, Windows input APIs, HID APIs, ViGEm, HidHide or driver-management code.
 
 ### `AllyBindings.M1M2Probe`
 
 Separate Windows console diagnostic:
 
-- emits only F17/F18 through `SendInput`, after a visible countdown;
-- hooks only F17/F18 and can suppress only those two keys;
+- generates no assignment input; Armoury's virtual keyboard is the sole assignment path;
+- hooks only F11/F12 and can suppress only those two keys;
 - enumerates XInput slots and reads DMI/service state without retaining machine name, username, paths or process data;
 - detects but never installs/configures ViGEmBus or HidHide;
 - creates one temporary ViGEm Xbox 360 controller only during `bridge`;
-- maps F18 to A and F17 to B, ignores injected events, releases both buttons and disconnects in `finally`;
+- maps F12 to A and F11 to B, ignores injected events, releases both buttons and disconnects in `finally`;
 - never links `AllyBindings.Core`, HidSharp, ASUS protocol builders or an ASUS HID writer.
 
 ## Profile format
@@ -175,8 +175,8 @@ A real backend must additionally stream normalized input through `MappingEngine`
 9. No injection into games, Xbox, anti-cheat or arbitrary processes. The opt-in diagnostic tap may temporarily inject only its embedded capture DLL into exact allowlisted x64 ASUS-signed Armoury processes under trusted system install roots; it has zero write authority and must be positively unloaded before completion.
 10. No custom or recovery M1/M2 report can be emitted while either source-level validation gate is closed.
 11. The software-probe artifact must contain no ASUS HID write API, generic HID writer, driver installer or physical-device hiding primitive—even as a dormant dependency.
-12. Evidence captures only F17/F18 transitions, capability status and fixed-choice named checkpoints; free-form notes, arbitrary keyboard input, device paths, usernames, machine names and process lists are outside the schema.
+12. Evidence captures only F11/F12 transitions, capability status and fixed-choice named checkpoints; free-form notes, arbitrary keyboard input, device paths, usernames, machine names and process lists are outside the schema.
 
 ## Release gate
 
-The UI/core/package may ship as preview. A build must not be called a working remapper until the software-first path passes `HARDWARE-SPIKE.md` on Daniel's Ally X: F18/F17 identity, suppression, virtual-only Remote Play, coexistence/duplicate-input behavior, Command Centre, cold boot, suspend/resume, forced kill and Armoury restoration. HidHide may be evaluated only if coexistence fails after virtual-only success.
+The UI/core/package may ship as preview. A build must not be called a working remapper until the software-first path passes `HARDWARE-SPIKE.md` on Daniel's Ally X: F12/F11 identity, suppression, virtual-only Remote Play, coexistence/duplicate-input behavior, Command Centre, cold boot, suspend/resume, forced kill and Armoury restoration. HidHide may be evaluated only if coexistence fails after virtual-only success.

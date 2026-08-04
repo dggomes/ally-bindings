@@ -7,7 +7,7 @@ Safety properties:
 - no hardware mapping command;
 - no driver installation or update;
 - no physical-controller hiding;
-- only F17/F18 events are retained;
+- only F11/F12 events are retained;
 - virtual controller exists only during the explicit bridge command.
 
 The optional virtual-controller bridge uses Nefarius.ViGEm.Client 1.21.256 (MIT), Copyright © Nefarius Software Solutions e.U. 2017-2023. ViGEmBus itself is a separate retired driver and is not distributed by this package.

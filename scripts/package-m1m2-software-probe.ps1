@@ -34,6 +34,7 @@ $probeSources = @(
 $forbidden = @(
     'HidD_SetFeature',
     'WriteFeatureReport',
+    'SendInput',
     'HidSharp',
     'CreateFileW',
     'SetupDiGetClassDevs',
@@ -44,6 +45,18 @@ foreach ($pattern in $forbidden) {
     $matches = @($probeSources | Select-String -Pattern $pattern -CaseSensitive:$false)
     if ($matches.Count -ne 0) {
         throw "Forbidden software-probe source capability matched '$pattern'."
+    }
+}
+
+$hookSource = Get-Content -LiteralPath (Join-Path $repo 'src/AllyBindings.M1M2Probe/F11F12KeyboardHook.cs') -Raw
+foreach ($requiredHookContract in @(
+    'private const uint VkF11 = 0x7A;',
+    'private const uint VkF12 = 0x7B;',
+    'VkF11 => "F11"',
+    'VkF12 => "F12"'
+)) {
+    if ($hookSource.IndexOf($requiredHookContract, [StringComparison]::Ordinal) -lt 0) {
+        throw "F11/F12 hook contract is missing: $requiredHookContract"
     }
 }
 
@@ -71,7 +84,7 @@ if ((Get-Item -LiteralPath $publishedExecutable).Length -gt 100MB) {
     throw 'Published software-probe executable exceeds the 100 MB safety budget.'
 }
 $binaryText = [Text.Encoding]::UTF8.GetString([IO.File]::ReadAllBytes($publishedExecutable))
-foreach ($required in @('CreateXbox360Controller', 'F17F18KeyboardHook', 'SoftwareProbeSession')) {
+foreach ($required in @('CreateXbox360Controller', 'F11F12KeyboardHook', 'SoftwareProbeSession')) {
     if ($binaryText.IndexOf($required, [StringComparison]::Ordinal) -lt 0) {
         throw "Published software probe is missing expected symbol: $required"
     }
@@ -80,6 +93,7 @@ foreach ($forbiddenSymbol in @(
     'AllyBindings.Core.dll',
     'HidD_SetFeature',
     'WriteFeatureReport',
+    'SendInput',
     'write-m1-a-m2-b',
     'HidSharp',
     'CreateServiceW'

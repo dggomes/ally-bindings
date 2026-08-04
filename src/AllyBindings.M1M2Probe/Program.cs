@@ -24,11 +24,8 @@ internal static class Program
             return args[0] switch
             {
                 "inspect" => Inspect(args),
-                "self-test" => SelfTest(args),
                 "start" => Start(args),
                 "listen" => Listen(args),
-                "emit-f17" => Emit("F17", args),
-                "emit-f18" => Emit("F18", args),
                 "bridge" => Bridge(args),
                 "checkpoint" => Checkpoint(args),
                 "finalize" => Finalize(args),
@@ -52,14 +49,6 @@ internal static class Program
         return Success;
     }
 
-    private static int SelfTest(string[] args)
-    {
-        ValidateArguments(args, [], []);
-        WindowsCapabilities.EnsureWindows();
-        var size = F17F18KeyboardHook.ValidateSendInputLayout();
-        Console.WriteLine($"SELF-TEST PASSED — Win32 INPUT layout is {size} bytes.");
-        return Success;
-    }
 
     private static int Start(string[] args)
     {
@@ -84,9 +73,9 @@ internal static class Program
         using var captureLease = SoftwareProbeEvidenceStore.AcquireCaptureLease(directory);
         var journal = new EvidenceJournal(directory);
 
-        Console.WriteLine($"Listening only for F17/F18 for {seconds} seconds. Suppression: {suppress}.");
+        Console.WriteLine($"Listening only for F11/F12 for {seconds} seconds. Suppression: {suppress}.");
         Console.WriteLine("All other keyboard input is ignored and never retained.");
-        using var hook = new F17F18KeyboardHook(
+        using var hook = new F11F12KeyboardHook(
             suppress,
             suppress ? "capture-suppress" : "capture-observe",
             keyEvent =>
@@ -95,19 +84,10 @@ internal static class Program
                 Console.WriteLine($"{keyEvent.TimestampUtc:O} {keyEvent.Key} {(keyEvent.IsKeyDown ? "down" : "up")} injected={keyEvent.IsInjected} suppressed={keyEvent.WasSuppressed}");
             });
         RunHookWithCtrlC(hook, TimeSpan.FromSeconds(seconds));
-        Console.WriteLine($"Captured {journal.Session.KeyEvents.Length} F17/F18 events in this session.");
+        Console.WriteLine($"Captured {journal.Session.KeyEvents.Length} F11/F12 events in this session.");
         return Success;
     }
 
-    private static int Emit(string key, string[] args)
-    {
-        ValidateArguments(args, ["--delay"], []);
-        var delay = IntegerOption(args, "--delay", 3, 0, 30);
-        Console.WriteLine($"Focus Armoury Crate's keyboard-assignment field now. Emitting one {key} press/release in {delay} seconds.");
-        F17F18KeyboardHook.Emit(key, TimeSpan.FromSeconds(delay));
-        Console.WriteLine($"Emitted {key}. No ASUS HID interface was opened.");
-        return Success;
-    }
 
     private static int Bridge(string[] args)
     {
@@ -121,7 +101,7 @@ internal static class Program
             throw new InvalidOperationException($"ViGEmBus is not currently running ({currentCapabilities.ViGEmBusStatus}). The probe will not install or start a driver automatically.");
 
         Console.WriteLine("Creating one temporary virtual Xbox 360 controller.");
-        Console.WriteLine("F18/M1 -> A, F17/M2 -> B. Both source keys are suppressed while this command runs.");
+        Console.WriteLine("F12/M1 -> A, F11/M2 -> B. Both source keys are suppressed while this command runs.");
         Console.WriteLine("The physical controller is NOT hidden. Use ASUS Command Center to disable it for the virtual-only test.");
 
         using var client = new ViGEmClient();
@@ -141,18 +121,18 @@ internal static class Program
         try
         {
             controller.Connect();
-            using var hook = new F17F18KeyboardHook(
+            using var hook = new F11F12KeyboardHook(
                 suppress: true,
                 mode: "virtual-bridge",
                 eventSink: keyEvent =>
                 {
                     journal.Add(keyEvent);
-                    Console.WriteLine($"{keyEvent.Key} {(keyEvent.IsKeyDown ? "down" : "up")} -> {(keyEvent.Key == "F18" ? "A" : "B")} injected={keyEvent.IsInjected}");
+                    Console.WriteLine($"{keyEvent.Key} {(keyEvent.IsKeyDown ? "down" : "up")} -> {(keyEvent.Key == "F12" ? "A" : "B")} injected={keyEvent.IsInjected}");
                 },
                 keyStateSink: (key, down, injected) =>
                 {
                     if (injected) return;
-                    controller.SetButtonState(key == "F18" ? Xbox360Button.A : Xbox360Button.B, down);
+                    controller.SetButtonState(key == "F12" ? Xbox360Button.A : Xbox360Button.B, down);
                 });
             RunHookWithCtrlC(hook, TimeSpan.FromSeconds(seconds));
         }
@@ -221,7 +201,7 @@ internal static class Program
         }
     }
 
-    private static void RunHookWithCtrlC(F17F18KeyboardHook hook, TimeSpan duration)
+    private static void RunHookWithCtrlC(F11F12KeyboardHook hook, TimeSpan duration)
     {
         using var cancellation = new CancellationTokenSource();
         ConsoleCancelEventHandler handler = (_, eventArgs) =>
@@ -292,11 +272,8 @@ internal static class Program
         Console.WriteLine("Ally Bindings M1/M2 software probe — no ASUS HID writes; no driver installation; no device hiding");
         Console.WriteLine();
         Console.WriteLine("  inspect");
-        Console.WriteLine("  self-test");
         Console.WriteLine("  start [--root <directory>]");
         Console.WriteLine("  listen --session <directory> [--seconds 30] [--suppress]");
-        Console.WriteLine("  emit-f17 [--delay 3]");
-        Console.WriteLine("  emit-f18 [--delay 3]");
         Console.WriteLine("  bridge --session <directory> [--seconds 120]");
         Console.WriteLine("  checkpoint --session <dir> --name <checkpoint> --result <pass|fail|skipped|unknown>");
         Console.WriteLine("  finalize --session <directory> [--out <zip-path>]");
