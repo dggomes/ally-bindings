@@ -28,6 +28,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\AllyBindings.Core\AllyBindings.Core.csproj" />
+    <ProjectReference Include="..\..\src\AllyBindings.SoftwareProbe.Core\AllyBindings.SoftwareProbe.Core.csproj" />
   </ItemGroup>
 
 </Project>

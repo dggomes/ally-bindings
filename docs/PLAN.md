@@ -27,13 +27,16 @@ A lightweight Windows tray application that lets Daniel rotate named controller 
 - [x] Digest-verified GitHub updater with hardened extraction, atomic replacement, explicit startup-health handshake and rollback.
 - [x] Linux/macOS core tests plus Windows build/test/package CI.
 - [x] Use the public source repository's Releases feed with automatic checks enabled by default and repository-scoped `GITHUB_TOKEN` publishing.
+- [x] Retire the controlled hardware-write command, native SET_FEATURE import, approved writer workflow and writer package.
+- [x] Build a standalone software-only M1/M2 probe with F11/F12 capture/suppression, XInput/ViGEmBus/HidHide inventory, temporary F12→A/F11→B virtual output, guided checkpoints and a hashed evidence ZIP.
+- [x] Clear custom secondary slots in generated ASUS mapping reports while preserving the byte-exact native reset report.
 
 ### Physical remapping — release gate
 
 - [ ] Inventory actual Ally X input/HID/XInput topology.
 - [x] Establish rear-paddle behavior: firmware-managed, not exposed as independent XInput buttons; configurable via ASUS HID mapping zone.
-- [ ] Select an output/hiding backend with acceptable maintenance, signing and licence posture.
-- [ ] Build a minimal physical-input → mapping engine → virtual-output adapter.
+- [x] Build the minimal F11/F12 → temporary ViGEm output probe without installing or configuring a driver.
+- [ ] Decide whether coexistence works or HidHide is actually required, with acceptable maintenance, signing and licence posture.
 - [ ] Prove exactly one controller reaches Remote Play.
 - [ ] Prove Command Centre and Armoury remain functional.
 - [ ] Pass suspend/resume, reconnect, forced-kill and uninstall rollback tests.
@@ -55,12 +58,13 @@ Follow `HARDWARE-SPIKE.md` on the physical Ally X. The backend should be a narro
 
 Required runtime sequence:
 
-1. Identify the intended physical controller deterministically.
-2. Start virtual output and verify it accepts/report states.
-3. Whitelist Ally Bindings for physical reads if a filter is used.
-4. Hide the physical device from consumers only after output health is green.
-5. Feed physical snapshots through the pure mapping engine.
-6. On panic/shutdown/fault, restore Default and unhide/fail open.
+1. Configure M1→F12 and M2→F11 once through Armoury, with baseline screenshots and empty secondaries.
+2. Capture/suppress only those two keys and start one healthy virtual output.
+3. Prove virtual-only Remote Play before evaluating coexistence.
+4. Avoid a filter entirely if physical+virtual coexistence works.
+5. If a filter is required, whitelist/read first and hide only after output health is green.
+6. Feed the proven input path through the pure mapping engine.
+7. On panic/shutdown/fault, release output and unhide/fail open.
 
 ## Packaging and on-device validation
 
@@ -84,7 +88,7 @@ Required runtime sequence:
 
 ### Preview application
 
-A clean CI checkout builds a downloadable Windows app; Daniel can create profiles, rotate them with the controller, use chord+RT to open the editor, use tray/startup mode and see truthful locked/preview backend status. Public M1/M2 writes remain unavailable. A standalone controlled artifact performs only the one-shot RC73XA/PID_1B4C validation; it is built manually from an approved main commit and is never shipped in the app package or release.
+A clean CI checkout builds a downloadable Windows app and a separate software-only M1/M2 probe. Daniel can create profiles, rotate them with the controller, use chord+RT to open the editor, use tray/startup mode and see truthful locked/preview backend status. Public M1/M2 writes remain unavailable. The probe contains no ASUS HID writer, installs/configures no driver, never hides the physical controller, and finalizes a hashed physical-test evidence bundle.
 
 ### Remapping release
 

@@ -71,13 +71,12 @@ public static class AsusRearButtonProtocol
         report[3] = 0x08;
         report[4] = 0x2C;
 
-        // ASUS orders the physical paddles as M2 then M1. Applying the same
-        // action in both slots makes each paddle an independent action rather
-        // than leaving a stale Armoury secondary-function assignment behind.
+        // ASUS orders the physical paddles as M2 then M1. Public implementations
+        // model the second 11-byte block for each paddle as a distinct secondary
+        // action. A primary-only mapping must clear those blocks, not duplicate
+        // the primary action into them.
         WriteAction(report, M2PrimaryOffset, ControllerButton.M2, m2Target);
-        WriteAction(report, M2SecondaryOffset, ControllerButton.M2, m2Target);
         WriteAction(report, M1PrimaryOffset, ControllerButton.M1, m1Target);
-        WriteAction(report, M1SecondaryOffset, ControllerButton.M1, m1Target);
         return report;
     }
 
@@ -86,8 +85,13 @@ public static class AsusRearButtonProtocol
     /// independent implementations. This is not a read-back of the user's
     /// Armoury configuration and must be physically validated per firmware.
     /// </summary>
-    public static byte[] BuildNativeResetReport() =>
-        BuildMappingReport(ControllerButton.M1, ControllerButton.M2);
+    public static byte[] BuildNativeResetReport()
+    {
+        var report = BuildMappingReport(ControllerButton.M1, ControllerButton.M2);
+        WriteAction(report, M2SecondaryOffset, ControllerButton.M2, ControllerButton.M2);
+        WriteAction(report, M1SecondaryOffset, ControllerButton.M1, ControllerButton.M1);
+        return report;
+    }
 
     public static bool MatchesWireReport(ReadOnlySpan<byte> captured, ReadOnlySpan<byte> expected)
     {

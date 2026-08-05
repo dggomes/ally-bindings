@@ -15,18 +15,19 @@ M1/M2 are not independent XInput buttons. ASUS configures them as firmware-level
 - Handheld Companion independently uses the same report family/zone and identifies Xbox ROG Ally X as DMI model token `RC73XA`; Daniel's firmware exposes the full DMI product name `ROG Xbox Ally X RC73XA_RC73XA` (including the equivalent repeated model token).
 - Linux ROG Ally support likewise treats M1/M2 as ASUS firmware-programmable keyboard/controller actions rather than gamepad button bits.
 
-This supports a narrow direct-write backend; it does **not** make M1/M2 readable through `XInputGetState`. Ally Bindings therefore offers M1/M2 only as physical mapping sources, never as shortcut-chord buttons.
+This proves firmware controls the paddle outputs; it does **not** make M1/M2 readable through `XInputGetState`. The preferred product path is therefore to configure unique F12/F11 outputs once through Armoury and consume those ordinary Windows key events in software. Direct firmware writes remain a fallback, not the next experiment.
 
 Implementation safety gates:
 
-1. The public application's custom and recovery writes remain source locked until the controlled physical validator below succeeds and its result is reviewed.
-2. The controlled validator is a standalone executable with no Core/generic-adapter dependency. It supports only inspection and one literal `M1=A/M2=B` packet; it is never included in the normal Ally Bindings package or release.
-3. A lab write requires exact ASUS RC73XA DMI, `VID_0B05/PID_1B4C`, exactly one bounded report-`0x5A` interface, same-handle native VID/PID/caps revalidation, an interactive console and an exact typed confirmation.
-4. The lab utility has no reset command, no arbitrary mapping parser and no retry loop. Armoury Crate remains the recovery authority for the photographed/exported assignment.
-5. API acceptance must be followed by physical M1/M2 verification in a safe controller tester and then verified restoration through Armoury.
-6. Standard mappings remain preview-only and are labelled as such.
+1. The public application's custom and recovery writes remain source locked.
+2. The former one-shot write command, `HidD_SetFeature` import, approved-writer workflow, package and runbook are retired.
+3. `AllyBindings.M1M2Probe` references a dedicated software-only evidence assembly, not `AllyBindings.Core`, HidSharp or an ASUS protocol writer.
+4. The probe emits/captures only F11/F12, detects ViGEmBus/HidHide without modifying them, and creates virtual output only during an explicit timed bridge.
+5. Armoury Crate is the sole mapping/restoration authority for the experiment. Baseline screenshots are mandatory.
+6. No physical device is hidden during the first virtual-only test. HidHide is considered only if virtual-only passes and coexistence fails.
+7. Standard mappings remain preview-only and are labelled as such.
 
-Known limitation: feature report `0x5A` behaves as a last-command/status mailbox, not a dependable state backup. The lab run therefore requires a photograph/export before writing and restores through Armoury rather than sending a guessed reset packet.
+Known limitation: feature report `0x5A` behaves as a last-command/status mailbox, not a dependable state backup. The software experiment therefore requires screenshots before changing Armoury and restores through Armoury rather than attempting any firmware-state backup or guessed reset packet.
 
 ## Armoury protocol evidence gate
 
@@ -76,17 +77,17 @@ Known limitation: feature report `0x5A` behaves as a last-command/status mailbox
 - `ArmouryCrateSE.Service` made nine `WriteFile` calls, all larger than the bounded 64-byte report window. No covered HID feature/output API retained a target `5A D1` packet.
 - Those writes may be IPC or a driver route; their size does not prove they target the controller.
 
-Conclusion: keep both public write gates locked, but stop expanding passive capture by default. ETW and native-tap experiments have provided transport diagnostics rather than the required product proof. Public G-Helper and Handheld Companion implementations independently establish a narrow candidate report; the next useful evidence is whether that fixed packet works and can be recovered safely on this physical RC73XA.
+Conclusion: keep both public write gates locked and stop expanding passive capture by default. ETW and native-tap experiments established transport facts but did not answer the product question. The next useful evidence is whether vendor-configured F12/F11 events can be consumed, suppressed and bridged into Xbox Remote Play without duplicate input.
 
-The preferred next experiment is the controlled one-shot hardware validator:
+The preferred next experiment is the packaged software probe:
 
-1. Manually dispatch the protected main-branch `controlled hardware validator` workflow for an approved exact commit, then download the commit-named `AllyBindings.HardwareValidator` artifact and independently verify its outer ZIP SHA-256. It is not a GitHub release and is not bundled with Ally Bindings.
-2. Follow [`lab/HARDWARE-VALIDATOR-RUNBOOK.md`](../lab/HARDWARE-VALIDATOR-RUNBOOK.md): photograph/export the current Armoury assignments, close Armoury/games/anti-cheat, and run `inspect` first.
-3. Continue only for the exact supported model and exactly one compatible, openable report-`0x5A` interface.
-4. Run the fixed `write-m1-a-m2-b` command and type the displayed confirmation. The exact packet and SHA-256 are shown before the single HID call.
-5. Verify M1→A and M2→B in `joy.cpl` or another safe local tester.
-6. Restore through Armoury using the photographed assignment, then verify both paddles again.
-7. Review the local audit JSON and physical observations before any second packet or application unlock is considered.
+1. Download the `AllyBindings-M1M2-SoftwareProbe-win-x64` artifact from successful PR CI, verify its outer SHA-256 and run `Verify-Package.ps1`.
+2. Follow [`lab/M1M2-SOFTWARE-PROBE-RUNBOOK.md`](../lab/M1M2-SOFTWARE-PROBE-RUNBOOK.md): save baseline screenshots and software/firmware versions first.
+3. In Armoury, use its virtual keyboard to assign M1 to F12 and M2 to F11 with both secondary functions empty. The probe generates no assignment input.
+4. Capture press/release/hold behaviour and prove optional suppression affects only F11/F12.
+5. If ViGEmBus is already installed, disable the Ally Embedded Controller through ASUS Command Centre and test the temporary F12→A/F11→B bridge in Remote Play.
+6. Re-enable the physical controller and repeat to determine whether coexistence causes duplicate input or slot precedence.
+7. Perform a full cold boot with remappers disabled, record whether the Armoury assignment persists, restore the photographed assignments through Armoury, verify both paddles, and finalize the hashed evidence ZIP.
 
 Research references:
 
@@ -102,10 +103,10 @@ Research references:
 - Use the physical ROG Xbox Ally X, plugged into power.
 - Record Windows build, Armoury Crate version, ASUS System Control Interface version and controller firmware.
 - Export/photograph existing Armoury controller mappings.
-- Create a Windows restore point before installing any filter/virtual-controller driver.
+- Do not install a filter/virtual-controller driver for the first pass. If a later HidHide experiment is approved, create a Windows restore point first.
 - Keep a keyboard/touch recovery path available.
 - Test in Windows controller diagnostics, the Remote Play menu or a non-competitive local title; never an anti-cheat game.
-- Start from an unsigned, self-contained Ally Bindings CI artifact in preview mode.
+- Start from the self-contained `AllyBindings-M1M2-SoftwareProbe-win-x64` CI artifact and run its packaged verifier.
 
 ## Inventory
 
@@ -115,19 +116,23 @@ Capture a redacted inventory before changing anything:
 2. Windows Settings controller entries.
 3. Device Manager hardware IDs for gamepad/HID interfaces.
 4. XInput index used by the built-in controller.
-5. Confirm on this firmware that M1/M2 do not appear as independent XInput buttons, then validate the feature-report mapping path below.
+5. Confirm on this firmware that M1/M2 do not appear as independent XInput buttons, then validate F12/F11 output through Armoury.
 6. Whether Command Centre/Armoury buttons enter XInput at all.
 7. Behaviour in embedded and desktop control modes.
 
-Do not treat rear paddles as independent inputs. The implemented path configures what firmware emits; it does not capture raw paddle presses.
+Do not treat rear paddles as independent XInput buttons. Armoury configures what firmware emits; the probe captures the resulting F12/F11 keyboard events, not raw paddle hardware.
 
 ## Candidate backend decision order
 
-### 1. Supported ASUS/Armoury interface
+### 1. Vendor-configured keys + temporary virtual Xbox output
 
-Use only if a documented/stable local invocation can change the live controller layout without mutating private databases or injecting into Armoury. Record the exact API/tool, provenance and rollback.
+Use Armoury once to map M1→F12 and M2→F11, then capture/suppress those exact keys and bridge them to one virtual Xbox controller. This wins if Remote Play accepts the virtual-only path and the mapping/restoration survives the lifecycle matrix.
 
-### 2. Maintained physical-hide + virtual Xbox backend
+### 2. Coexistence before hiding
+
+Test physical and virtual controllers together. If Remote Play accepts the intended virtual input without duplicate behavior, do not add a filter driver.
+
+### 3. Maintained physical-hide + virtual Xbox backend
 
 A candidate must:
 
@@ -141,23 +146,23 @@ A candidate must:
 
 Do not auto-install it from Ally Bindings. Installation and enabling remain explicit on-device operations.
 
-### 3. Windows-supported virtual HID path
+### 4. Windows-supported virtual HID path
 
 Prefer a supported Windows API/driver path if it can meet the same safety properties without a fragile legacy stack. Reject it if the native/driver burden exceeds this narrow app or cannot provide robust rollback.
 
 ## Minimal adapter proof
 
-Before wiring the WPF app, build the smallest adapter that:
+`AllyBindings.M1M2Probe` is the smallest adapter for the first decision gate:
 
-1. selects the physical XInput/HID device explicitly;
-2. starts virtual output;
-3. verifies virtual output health;
-4. hides the physical device from the test consumer;
-5. passes snapshots through `AllyBindings.Core.MappingEngine`;
-6. applies Default and one obvious A/B swap profile;
-7. restores/unhides on normal exit and a watchdog/failure path.
+1. detect XInput slots and existing ViGEmBus/HidHide service state;
+2. capture and optionally suppress only F12/F11;
+3. start one temporary virtual Xbox controller;
+4. map F12→A and F11→B;
+5. ignore injected events and release all virtual buttons on exit/failure;
+6. run first with the physical controller disabled through ASUS Command Centre, then test coexistence;
+7. journal every transition/checkpoint and finalize a deterministic evidence bundle.
 
-The adapter must implement `IControllerBackend`; profile parsing and mapping logic stay in Core.
+It deliberately does not implement `IControllerBackend` yet. Integration waits until the physical Remote Play evidence chooses the topology.
 
 ## Test matrix
 
@@ -166,11 +171,15 @@ The adapter must implement `IControllerBackend`; profile parsing and mapping log
 | Baseline enumeration | Physical interfaces/buttons understood | Unknown duplicate/input path |
 | Rear paddles | Exposure model documented | Claimed mapping without visible signal |
 | M1/M2 opt-in off | No feature-report write; Armoury assignment unchanged | Any hardware mutation |
-| M1=A, M2=RT | Each paddle emits only its assigned action | Missing, doubled or stale secondary action |
-| M1/M2 restore | Stock modifier behavior returns | Custom action remains/stuck input |
-| Armoury after M1/M2 apply | Conflict behavior documented; no corruption/crash | Corruption, crash or unrecoverable mapping |
+| M1=F12, M2=F11 | Clean down/up events; hold behavior documented | Missing, doubled, leaked or ambiguous key |
+| Suppression | Only F11/F12 are swallowed while active | Other keyboard input affected or F11/F12 leaks |
+| M1/M2 restore | Photographed Armoury behavior returns | Custom action remains/stuck input |
+| Cold boot | Persistence is explicitly known | Result not measured with remappers disabled |
+| Armoury after assignment | Opens normally; mapping/restoration works | Corruption, crash or unrecoverable mapping |
 | Start output | One healthy virtual Xbox pad | Output unavailable/unstable |
-| Hide physical | Test consumer sees one pad | No input or two pads |
+| Virtual-only Remote Play | F12→A and F11→B accepted | Missing/stuck/wrong input |
+| Physical + virtual coexistence | Duplicate/slot behavior documented | Ambiguous or dangerous behavior |
+| Optional hide physical | Only after virtual-only success; consumer sees one pad | No input, hidden recovery path or two pads |
 | Default | Exact baseline Xbox layout | Missing/stuck/wrong input |
 | A/B swap | Only A/B output changes | Other controls drift |
 | Switch 20 times | No ghosts/missed transitions | Stuck/duplicated presses |
@@ -181,7 +190,7 @@ The adapter must implement `IControllerBackend`; profile parsing and mapping log
 | Sleep/resume | Input path recovers safely | Hidden/unusable controller |
 | Controller reconnect | Same deterministic topology | Virtual/physical index confusion |
 | Kill Ally Bindings | Physical path remains/returns usable | Controller stranded hidden |
-| Kill backend/watchdog | Fail-open recovery | Reboot required for input |
+| Kill bridge | A/B released; virtual device disappears; physical remains usable | Stuck input or reboot required |
 | Disable startup | App no longer launches | Persistent unwanted startup |
 | Uninstall backend | Original behaviour restored | Residual hidden device/driver |
 

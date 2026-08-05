@@ -1,0 +1,17 @@
+Ally Bindings M1/M2 Software Probe notices
+
+This diagnostic is experimental and is not affiliated with ASUS, ROG, Microsoft, Xbox, Nefarius Software Solutions, or the ViGEm project.
+
+Safety properties:
+- no ASUS HID write API;
+- no hardware mapping command;
+- no driver installation or update;
+- no physical-controller hiding;
+- only F11/F12 events are retained;
+- virtual controller exists only during the explicit bridge command.
+
+The optional virtual-controller bridge uses Nefarius.ViGEm.Client 1.21.256 (MIT), Copyright © Nefarius Software Solutions e.U. 2017-2023. ViGEmBus itself is a separate retired driver and is not distributed by this package.
+
+The probe detects ViGEmBus and HidHide but never installs, configures, enables, disables, or removes either one.
+
+Free-form evidence notes are forbidden. Package checksums detect corruption but are not a publisher signature—compare the ZIP SHA-256 through a separately trusted channel.

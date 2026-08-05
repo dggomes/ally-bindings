@@ -43,6 +43,17 @@ jobs:
       - name: Publish self-contained x64 app
         shell: pwsh
         run: ./scripts/package.ps1 -SkipTests
+      - name: Publish self-contained M1/M2 software probe
+        shell: pwsh
+        run: ./scripts/package-m1m2-software-probe.ps1 -SkipTests
+      - name: Exercise compressed software-probe package on Windows
+        shell: pwsh
+        run: |
+          $smokeRoot = 'artifacts/AllyBindings-M1M2-SoftwareProbe-zip-smoke'
+          if (Test-Path -LiteralPath $smokeRoot) { Remove-Item -LiteralPath $smokeRoot -Recurse -Force }
+          Expand-Archive -LiteralPath artifacts/AllyBindings-M1M2-SoftwareProbe-win-x64.zip -DestinationPath $smokeRoot
+          & (Join-Path $smokeRoot 'Verify-Package.ps1')
+          ./scripts/test-m1m2-software-probe.ps1 -PackageRoot $smokeRoot
       - name: Verify embedded Armoury tap resource
         shell: pwsh
         run: ./scripts/test-armoury-tap-embedded-resource.ps1
@@ -104,6 +115,13 @@ jobs:
         with:
           name: AllyBindings-win-x64
           path: artifacts/AllyBindings-win-x64.zip
+          if-no-files-found: error
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: AllyBindings-M1M2-SoftwareProbe-win-x64
+          path: |
+            artifacts/AllyBindings-M1M2-SoftwareProbe-win-x64.zip
+            artifacts/AllyBindings-M1M2-SoftwareProbe-win-x64.zip.sha256
           if-no-files-found: error
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:

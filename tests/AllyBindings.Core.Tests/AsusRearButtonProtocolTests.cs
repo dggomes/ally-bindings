@@ -48,16 +48,16 @@ public sealed class AsusRearButtonProtocolTests
     }
 
     [Fact]
-    public void Custom_report_maps_each_rear_button_in_primary_and_secondary_slots()
+    public void Custom_report_maps_primary_actions_and_clears_both_secondary_slots()
     {
         var report = AsusRearButtonProtocol.BuildMappingReport(
             ControllerButton.RightTrigger,
             ControllerButton.A);
 
         AssertAction(report, 5, 0x01, 0x01, 0x00);
-        AssertAction(report, 16, 0x01, 0x01, 0x00);
+        Assert.All(report[16..27], value => Assert.Equal((byte)0, value));
         AssertAction(report, 27, 0x01, 0x0E, 0x00);
-        AssertAction(report, 38, 0x01, 0x0E, 0x00);
+        Assert.All(report[38..49], value => Assert.Equal((byte)0, value));
     }
 
     [Fact]
