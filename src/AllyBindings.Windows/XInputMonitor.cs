@@ -7,8 +7,12 @@ namespace AllyBindings.Windows;
 public sealed class XInputMonitor : IDisposable
 {
     private readonly DispatcherTimer _timer;
+    private readonly System.Threading.Timer _safetyTimer;
+    private readonly object _stateGate = new();
     private int? _preferredIndex;
-    private bool _disposed;
+    private int? _activeControllerIndex;
+    private int _safetyPollActive;
+    private volatile bool _disposed;
 
     public XInputMonitor(int? preferredIndex)
     {
@@ -18,20 +22,50 @@ public sealed class XInputMonitor : IDisposable
             Interval = TimeSpan.FromMilliseconds(20),
         };
         _timer.Tick += (_, _) => Poll();
+        _safetyTimer = new System.Threading.Timer(
+            _ => PollSafety(),
+            null,
+            Timeout.InfiniteTimeSpan,
+            Timeout.InfiniteTimeSpan);
     }
 
+    public int? ActiveControllerIndex
+    {
+        get { lock (_stateGate) return _activeControllerIndex; }
+        private set { lock (_stateGate) _activeControllerIndex = value; }
+    }
     public event EventHandler<ControllerSnapshot>? SnapshotReceived;
+    public event EventHandler<ControllerSnapshot>? SafetySnapshotReceived;
     public event EventHandler<int?>? ActiveControllerChanged;
 
-    public int? ActiveControllerIndex { get; private set; }
+    public void Start()
+    {
+        _timer.Start();
+        _safetyTimer.Change(TimeSpan.Zero, TimeSpan.FromMilliseconds(16));
+    }
 
-    public void Start() => _timer.Start();
-    public void Stop() => _timer.Stop();
+    public void Stop()
+    {
+        _timer.Stop();
+        _safetyTimer.Change(Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
+    }
 
     public void SetPreferredIndex(int? index)
     {
-        _preferredIndex = index is >= 0 and <= 3 ? index : null;
-        ActiveControllerIndex = null;
+        if (index is < 0 or > 3) throw new ArgumentOutOfRangeException(nameof(index));
+        lock (_stateGate) _preferredIndex = index;
+    }
+
+    public static int? FindFirstConnectedIndex(int? preferredIndex = null)
+    {
+        var indices = preferredIndex is >= 0 and <= 3
+            ? new[] { preferredIndex.Value }
+            : new[] { 0, 1, 2, 3 };
+        foreach (var index in indices)
+        {
+            if (TryRead(index, out _)) return index;
+        }
+        return null;
     }
 
     private void Poll()
@@ -41,8 +75,10 @@ public sealed class XInputMonitor : IDisposable
             return;
         }
 
-        var indices = _preferredIndex.HasValue
-            ? new[] { _preferredIndex.Value }
+        int? preferredIndex;
+        lock (_stateGate) preferredIndex = _preferredIndex;
+        var indices = preferredIndex.HasValue
+            ? new[] { preferredIndex.Value }
             : new[] { 0, 1, 2, 3 };
 
         foreach (var index in indices)
@@ -65,6 +101,25 @@ public sealed class XInputMonitor : IDisposable
             ActiveControllerChanged?.Invoke(this, null);
         }
         SnapshotReceived?.Invoke(this, ControllerSnapshot.Disconnected);
+    }
+
+    private void PollSafety()
+    {
+        if (_disposed || Interlocked.Exchange(ref _safetyPollActive, 1) != 0) return;
+        try
+        {
+            int? preferredIndex;
+            lock (_stateGate) preferredIndex = _preferredIndex;
+            var index = FindFirstConnectedIndex(preferredIndex);
+            if (index is not null && TryRead(index.Value, out var snapshot))
+                SafetySnapshotReceived?.Invoke(this, snapshot);
+            else
+                SafetySnapshotReceived?.Invoke(this, ControllerSnapshot.Disconnected);
+        }
+        finally
+        {
+            Interlocked.Exchange(ref _safetyPollActive, 0);
+        }
     }
 
     private static bool TryRead(int index, out ControllerSnapshot snapshot)
@@ -106,6 +161,7 @@ public sealed class XInputMonitor : IDisposable
     {
         _disposed = true;
         _timer.Stop();
+        _safetyTimer.Dispose();
     }
 
     [DllImport("xinput1_4.dll", EntryPoint = "XInputGetState")]

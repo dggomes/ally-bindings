@@ -54,7 +54,7 @@ dotnet test AllyBindings.sln --configuration Release
 - Never install a driver automatically.
 - Never hide the physical controller before a healthy output path and fail-open recovery are proven.
 - Never claim a selected app profile was physically applied without read-back or end-to-end evidence.
-- Preserve the permanent Default profile and independent keyboard recovery path.
+- Preserve the permanent Default profile and immutable controller-only recovery gesture.
 
 ## Style
 

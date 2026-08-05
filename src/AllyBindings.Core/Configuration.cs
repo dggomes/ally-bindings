@@ -27,7 +27,7 @@ public sealed record ShortcutSettings
 
 public sealed record AppConfiguration
 {
-    public int SchemaVersion { get; init; } = 3;
+    public int SchemaVersion { get; init; } = 4;
     public string ActiveProfileId { get; init; } = MappingProfile.Default.Id;
     public int? ControllerIndex { get; init; }
     public bool RunAtStartup { get; init; }
@@ -35,6 +35,7 @@ public sealed record AppConfiguration
     public bool IncludePrereleaseUpdates { get; init; } = true;
     public DateTimeOffset? LastUpdateCheckUtc { get; init; }
     public bool EnableAsusRearButtonMappings { get; init; }
+    public bool EnableVirtualControllerRemapping { get; init; }
     public bool AsusRearButtonMappingActive { get; init; }
     public DateTimeOffset? ArmouryTapTeardownBlockedSinceUtc { get; init; }
     public Guid? ArmouryTapTeardownBootIdentifier { get; init; }
@@ -54,7 +55,7 @@ public sealed class UnsupportedConfigurationVersionException(int version)
 
 public static partial class ConfigurationValidator
 {
-    public const int CurrentSchemaVersion = 3;
+    public const int CurrentSchemaVersion = 4;
     private static readonly HashSet<ControllerButton> FaceButtons =
     [ControllerButton.A, ControllerButton.B, ControllerButton.X, ControllerButton.Y];
 
@@ -121,11 +122,21 @@ public static partial class ConfigurationValidator
             ? input.ActiveProfileId
             : MappingProfile.Default.Id;
 
+        var enableVirtualController = input.EnableVirtualControllerRemapping;
+        var enableAsusRearButtons = input.EnableAsusRearButtonMappings;
+        if (enableVirtualController && enableAsusRearButtons)
+        {
+            enableAsusRearButtons = false;
+            warnings.Add("Virtual-controller remapping is mutually exclusive with ASUS hardware mapping; the locked ASUS option was disabled.");
+        }
+
         var normalized = input with
         {
             SchemaVersion = CurrentSchemaVersion,
             ActiveProfileId = activeProfile,
             ControllerIndex = input.ControllerIndex is >= 0 and <= 3 ? input.ControllerIndex : null,
+            EnableVirtualControllerRemapping = enableVirtualController,
+            EnableAsusRearButtonMappings = enableAsusRearButtons,
             // Operational recovery state, not a user preference. Disabling the
             // feature must not erase evidence that firmware may still need reset.
             AsusRearButtonMappingActive = input.AsusRearButtonMappingActive,

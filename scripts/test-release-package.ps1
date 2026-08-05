@@ -18,6 +18,8 @@ $required = @(
     'docs/ARCHITECTURE.md',
     'docs/HARDWARE-SPIKE.md',
     'docs/PLAN.md',
+    'docs/FULL-VIRTUAL-CONTROLLER-VALIDATION.md',
+    'docs/evidence/full-virtual-controller-release-approval.example.json',
     'docs/ARMOURY-TAP-SECURITY.md',
     'docs/ARMOURY-TAP-USER-GUIDE.md',
     'docs/images/ally-bindings-capture-update.png',
@@ -26,7 +28,8 @@ $required = @(
     'docs/images/ally-bindings-shortcut.png',
     'LICENSES/HidSharp-Apache-2.0.txt',
     'LICENSES/TraceEvent-MIT.txt',
-    'LICENSES/MinHook-BSD-2-Clause.txt'
+    'LICENSES/MinHook-BSD-2-Clause.txt',
+    'LICENSES/ViGEm.NET-MIT.txt'
 )
 foreach ($relative in $required) {
     $path = Join-Path $PackageRoot $relative
@@ -79,7 +82,7 @@ finally {
 }
 
 $notices = Get-Content -Raw -LiteralPath (Join-Path $PackageRoot 'THIRD-PARTY-NOTICES.md')
-foreach ($dependency in @('HidSharp', 'Microsoft.Diagnostics.Tracing.TraceEvent', 'MinHook')) {
+foreach ($dependency in @('HidSharp', 'Microsoft.Diagnostics.Tracing.TraceEvent', 'MinHook', 'Nefarius.ViGEm.Client')) {
     if ($notices.IndexOf($dependency, [StringComparison]::OrdinalIgnoreCase) -lt 0) {
         throw "Third-party notices do not identify $dependency."
     }

@@ -59,6 +59,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     private bool _includePrereleaseUpdates = true;
     private DateTimeOffset? _lastUpdateCheckUtc;
     private bool _enableAsusRearButtonMappings;
+    private bool _enableVirtualControllerRemapping;
     private bool _allowClose;
     private BindingRow? _bindingPickerRow;
     private Button? _bindingPickerOrigin;
@@ -124,6 +125,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     public bool CheckForUpdatesAutomatically { get => _checkForUpdatesAutomatically; set { _checkForUpdatesAutomatically = value; OnPropertyChanged(); } }
     public bool IncludePrereleaseUpdates { get => _includePrereleaseUpdates; set { _includePrereleaseUpdates = value; OnPropertyChanged(); } }
     public bool EnableAsusRearButtonMappings { get => _enableAsusRearButtonMappings; set { _enableAsusRearButtonMappings = value; OnPropertyChanged(); } }
+    public bool EnableVirtualControllerRemapping { get => _enableVirtualControllerRemapping; set { _enableVirtualControllerRemapping = value; OnPropertyChanged(); } }
     public bool CanEnableAsusRearButtonMappings => ArmouryProtocolValidation.IsOperationApproved(isRecoveryReset: false);
 
     public AppConfiguration BuildConfiguration(string activeProfileId, int? controllerIndex)
@@ -139,6 +141,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             IncludePrereleaseUpdates = IncludePrereleaseUpdates,
             LastUpdateCheckUtc = _lastUpdateCheckUtc,
             EnableAsusRearButtonMappings = CanEnableAsusRearButtonMappings && EnableAsusRearButtonMappings,
+            EnableVirtualControllerRemapping = EnableVirtualControllerRemapping,
             Shortcut = new ShortcutSettings
             {
                 Buttons = [ShortcutButton1, ShortcutButton2],
@@ -179,6 +182,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         IncludePrereleaseUpdates = configuration.IncludePrereleaseUpdates;
         _lastUpdateCheckUtc = configuration.LastUpdateCheckUtc;
         EnableAsusRearButtonMappings = CanEnableAsusRearButtonMappings && configuration.EnableAsusRearButtonMappings;
+        EnableVirtualControllerRemapping = configuration.EnableVirtualControllerRemapping;
     }
 
     public void SetBackendStatus(BackendStatus status) => BackendStatusText.Text = $"Backend: {status.Name} · {status.Health}\n{status.Message}";

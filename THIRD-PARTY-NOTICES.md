@@ -32,3 +32,14 @@ Ally Bindings uses [MinHook](https://github.com/TsudaKageyu/minhook) for inline 
 - Full bundled license: [`LICENSES/MinHook-BSD-2-Clause.txt`](LICENSES/MinHook-BSD-2-Clause.txt)
 
 MinHook source is vendored under `native/ArmouryTap/third_party/minhook/` and compiled into `AllyBindings.ArmouryTap.dll`, which is embedded as a resource inside `AllyBindings.exe` and extracted only during an explicit capture session.
+
+## Nefarius.ViGEm.Client 1.21.256
+
+Ally Bindings uses [ViGEm.NET](https://github.com/ViGEm/ViGEm.NET) to submit complete Xbox 360 reports to an existing ViGEmBus installation. The app does not install or update the driver.
+
+- Copyright: Benjamin Höglinger-Stelzer
+- License: MIT
+- Package: <https://www.nuget.org/packages/Nefarius.ViGEm.Client/1.21.256>
+- Full bundled license: [`LICENSES/ViGEm.NET-MIT.txt`](LICENSES/ViGEm.NET-MIT.txt)
+
+ViGEmBus is retired upstream. This integration is an explicitly enabled compatibility/validation backend, not an endorsement of unattended driver installation; replacement options must be evaluated before stable release.

@@ -16,6 +16,7 @@ public sealed class JsonProfileStoreTests : IDisposable
         var changed = initial with
         {
             ActiveProfileId = "elden-ring",
+            EnableVirtualControllerRemapping = true,
             ArmouryTapTeardownBlockedSinceUtc = DateTimeOffset.Parse("2026-08-03T01:00:00Z"),
             ArmouryTapTeardownBootIdentifier = Guid.Parse("c2765510-09cc-43c8-a7d0-ac0df1b490fe"),
             Profiles =
@@ -37,6 +38,7 @@ public sealed class JsonProfileStoreTests : IDisposable
         var loaded = await store.LoadAsync();
 
         Assert.Equal("elden-ring", loaded.Configuration.ActiveProfileId);
+        Assert.True(loaded.Configuration.EnableVirtualControllerRemapping);
         Assert.Equal(changed.ArmouryTapTeardownBlockedSinceUtc, loaded.Configuration.ArmouryTapTeardownBlockedSinceUtc);
         Assert.Equal(changed.ArmouryTapTeardownBootIdentifier, loaded.Configuration.ArmouryTapTeardownBootIdentifier);
         Assert.Equal(2, loaded.Configuration.Profiles.Count);
@@ -44,7 +46,31 @@ public sealed class JsonProfileStoreTests : IDisposable
     }
 
     [Fact]
-    public async Task Trigger_source_mappings_round_trip_under_schema_three()
+    public async Task Schema_three_without_virtual_option_migrates_off_and_round_trips_as_schema_four()
+    {
+        Directory.CreateDirectory(_directory);
+        var path = System.IO.Path.Combine(_directory, "config.json");
+        await File.WriteAllTextAsync(path, """
+            {
+              "SchemaVersion": 3,
+              "ActiveProfileId": "default",
+              "Profiles": []
+            }
+            """);
+
+        var store = new JsonProfileStore(path);
+        var migrated = await store.LoadAsync();
+        Assert.Equal(4, migrated.Configuration.SchemaVersion);
+        Assert.False(migrated.Configuration.EnableVirtualControllerRemapping);
+
+        await store.SaveAsync(migrated.Configuration);
+        var reloaded = await store.LoadAsync();
+        Assert.Equal(4, reloaded.Configuration.SchemaVersion);
+        Assert.False(reloaded.Configuration.EnableVirtualControllerRemapping);
+    }
+
+    [Fact]
+    public async Task Trigger_source_mappings_round_trip_under_current_schema()
     {
         var path = System.IO.Path.Combine(_directory, "config.json");
         var store = new JsonProfileStore(path);
@@ -70,7 +96,7 @@ public sealed class JsonProfileStoreTests : IDisposable
         var loaded = await store.LoadAsync();
         var profile = Assert.Single(loaded.Configuration.Profiles, candidate => candidate.Id == "trigger-swap");
 
-        Assert.Equal(3, loaded.Configuration.SchemaVersion);
+        Assert.Equal(4, loaded.Configuration.SchemaVersion);
         Assert.Equal(ControllerButton.RightTrigger, profile.Bindings[ControllerButton.LeftTrigger]);
         Assert.Equal(ControllerButton.LeftTrigger, profile.Bindings[ControllerButton.RightTrigger]);
     }

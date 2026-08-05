@@ -17,12 +17,15 @@ public partial class App : System.Windows.Application
     private const string ActivationPipeName = "AllyBindings.Activation.v1";
     private readonly SemaphoreSlim _operationGate = new(1, 1);
     private readonly ControllerInputArbitration _controllerInputArbitration = new();
+    private readonly object _recoveryGestureGate = new();
     private Mutex? _singleInstance;
     private JsonProfileStore _profileStore = null!;
     private IControllerBackend _backend = null!;
+    private VirtualControllerBackend? _virtualBackend;
     private ProfileCycleStateMachine _cycle = null!;
+    private readonly ControllerRecoveryGestureStateMachine _recoveryGesture = new();
     private XInputMonitor _controllerMonitor = null!;
-    private GlobalPanicHotKey? _panicHotKey;
+    private F11F12PaddleHook? _paddleHook;
     private OverlayWindow _overlay = null!;
     private MainWindow _mainWindow = null!;
     private Forms.NotifyIcon _trayIcon = null!;
@@ -43,6 +46,13 @@ public partial class App : System.Windows.Application
     private CancellationTokenSource? _activationListenerCancellation;
     private Task? _activationListenerTask;
     private bool _activationRequested;
+    private int _emergencyStopInProgress;
+    private volatile bool _recoveryInputReserved;
+    private readonly object _virtualSafetyGate = new();
+    private int _virtualSafetyPending;
+    private long _physicalDisconnectStartedAt;
+    private int _physicalDisconnectFailOpenTriggered;
+    private VirtualRemappingSafetyLatch _virtualRecoveryLatch = null!;
 
     public AppConfiguration Configuration { get; private set; } = AppConfiguration.CreateDefault();
 
@@ -198,10 +208,25 @@ public partial class App : System.Windows.Application
         {
             var appData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
             var configPath = System.IO.Path.Combine(appData, "AllyBindings", "config.json");
+            _virtualRecoveryLatch = new VirtualRemappingSafetyLatch(
+                System.IO.Path.Combine(appData, "AllyBindings", "virtual-remapping-disabled"));
             _profileStore = new JsonProfileStore(configPath);
             var loaded = await _profileStore.LoadAsync();
             Configuration = loaded.Configuration;
             _configurationWarnings = loaded.Warnings;
+
+            if (_virtualRecoveryLatch.IsSet)
+            {
+                Configuration = Configuration with
+                {
+                    EnableVirtualControllerRemapping = false,
+                    ActiveProfileId = MappingProfile.Default.Id,
+                };
+                await _profileStore.SaveAsync(Configuration);
+                _configurationWarnings = _configurationWarnings
+                    .Append("Virtual remapping stayed off because a controller emergency-disable latch is active. Explicitly enable and save it again to clear the latch.")
+                    .ToList();
+            }
 
             if (Configuration.ArmouryTapTeardownBlockedSinceUtc is not null)
             {
@@ -273,11 +298,58 @@ public partial class App : System.Windows.Application
             var recoveryWasPending = Configuration.AsusRearButtonMappingActive &&
                 !_armouryCaptureTeardownUnconfirmed;
             var nativeWritesAllowed = !_armouryCaptureTeardownUnconfirmed;
-            var backendStatus = await ReplaceBackendAsync(
-                nativeWritesAllowed && (Configuration.EnableAsusRearButtonMappings || recoveryWasPending),
-                restoreCurrent: false,
-                allowUnverifiedRecoveryReset:
-                    recoveryWasPending && ArmouryProtocolValidation.RecoveryWritesApproved);
+            int? pinnedPhysicalIndex = null;
+            if (Configuration.EnableVirtualControllerRemapping)
+            {
+                // Resolve and pin the physical slot before ViGEm can add another
+                // XInput device. This process never scans to a replacement slot
+                // while virtual output is connected.
+                pinnedPhysicalIndex = XInputMonitor.FindFirstConnectedIndex(Configuration.ControllerIndex);
+                if (pinnedPhysicalIndex is null)
+                {
+                    Configuration = Configuration with { EnableVirtualControllerRemapping = false };
+                    await _profileStore.SaveAsync(Configuration);
+                    _configurationWarnings = _configurationWarnings
+                        .Append("Virtual remapping stayed off because the configured physical XInput controller was not present at startup.")
+                        .ToList();
+                }
+                else if (Configuration.ControllerIndex != pinnedPhysicalIndex)
+                {
+                    Configuration = Configuration with { ControllerIndex = pinnedPhysicalIndex };
+                    await _profileStore.SaveAsync(Configuration);
+                }
+            }
+            BackendStatus backendStatus;
+            try
+            {
+                backendStatus = await ReplaceBackendAsync(
+                    nativeWritesAllowed && (Configuration.EnableAsusRearButtonMappings || recoveryWasPending),
+                    Configuration.EnableVirtualControllerRemapping,
+                    pinnedPhysicalIndex,
+                    restoreCurrent: false,
+                    allowUnverifiedRecoveryReset:
+                        recoveryWasPending && ArmouryProtocolValidation.RecoveryWritesApproved);
+            }
+            catch (Exception ex) when (Configuration.EnableVirtualControllerRemapping)
+            {
+                TrySetVirtualRecoveryLatch($"Startup failure: {ex.Message}");
+                Configuration = Configuration with
+                {
+                    EnableVirtualControllerRemapping = false,
+                    ActiveProfileId = MappingProfile.Default.Id,
+                };
+                await _profileStore.SaveAsync(Configuration);
+                _configurationWarnings = _configurationWarnings
+                    .Append($"Virtual remapping failed open and stayed disabled: {ex.Message}")
+                    .ToList();
+                backendStatus = await ReplaceBackendAsync(
+                    nativeWritesAllowed && (Configuration.EnableAsusRearButtonMappings || recoveryWasPending),
+                    enableVirtualController: false,
+                    pinnedPhysicalIndex: null,
+                    restoreCurrent: false,
+                    allowUnverifiedRecoveryReset:
+                        recoveryWasPending && ArmouryProtocolValidation.RecoveryWritesApproved);
+            }
             _backendNeedsRestore = Configuration.AsusRearButtonMappingActive;
             if (nativeWritesAllowed && Configuration.AsusRearButtonMappingActive &&
                 ArmouryProtocolValidation.RecoveryWritesApproved)
@@ -297,7 +369,11 @@ public partial class App : System.Windows.Application
                         .ToList();
                     backendStatus = Configuration.EnableAsusRearButtonMappings
                         ? recovery.Status
-                        : await ReplaceBackendAsync(enableRearButtons: false, restoreCurrent: false);
+                        : await ReplaceBackendAsync(
+                            enableRearButtons: false,
+                            enableVirtualController: false,
+                            pinnedPhysicalIndex: null,
+                            restoreCurrent: false);
                 }
                 else
                 {
@@ -328,15 +404,41 @@ public partial class App : System.Windows.Application
             ConfigureTray();
             _controllerMonitor = new XInputMonitor(Configuration.ControllerIndex);
             _controllerMonitor.SnapshotReceived += ControllerSnapshotReceived;
+            _controllerMonitor.SafetySnapshotReceived += RecoverySnapshotReceived;
             _controllerMonitor.ActiveControllerChanged += (_, index) => _mainWindow.SetControllerStatus(index);
             _controllerMonitor.Start();
             _mainWindow.SetControllerStatus(_controllerMonitor.ActiveControllerIndex);
 
-            _panicHotKey = new GlobalPanicHotKey();
-            _panicHotKey.Pressed += async (_, _) => await RestoreDefaultAsync("Panic shortcut");
-            if (!_panicHotKey.IsRegistered)
+            if (_virtualBackend is not null)
             {
-                _configurationWarnings = _configurationWarnings.Append("Ctrl+Alt+F12 could not be registered; another application may own it.").ToList();
+                var activeProfile = Configuration.Profiles.FirstOrDefault(profile =>
+                    profile.Id.Equals(Configuration.ActiveProfileId, StringComparison.OrdinalIgnoreCase)) ?? MappingProfile.Default;
+                var initialApply = await _virtualBackend.ApplyAsync(activeProfile);
+                backendStatus = initialApply.Status;
+                if (!initialApply.CommandAccepted)
+                {
+                    TrySetVirtualRecoveryLatch($"Startup virtual apply failed: {initialApply.Message}");
+                    _virtualBackend.EmergencyStop();
+                    Configuration = Configuration with
+                    {
+                        EnableVirtualControllerRemapping = false,
+                        ActiveProfileId = MappingProfile.Default.Id,
+                    };
+                    try { await _profileStore.SaveAsync(Configuration); } catch { }
+                    backendStatus = await ReplaceBackendAsync(
+                        enableRearButtons: false,
+                        enableVirtualController: false,
+                        pinnedPhysicalIndex: null,
+                        restoreCurrent: false);
+                    _configurationWarnings = _configurationWarnings
+                        .Append("Virtual controller startup failed and was disabled; the physical controller remains available.")
+                        .ToList();
+                }
+                else
+                {
+                    StartPaddleHook();
+                }
+                _mainWindow.SetBackendStatus(backendStatus);
             }
 
             if (!startInBackground || _activationRequested)
@@ -428,8 +530,74 @@ public partial class App : System.Windows.Application
             : Dispatcher.InvokeAsync(action).Task.Unwrap();
     }
 
+    private void RecoverySnapshotReceived(object? sender, ControllerSnapshot snapshot)
+    {
+        bool fired;
+        lock (_recoveryGestureGate)
+        {
+            fired = _recoveryGesture.Process(snapshot, MonotonicRecoveryTime());
+            _recoveryInputReserved = _recoveryGesture.IsConsumingInput;
+        }
+        if (!snapshot.IsConnected && _virtualBackend is not null)
+        {
+            var startedAt = Interlocked.Read(ref _physicalDisconnectStartedAt);
+            if (startedAt == 0)
+            {
+                Interlocked.CompareExchange(
+                    ref _physicalDisconnectStartedAt,
+                    Stopwatch.GetTimestamp(),
+                    comparand: 0);
+            }
+            else if (Stopwatch.GetElapsedTime(startedAt) >= TimeSpan.FromMilliseconds(750) &&
+                     Interlocked.Exchange(ref _physicalDisconnectFailOpenTriggered, 1) == 0)
+            {
+                const string reason = "Pinned physical controller disconnected";
+                SignalVirtualSafetyEvent(reason);
+                _virtualBackend.EmergencyStop();
+                _ = DispatchAsync(() => EmergencyStopVirtualControllerAsync(reason));
+            }
+            return;
+        }
+        if (snapshot.IsConnected)
+        {
+            Interlocked.Exchange(ref _physicalDisconnectStartedAt, 0);
+            Interlocked.Exchange(ref _physicalDisconnectFailOpenTriggered, 0);
+        }
+        if (!fired) return;
+
+        // This callback runs on the independent safety timer, not the WPF
+        // dispatcher. Recovery therefore still latches and disconnects output
+        // if rendering, profile persistence or ordinary UI routing is stalled.
+        SignalVirtualSafetyEvent("Controller recovery gesture");
+        _virtualBackend?.EmergencyStop();
+        _ = DispatchAsync(() =>
+        {
+            _cycle.Cancel();
+            _overlay.Dismiss();
+            return EmergencyStopVirtualControllerAsync("Controller recovery gesture");
+        });
+    }
+
     private void ControllerSnapshotReceived(object? sender, ControllerSnapshot snapshot)
     {
+        var recoveryConsumesInput = _recoveryInputReserved;
+
+        try
+        {
+            _virtualBackend?.ProcessSnapshot(snapshot);
+        }
+        catch (Exception ex)
+        {
+            _ = EmergencyStopVirtualControllerAsync($"Virtual output failed: {ex.Message}");
+        }
+
+        if (recoveryConsumesInput)
+        {
+            _cycle.Cancel();
+            _overlay.Dismiss();
+            return;
+        }
+
         var consumedByEditor = _mainWindow.HandleControllerInput(snapshot);
         var routing = _controllerInputArbitration.Route(snapshot, consumedByEditor);
         if (routing.CancelCycle)
@@ -461,6 +629,10 @@ public partial class App : System.Windows.Application
         }
     }
 
+    private static DateTimeOffset MonotonicRecoveryTime() =>
+        DateTimeOffset.UnixEpoch +
+        TimeSpan.FromSeconds(Stopwatch.GetTimestamp() / (double)Stopwatch.Frequency);
+
     private IReadOnlyList<CycleItem> BuildCycleItems()
     {
         return Configuration.Profiles
@@ -477,6 +649,7 @@ public partial class App : System.Windows.Application
     public async Task<bool> SaveEditorAsync(MainWindow editor)
     {
         await _operationGate.WaitAsync();
+        var previousConfiguration = Configuration;
         try
         {
             if (_armouryCaptureInProgress)
@@ -498,18 +671,46 @@ public partial class App : System.Windows.Application
             {
                 throw new InvalidOperationException(ArmouryProtocolValidation.GateMessage);
             }
-            var rearBackendChanged =
-                validated.Configuration.EnableAsusRearButtonMappings != Configuration.EnableAsusRearButtonMappings;
+            var backendChanged =
+                validated.Configuration.EnableAsusRearButtonMappings != Configuration.EnableAsusRearButtonMappings ||
+                validated.Configuration.EnableVirtualControllerRemapping != Configuration.EnableVirtualControllerRemapping;
             BackendStatus? replacementStatus = null;
-            if (rearBackendChanged)
+            var nextConfiguration = validated.Configuration;
+            if (backendChanged)
             {
+                int? pinnedPhysicalIndex = null;
+                if (nextConfiguration.EnableVirtualControllerRemapping)
+                {
+                    pinnedPhysicalIndex = XInputMonitor.FindFirstConnectedIndex(
+                        _controllerMonitor.ActiveControllerIndex ?? nextConfiguration.ControllerIndex);
+                    if (pinnedPhysicalIndex is null)
+                        throw new InvalidOperationException("Connect the intended physical XInput controller before enabling virtual remapping.");
+                    nextConfiguration = nextConfiguration with { ControllerIndex = pinnedPhysicalIndex };
+                    // Pin the running monitor before ViGEm connects. Otherwise
+                    // a monitor that was still scanning all slots could consume
+                    // the new virtual target and feed it back into itself.
+                    _controllerMonitor.SetPreferredIndex(pinnedPhysicalIndex);
+                }
+
+                StopPaddleHook();
                 replacementStatus = await ReplaceBackendAsync(
-                    validated.Configuration.EnableAsusRearButtonMappings,
+                    nextConfiguration.EnableAsusRearButtonMappings,
+                    nextConfiguration.EnableVirtualControllerRemapping,
+                    pinnedPhysicalIndex,
                     restoreCurrent: Configuration.EnableAsusRearButtonMappings,
                     allowUnverifiedRecoveryReset: false);
+                if (_virtualBackend is not null)
+                {
+                    var activeProfile = nextConfiguration.Profiles.FirstOrDefault(profile =>
+                        profile.Id.Equals(nextConfiguration.ActiveProfileId, StringComparison.OrdinalIgnoreCase)) ?? MappingProfile.Default;
+                    var virtualApply = await _virtualBackend.ApplyAsync(activeProfile);
+                    if (!virtualApply.CommandAccepted)
+                        throw new InvalidOperationException(virtualApply.Message);
+                    replacementStatus = virtualApply.Status;
+                    StartPaddleHook();
+                }
             }
-            var nextConfiguration = validated.Configuration;
-            if (rearBackendChanged && !nextConfiguration.EnableAsusRearButtonMappings)
+            if (backendChanged && !nextConfiguration.EnableAsusRearButtonMappings)
             {
                 // ReplaceBackendAsync only returns after the native reset command
                 // was accepted whenever recovery was required.
@@ -518,6 +719,20 @@ public partial class App : System.Windows.Application
             Configuration = nextConfiguration;
             _configurationWarnings = validated.Warnings;
             await _profileStore.SaveAsync(Configuration);
+            if (Configuration.EnableVirtualControllerRemapping)
+            {
+                if (!TryClearVirtualRecoveryLatchAfterEnable())
+                    throw new InvalidOperationException("A concurrent controller safety event interrupted virtual remapping enablement.");
+            }
+            if (!backendChanged)
+            {
+                var activeProfile = Configuration.Profiles.FirstOrDefault(profile =>
+                    profile.Id.Equals(Configuration.ActiveProfileId, StringComparison.OrdinalIgnoreCase)) ?? MappingProfile.Default;
+                var reapplied = await _backend.ApplyAsync(activeProfile);
+                if (!reapplied.CommandAccepted)
+                    throw new InvalidOperationException(reapplied.Message);
+                replacementStatus = reapplied.Status;
+            }
             StartupRegistration.SetEnabled(Configuration.RunAtStartup);
             _cycle.UpdateShortcut(Configuration.Shortcut);
             _controllerMonitor.SetPreferredIndex(Configuration.ControllerIndex);
@@ -528,6 +743,44 @@ public partial class App : System.Windows.Application
         }
         catch (Exception ex)
         {
+            if (previousConfiguration.EnableVirtualControllerRemapping || editor.EnableVirtualControllerRemapping)
+            {
+                TrySetVirtualRecoveryLatch($"Save transaction failed: {ex.Message}");
+                StopPaddleHook();
+                _virtualBackend?.EmergencyStop();
+
+                var asusRestoreRequired =
+                    previousConfiguration.EnableAsusRearButtonMappings &&
+                    _backendNeedsRestore;
+                var fallbackSucceeded = false;
+                try
+                {
+                    await ReplaceBackendAsync(
+                        enableRearButtons: false,
+                        enableVirtualController: false,
+                        pinnedPhysicalIndex: null,
+                        restoreCurrent: asusRestoreRequired);
+                    fallbackSucceeded = true;
+                }
+                catch
+                {
+                    // Preserve the previous ASUS recovery marker and backend if
+                    // the best-known reset was not accepted.
+                }
+
+                Configuration = fallbackSucceeded
+                    ? previousConfiguration with
+                    {
+                        EnableAsusRearButtonMappings = false,
+                        AsusRearButtonMappingActive = false,
+                        EnableVirtualControllerRemapping = false,
+                        ActiveProfileId = MappingProfile.Default.Id,
+                    }
+                    : previousConfiguration with { EnableVirtualControllerRemapping = false };
+                try { await _profileStore.SaveAsync(Configuration); } catch { }
+                editor.Load(Configuration);
+                editor.SetBackendStatus(_backend.GetStatus());
+            }
             editor.SetStatus($"Save failed safely: {ex.Message}");
             return false;
         }
@@ -581,6 +834,29 @@ public partial class App : System.Windows.Application
             var result = profile.Id == MappingProfile.Default.Id
                 ? await _backend.RestoreDefaultAsync()
                 : await _backend.ApplyAsync(profile);
+            if (_virtualBackend is not null && !result.CommandAccepted)
+            {
+                TrySetVirtualRecoveryLatch($"Virtual profile apply failed: {result.Message}");
+                StopPaddleHook();
+                _virtualBackend.EmergencyStop();
+                Configuration = Configuration with
+                {
+                    EnableVirtualControllerRemapping = false,
+                    ActiveProfileId = MappingProfile.Default.Id,
+                };
+                try { await _profileStore.SaveAsync(Configuration); } catch { }
+                var fallbackStatus = await ReplaceBackendAsync(
+                    enableRearButtons: false,
+                    enableVirtualController: false,
+                    pinnedPhysicalIndex: null,
+                    restoreCurrent: false);
+                _controllerMonitor.SetPreferredIndex(Configuration.ControllerIndex);
+                _mainWindow.SetBackendStatus(fallbackStatus);
+                _mainWindow.SetStatus($"Virtual output stopped safely: {result.Message}");
+                if (showOverlay)
+                    _overlay.ShowResult("Virtual output stopped", "Physical controller remains available · re-enable explicitly after diagnostics");
+                return;
+            }
             if (Configuration.EnableAsusRearButtonMappings && _backendNeedsRestore && !result.CommandAccepted)
             {
                 _mainWindow.SetBackendStatus(result.Status);
@@ -658,7 +934,7 @@ public partial class App : System.Windows.Application
         {
             _mainWindow.SetBackendStatus(_backend.GetStatus());
             _mainWindow.SetStatus($"Native reset command failed: {ex.Message}");
-            _overlay.ShowResult("Restore failed", "Use the physical controller/keyboard recovery path and open diagnostics.");
+            _overlay.ShowResult("Restore failed", "Use the fixed controller recovery gesture and open diagnostics.");
             return;
         }
 
@@ -1290,16 +1566,33 @@ public partial class App : System.Windows.Application
 
     private async Task<BackendStatus> ReplaceBackendAsync(
         bool enableRearButtons,
+        bool enableVirtualController,
+        int? pinnedPhysicalIndex,
         bool restoreCurrent,
         bool allowUnverifiedRecoveryReset = false)
     {
+        if (enableVirtualController && !pinnedPhysicalIndex.HasValue)
+            throw new InvalidOperationException("A physical XInput index must be pinned before virtual output is created.");
+
         var useAsusBackend =
-            (enableRearButtons && ArmouryProtocolValidation.IsOperationApproved(isRecoveryReset: false)) ||
-            (allowUnverifiedRecoveryReset && ArmouryProtocolValidation.RecoveryWritesApproved);
-        IControllerBackend replacement = useAsusBackend
-            ? new AsusRearButtonControllerBackend(new AsusRearButtonHidDevice())
-            : new PreviewControllerBackend();
-        var replacementStatus = await replacement.InitializeAsync();
+            !enableVirtualController &&
+            ((enableRearButtons && ArmouryProtocolValidation.IsOperationApproved(isRecoveryReset: false)) ||
+             (allowUnverifiedRecoveryReset && ArmouryProtocolValidation.RecoveryWritesApproved));
+        IControllerBackend replacement = enableVirtualController
+            ? new VirtualControllerBackend(pinnedPhysicalIndex!.Value)
+            : useAsusBackend
+                ? new AsusRearButtonControllerBackend(new AsusRearButtonHidDevice())
+                : new PreviewControllerBackend();
+        BackendStatus replacementStatus;
+        try
+        {
+            replacementStatus = await replacement.InitializeAsync();
+        }
+        catch
+        {
+            await replacement.DisposeAsync();
+            throw;
+        }
 
         if (_backend is not null)
         {
@@ -1313,13 +1606,144 @@ public partial class App : System.Windows.Application
                         "Could not write the best-known native M1/M2 reset, so the hardware backend was not disabled.");
                 }
             }
+            if (_virtualBackend is not null)
+                _virtualBackend.Faulted -= VirtualControllerFaulted;
             await _backend.DisposeAsync();
         }
 
         _backend = replacement;
+        _virtualBackend = replacement as VirtualControllerBackend;
+        if (_virtualBackend is not null)
+            _virtualBackend.Faulted += VirtualControllerFaulted;
         _backendDisposed = false;
         _backendNeedsRestore = false;
         return replacementStatus;
+    }
+
+    private void StartPaddleHook()
+    {
+        if (_virtualBackend is null || _paddleHook is not null) return;
+
+        var hook = new F11F12PaddleHook();
+        hook.PaddleStateChanged += PaddleStateChanged;
+        hook.Faulted += PaddleHookFaulted;
+        _paddleHook = hook;
+        try
+        {
+            hook.Start();
+        }
+        catch (Exception ex)
+        {
+            StopPaddleHook();
+            TrySetVirtualRecoveryLatch($"Paddle capture failed: {ex.Message}");
+            _virtualBackend?.EmergencyStop();
+            throw new InvalidOperationException("F11/F12 paddle capture could not start; virtual remapping was stopped.", ex);
+        }
+    }
+
+    private void StopPaddleHook()
+    {
+        var hook = Interlocked.Exchange(ref _paddleHook, null);
+        if (hook is null) return;
+        hook.PaddleStateChanged -= PaddleStateChanged;
+        hook.Faulted -= PaddleHookFaulted;
+        TryCleanup(hook.Dispose);
+    }
+
+    private void PaddleStateChanged(object? sender, RearPaddleKeyTransition transition)
+    {
+        _virtualBackend?.SetPaddleState(transition.Paddle, transition.IsDown);
+    }
+
+    private void PaddleHookFaulted(object? sender, PaddleHookFaultEventArgs args)
+    {
+        var reason = $"Paddle capture fault: {args.Exception.Message}";
+        SignalVirtualSafetyEvent(reason);
+        _virtualBackend?.EmergencyStop();
+        _ = DispatchAsync(() => EmergencyStopVirtualControllerAsync(reason));
+    }
+
+    private void VirtualControllerFaulted(object? sender, PaddleHookFaultEventArgs args)
+    {
+        if (sender is not VirtualControllerBackend backend || !ReferenceEquals(backend, _virtualBackend)) return;
+        var reason = $"Virtual controller fault: {args.Exception.Message}";
+        SignalVirtualSafetyEvent(reason);
+        backend.EmergencyStop();
+        _ = DispatchAsync(() => EmergencyStopVirtualControllerAsync(reason));
+    }
+
+    private bool TrySetVirtualRecoveryLatch(string reason)
+    {
+        lock (_virtualSafetyGate) return _virtualRecoveryLatch.TrySet(reason);
+    }
+
+    private void SignalVirtualSafetyEvent(string reason)
+    {
+        lock (_virtualSafetyGate)
+        {
+            _virtualSafetyPending = 1;
+            _virtualRecoveryLatch.TrySet(reason);
+        }
+    }
+
+    private bool TryClearVirtualRecoveryLatchAfterEnable()
+    {
+        lock (_virtualSafetyGate)
+        {
+            if (_virtualSafetyPending != 0) return false;
+            _virtualRecoveryLatch.Clear();
+            return true;
+        }
+    }
+
+    private async Task EmergencyStopVirtualControllerAsync(string reason)
+    {
+        SignalVirtualSafetyEvent(reason);
+        if (Interlocked.Exchange(ref _emergencyStopInProgress, 1) != 0) return;
+        _virtualBackend?.EmergencyStop();
+        await _operationGate.WaitAsync();
+        try
+        {
+            _cycle.Cancel();
+            lock (_recoveryGestureGate)
+            {
+                _recoveryGesture.Reset();
+                _recoveryInputReserved = false;
+            }
+            StopPaddleHook();
+            if (_virtualBackend is not null)
+            {
+                _virtualBackend.Faulted -= VirtualControllerFaulted;
+                await _virtualBackend.EmergencyStopAsync();
+            }
+
+            Configuration = Configuration with
+            {
+                EnableVirtualControllerRemapping = false,
+                ActiveProfileId = MappingProfile.Default.Id,
+            };
+            await _profileStore.SaveAsync(Configuration);
+            var status = await ReplaceBackendAsync(
+                enableRearButtons: false,
+                enableVirtualController: false,
+                pinnedPhysicalIndex: null,
+                restoreCurrent: false);
+            _mainWindow.Load(Configuration, MappingProfile.Default.Id);
+            _mainWindow.SetBackendStatus(status);
+            _mainWindow.SetStatus($"{reason}: virtual output stopped; the physical controller remains available.");
+            _overlay.ShowResult("Emergency bypass", "Virtual output off · physical controller available");
+        }
+        catch (Exception ex)
+        {
+            _mainWindow.SetStatus($"{reason}: emergency cleanup reported an error, but no physical controller hiding was active. {ex.Message}");
+            _overlay.ShowResult("Emergency bypass", "Physical controller was never hidden");
+        }
+        finally
+        {
+            _operationGate.Release();
+            lock (_virtualSafetyGate) _virtualSafetyPending = 0;
+            Interlocked.Exchange(ref _emergencyStopInProgress, 0);
+        }
     }
 
     private static bool HasRearRemap(MappingProfile profile) =>
@@ -1438,7 +1862,7 @@ public partial class App : System.Windows.Application
                 // set if the native reset was not confirmed.
             }
 
-            TryCleanup(() => _panicHotKey?.Dispose());
+            StopPaddleHook();
             TryCleanup(() => _updateService?.Dispose());
             TryCleanup(() => _controllerMonitor.Dispose());
             TryCleanup(() => _trayIcon.Visible = false);
@@ -1490,7 +1914,7 @@ public partial class App : System.Windows.Application
         TryCleanup(() => _trayIcon?.Dispose());
         TryCleanup(() => _updateService?.Dispose());
         TryCleanup(() => _controllerMonitor?.Dispose());
-        TryCleanup(() => _panicHotKey?.Dispose());
+        StopPaddleHook();
         StopActivationListener();
         TryCleanup(() => _executableIntegrityLock?.Dispose());
         _executableIntegrityLock = null;
@@ -1500,6 +1924,10 @@ public partial class App : System.Windows.Application
 
     private void RestoreAndDisposeForTermination()
     {
+        // Virtual teardown is process-local and never performs an ASUS HID write,
+        // so it must not be skipped by the native-capture safety barrier.
+        StopPaddleHook();
+        _virtualBackend?.EmergencyStop();
         if (_armouryCaptureInProgress || _armouryCaptureTeardownUnconfirmed)
         {
             // Never overlap a possibly-live elevated ETW session with backend writes.

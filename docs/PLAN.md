@@ -22,7 +22,7 @@ A lightweight Windows tray application that lets Daniel rotate named controller 
 - [x] ASUS feature-report backend implemented behind closed custom/recovery validation gates; no M1/M2 write is enabled before physical capture analysis.
 - [x] Integrated Windows USB ETW Armoury logger with bounded in-memory candidate filtering, action markers, hashes and privacy-minimised review bundle; no external driver/tool and no unlock/recovery authority before physical schema validation.
 - [x] WPF profile/shortcut editor, tray mode and opt-in sign-in startup.
-- [x] Ctrl+Alt+F12 panic/default shortcut.
+- [x] Immutable controller-only emergency bypass: fixed View + Menu hold, then a newly pressed LT hold.
 - [x] Redacted diagnostics export.
 - [x] Digest-verified GitHub updater with hardened extraction, atomic replacement, explicit startup-health handshake and rollback.
 - [x] Linux/macOS core tests plus Windows build/test/package CI.
@@ -36,6 +36,7 @@ A lightweight Windows tray application that lets Daniel rotate named controller 
 - [ ] Inventory actual Ally X input/HID/XInput topology.
 - [x] Establish rear-paddle behavior: firmware-managed, not exposed as independent XInput buttons; configurable via ASUS HID mapping zone.
 - [x] Build the minimal F11/F12 → temporary ViGEm output probe without installing or configuring a driver.
+- [x] Build the complete physical-XInput → mapped virtual-Xbox runtime with F12/F11 paddle overlays and pinned physical slot.
 - [ ] Decide whether coexistence works or HidHide is actually required, with acceptable maintenance, signing and licence posture.
 - [ ] Prove exactly one controller reaches Remote Play.
 - [ ] Prove Command Centre and Armoury remain functional.
@@ -64,7 +65,7 @@ Required runtime sequence:
 4. Avoid a filter entirely if physical+virtual coexistence works.
 5. If a filter is required, whitelist/read first and hide only after output health is green.
 6. Feed the proven input path through the pure mapping engine.
-7. On panic/shutdown/fault, release output and unhide/fail open.
+7. On recovery/shutdown/fault, release and disconnect virtual output. The validation build never hides the physical controller.
 
 ## Packaging and on-device validation
 
@@ -73,7 +74,7 @@ Required runtime sequence:
 3. Verify View + Menu and a temporary A + B chord in a controller test page, not a game.
 4. Verify profile JSON recovery by testing a copy, never the only config.
 5. Enable sign-in startup and confirm it can be disabled from the UI.
-6. Run the hardware matrix before integrating any driver/backend.
+6. Run the hardware matrix before promoting the compatibility-gated virtual backend beyond validation status.
 7. Record Windows, Armoury, firmware and backend versions with results.
 
 ## Non-goals
@@ -92,4 +93,4 @@ A clean CI checkout builds a downloadable Windows app and a separate software-on
 
 ### Remapping release
 
-During Xbox Remote Play, selecting a named profile produces exactly the chosen controller layout with no duplicate input; Default/panic, Command Centre, sleep/reconnect, app failure and uninstall all return to a usable controller state.
+During Xbox Remote Play, selecting a named profile produces exactly the chosen controller layout with no duplicate input; Default/fixed controller-only emergency recovery, Command Centre, sleep/reconnect, app failure and uninstall all return to a usable controller state.

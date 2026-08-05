@@ -44,6 +44,7 @@ Xbox Remote Play presents multiple streamed games through the same Windows proce
 2. Release and repeat the chord to rotate through enabled profiles.
 3. Pause for 900 ms to commit the displayed profile.
 4. Keep the chord held and press **RT** to open the editor.
+5. Emergency bypass is fixed and cannot be customised: hold **View + Menu** for 750 ms, then newly press and hold **LT** for 1.25 seconds.
 
 The chord and timings are configurable. The app can remain in the notification area and start automatically when you sign in.
 
@@ -59,26 +60,27 @@ The chord and timings are configurable. The app can remain in the notification a
 | Tray mode and sign-in startup | **Working** |
 | Reopening the running startup/tray instance | **Working** |
 | Branded application and notification-area icon | **Working** |
-| Panic/default shortcut (`Ctrl+Alt+F12`) | **Working** |
+| Controller-only emergency bypass | **Built; fixed View + Menu hold, then LT hold; physical validation required** |
 | Automatic and manual update checks | **Working** |
 | Verified GitHub Releases updater with rollback | **Working** |
 | Read-only ASUS report `0x5A` snapshot | **Working; physical validation required and zero write authority** |
 | Self-contained Armoury HID write tap | **Diagnostic preview; explicit UAC/consent, ASUS-process-only, zero write authority** |
 | USB ETW Armoury M1/M2 protocol capture | **Working; retained as deeper diagnostic fallback and write-locked** |
 | F11/F12 software-input capture and evidence bundle | **Working; packaged diagnostic** |
-| Temporary F12→A / F11→B virtual-controller bridge | **Working when ViGEmBus is already installed; physical validation required** |
-| Standard XInput remapping | **Preview only** |
+| Temporary F12→A / F11→B virtual-controller bridge | **Working diagnostic when ViGEmBus is already installed** |
+| Complete physical-XInput → mapped virtual-Xbox mirror | **Built; physical coexistence validation required** |
+| Standard XInput and M1/M2 profile remapping | **Built; physical coexistence validation required** |
 | ASUS M1/M2 controller-setting writes | **Disabled pending physical validation** |
 | Physical-device hiding | **Not implemented** |
 
-Selecting a profile currently updates Ally Bindings' state and UX. It does **not** yet claim that transformed standard-button input reached Remote Play.
+With virtual remapping disabled, selecting a profile updates only Ally Bindings' state and UX. With it enabled, the app emits a complete mapped virtual Xbox controller, but does **not** claim Remote Play compatibility until the physical coexistence matrix passes on the Ally.
 
 ## Requirements
 
 - Windows 11 x64. Windows 10 2004+ is the build target, but the physical validation target is Windows 11 on the ROG Xbox Ally X.
 - An XInput-compatible controller; the built-in Ally X controller is the intended target.
 - No administrator rights for normal launch.
-- The software probe installs nothing. Its optional bridge requires an existing healthy ViGEmBus installation; otherwise capability inspection and F11/F12 capture still work.
+- Virtual remapping requires an existing healthy ViGEmBus installation. Ally Bindings never installs or updates the retired upstream driver; this remains a compatibility-gated validation backend pending a maintained replacement assessment.
 - Optional protocol capture enumerates running processes matching nine exact allowlisted ASUS Armoury executable names. With explicit disclosure and one-time UAC, it may temporarily inject an embedded capture-only DLL into every verified candidate; capture is rejected if more than twelve candidates pass verification. It installs no driver or separate application, unloads/deletes the DLL at teardown, and offers Windows USB ETW only as an explicitly accepted fallback when safe injection is unavailable.
 
 ## Install
@@ -106,6 +108,12 @@ For unreleased testing, open the latest successful [Build workflow](https://gith
 5. Test profile rotation with the default **View + Menu** chord.
 6. Optionally enable **Run in the tray when I sign in**.
 
+For the unreleased full-mirror validation only: assign **M1→F12** and **M2→F11** in Armoury using its on-screen keyboard, clear secondary assignments, then enable **full virtual-controller remapping**. No physical keyboard is needed; Ally Bindings captures those key codes only because Armoury emits them from the paddles.
+
+Run the complete on-device gate in [`docs/FULL-VIRTUAL-CONTROLLER-VALIDATION.md`](docs/FULL-VIRTUAL-CONTROLLER-VALIDATION.md). If Edge sees duplicate controllers, stop there—do not configure persistent HidHide as a shortcut.
+
+Release CI refuses to publish this backend until reviewed physical-test evidence is committed in the required approval-file format. Releases provide the ZIP package only so all applicable dependency notices stay with the executable.
+
 Configuration is stored at:
 
 ```text
@@ -121,6 +129,7 @@ Writes are atomic, the previous valid configuration is backed up, and malformed 
 - Stop for 900 ms to commit the displayed item.
 - To open the editor, keep **View + Menu held** after the hold threshold and press **RT**. RT must rise after the chord is armed; an already-held trigger does nothing.
 - If the controller disconnects before commit, the pending selection is cancelled.
+- Emergency bypass is independent of the configurable shortcut: hold **View + Menu** for 750 ms, then newly press and hold **LT** for 1.25 seconds. This disconnects virtual output, disables virtual remapping, selects Default and leaves the physical controller available.
 
 Face-button-only chords such as `A + B` are supported but discouraged while the app is in preview mode because observed inputs are not swallowed and may reach the streamed game.
 
@@ -192,7 +201,8 @@ The updater protects against corruption and mismatched downloads. Until releases
 - No driver is installed or updated by Ally Bindings.
 - The software probe never opens an ASUS HID interface and retains only F11/F12 transitions.
 - The permanent Default profile cannot be edited or deleted.
-- `Ctrl+Alt+F12` provides a keyboard recovery/default path.
+- Recovery is controller-only and independent of the configurable profile chord.
+- The physical controller is never hidden in this validation build, so app/ViGEm/hook failure leaves physical input available.
 - The current build sends no custom or recovery ASUS M1/M2 report.
 - Read-only snapshots fail closed on unsupported model, interface ambiguity, target-identity changes or out-of-bounds report lengths; they use no elevation or system-wide trace and have zero write authority.
 - USB ETW capture fails closed on device ambiguity, unavailable providers, dropped events or target-identity changes; no raw system-wide trace is written.

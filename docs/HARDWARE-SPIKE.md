@@ -162,7 +162,7 @@ Prefer a supported Windows API/driver path if it can meet the same safety proper
 6. run first with the physical controller disabled through ASUS Command Centre, then test coexistence;
 7. journal every transition/checkpoint and finalize a deterministic evidence bundle.
 
-It deliberately does not implement `IControllerBackend` yet. Integration waits until the physical Remote Play evidence chooses the topology.
+The timed probe deliberately remains separate from `IControllerBackend`. A compatibility-gated full-mirror backend is now integrated for validation, but promotion still waits for the physical Remote Play evidence to approve the topology.
 
 ## Test matrix
 

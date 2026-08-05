@@ -25,5 +25,6 @@
     <PackageReference Include="Microsoft.Diagnostics.Tracing.TraceEvent" Version="3.2.5" />
     <ProjectReference Include="..\AllyBindings.Core\AllyBindings.Core.csproj" />
     <PackageReference Include="HidSharp" Version="2.6.4" />
+    <PackageReference Include="Nefarius.ViGEm.Client" Version="1.21.256" />
   </ItemGroup>
 </Project>

@@ -63,6 +63,7 @@ public sealed class ConfigurationValidatorTests
     [Theory]
     [InlineData(1)]
     [InlineData(2)]
+    [InlineData(3)]
     public void Older_configuration_upgrades_and_preserves_rear_backend_opt_in_default(int schemaVersion)
     {
         var result = ConfigurationValidator.Normalize(AppConfiguration.CreateDefault() with { SchemaVersion = schemaVersion });
@@ -70,6 +71,7 @@ public sealed class ConfigurationValidatorTests
         Assert.Equal(ConfigurationValidator.CurrentSchemaVersion, result.Configuration.SchemaVersion);
         Assert.True(result.Configuration.CheckForUpdatesAutomatically);
         Assert.False(result.Configuration.EnableAsusRearButtonMappings);
+        Assert.False(result.Configuration.EnableVirtualControllerRemapping);
     }
 
     [Fact]
@@ -138,5 +140,19 @@ public sealed class ConfigurationValidatorTests
         });
 
         Assert.True(result.Configuration.AsusRearButtonMappingActive);
+    }
+
+    [Fact]
+    public void Virtual_controller_wins_over_locked_asus_hardware_mapping()
+    {
+        var result = ConfigurationValidator.Normalize(AppConfiguration.CreateDefault() with
+        {
+            EnableVirtualControllerRemapping = true,
+            EnableAsusRearButtonMappings = true,
+        });
+
+        Assert.True(result.Configuration.EnableVirtualControllerRemapping);
+        Assert.False(result.Configuration.EnableAsusRearButtonMappings);
+        Assert.Contains(result.Warnings, warning => warning.Contains("mutually exclusive", StringComparison.OrdinalIgnoreCase));
     }
 }

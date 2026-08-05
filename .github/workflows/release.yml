@@ -29,6 +29,14 @@ jobs:
       - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6
         with:
           dotnet-version: 8.0.x
+      - name: Verify source formatting
+        run: |
+          dotnet restore AllyBindings.sln
+          dotnet format AllyBindings.sln --verify-no-changes --no-restore
+      - name: Audit Windows dependency health
+        run: |
+          dotnet list src/AllyBindings.Windows/AllyBindings.Windows.csproj package --vulnerable --include-transitive
+          dotnet list src/AllyBindings.Windows/AllyBindings.Windows.csproj package --deprecated --include-transitive
       - name: Verify tag matches application version
         shell: pwsh
         run: |
@@ -74,6 +82,12 @@ jobs:
       - name: Assert controller-first UI and capture discoverability
         shell: pwsh
         run: ./scripts/test-controller-ui.ps1
+      - name: Assert full virtual-controller fail-open and recovery contract
+        shell: pwsh
+        run: ./scripts/test-full-virtual-controller-safety.ps1
+      - name: Require approved physical Ally validation evidence
+        shell: pwsh
+        run: ./scripts/assert-full-virtual-controller-release-approved.ps1 -ReleaseCommit $env:GITHUB_SHA
       - name: Exercise WPF touch surfaces and visual mapping workflow
         shell: pwsh
         run: ./scripts/test-ui-automation.ps1
@@ -109,13 +123,9 @@ jobs:
         run: |
           $tag = $env:GITHUB_REF_NAME
           Copy-Item artifacts/AllyBindings-win-x64.zip "artifacts/AllyBindings-$tag-win-x64.zip"
-          Copy-Item artifacts/AllyBindings-win-x64/AllyBindings.exe "artifacts/AllyBindings-$tag-win-x64.exe"
           Get-FileHash "artifacts/AllyBindings-$tag-win-x64.zip" -Algorithm SHA256 |
             ForEach-Object { "$($_.Hash.ToLower())  AllyBindings-$tag-win-x64.zip" } |
             Set-Content "artifacts/AllyBindings-$tag-win-x64.zip.sha256" -NoNewline
-          Get-FileHash "artifacts/AllyBindings-$tag-win-x64.exe" -Algorithm SHA256 |
-            ForEach-Object { "$($_.Hash.ToLower())  AllyBindings-$tag-win-x64.exe" } |
-            Set-Content "artifacts/AllyBindings-$tag-win-x64.exe.sha256" -NoNewline
           ./scripts/get-release-notes.ps1 -Tag $tag -OutputPath artifacts/release-notes.md
       - name: Create draft preview release
         shell: pwsh
@@ -131,9 +141,7 @@ jobs:
           }
           gh release create $tag --repo $env:GITHUB_REPOSITORY --draft --prerelease --title "Ally Bindings $tag — Preview" --notes-file artifacts/release-notes.md `
             "artifacts/AllyBindings-$tag-win-x64.zip#Recommended Windows x64 package" `
-            "artifacts/AllyBindings-$tag-win-x64.zip.sha256#Package SHA-256" `
-            "artifacts/AllyBindings-$tag-win-x64.exe#Standalone Windows x64 executable" `
-            "artifacts/AllyBindings-$tag-win-x64.exe.sha256#Standalone executable SHA-256"
+            "artifacts/AllyBindings-$tag-win-x64.zip.sha256#Package SHA-256"
       - name: Verify uploaded draft assets and publish
         id: publish
         shell: pwsh
@@ -146,8 +154,6 @@ jobs:
           gh release download $tag --repo $env:GITHUB_REPOSITORY --dir $verify
 
           $expectedNames = @(
-            "AllyBindings-$tag-win-x64.exe",
-            "AllyBindings-$tag-win-x64.exe.sha256",
             "AllyBindings-$tag-win-x64.zip",
             "AllyBindings-$tag-win-x64.zip.sha256"
           ) | Sort-Object
@@ -156,18 +162,15 @@ jobs:
             throw "Draft release asset allowlist mismatch: $($actualNames -join ', ')"
           }
 
-          foreach ($kind in @('zip', 'exe')) {
-            $asset = Join-Path $verify "AllyBindings-$tag-win-x64.$kind"
-            $hashFile = "$asset.sha256"
-            $expected = ((Get-Content -LiteralPath $hashFile -Raw).Trim() -split '\s+')[0]
-            $actual = (Get-FileHash -LiteralPath $asset -Algorithm SHA256).Hash.ToLowerInvariant()
-            if ($actual -cne $expected) { throw "Uploaded $kind hash mismatch: expected $expected, got $actual" }
-          }
+          $asset = Join-Path $verify "AllyBindings-$tag-win-x64.zip"
+          $hashFile = "$asset.sha256"
+          $expected = ((Get-Content -LiteralPath $hashFile -Raw).Trim() -split '\s+')[0]
+          $actual = (Get-FileHash -LiteralPath $asset -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($actual -cne $expected) { throw "Uploaded ZIP hash mismatch: expected $expected, got $actual" }
 
           $expanded = Join-Path $verify 'expanded'
           Expand-Archive -LiteralPath (Join-Path $verify "AllyBindings-$tag-win-x64.zip") -DestinationPath $expanded
           ./scripts/test-release-package.ps1 -PackageRoot $expanded -ZipPath (Join-Path $verify "AllyBindings-$tag-win-x64.zip")
-          ./scripts/test-version-metadata.ps1 -ExecutablePath (Join-Path $verify "AllyBindings-$tag-win-x64.exe")
           ./scripts/test-version-metadata.ps1 -ExecutablePath (Join-Path $expanded 'AllyBindings.exe')
 
           $release = gh release view $tag --repo $env:GITHUB_REPOSITORY --json tagName,name,isDraft,isPrerelease | ConvertFrom-Json
@@ -182,8 +185,6 @@ jobs:
             New-Item -ItemType Directory -Force -Path $publicVerify | Out-Null
             gh release download $tag --repo $env:GITHUB_REPOSITORY --dir $publicVerify
           $expectedNames = @(
-            "AllyBindings-$tag-win-x64.exe",
-            "AllyBindings-$tag-win-x64.exe.sha256",
             "AllyBindings-$tag-win-x64.zip",
             "AllyBindings-$tag-win-x64.zip.sha256"
           ) | Sort-Object
@@ -191,16 +192,13 @@ jobs:
           if (($actualNames -join "`n") -cne ($expectedNames -join "`n")) {
             throw "Published release asset allowlist mismatch: $($actualNames -join ', ')"
           }
-          foreach ($kind in @('zip', 'exe')) {
-            $asset = Join-Path $publicVerify "AllyBindings-$tag-win-x64.$kind"
-            $expected = (((Get-Content -LiteralPath "$asset.sha256" -Raw).Trim()) -split '\s+')[0]
-            $actual = (Get-FileHash -LiteralPath $asset -Algorithm SHA256).Hash.ToLowerInvariant()
-            if ($actual -cne $expected) { throw "Published $kind hash mismatch: expected $expected, got $actual" }
-          }
+          $asset = Join-Path $publicVerify "AllyBindings-$tag-win-x64.zip"
+          $expected = (((Get-Content -LiteralPath "$asset.sha256" -Raw).Trim()) -split '\s+')[0]
+          $actual = (Get-FileHash -LiteralPath $asset -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($actual -cne $expected) { throw "Published ZIP hash mismatch: expected $expected, got $actual" }
           $publicExpanded = Join-Path $publicVerify 'expanded'
           Expand-Archive -LiteralPath (Join-Path $publicVerify "AllyBindings-$tag-win-x64.zip") -DestinationPath $publicExpanded
           ./scripts/test-release-package.ps1 -PackageRoot $publicExpanded -ZipPath (Join-Path $publicVerify "AllyBindings-$tag-win-x64.zip")
-          ./scripts/test-version-metadata.ps1 -ExecutablePath (Join-Path $publicVerify "AllyBindings-$tag-win-x64.exe")
           ./scripts/test-version-metadata.ps1 -ExecutablePath (Join-Path $publicExpanded 'AllyBindings.exe')
           $published = gh release view $tag --repo $env:GITHUB_REPOSITORY --json tagName,name,isDraft,isPrerelease | ConvertFrom-Json
           if ($published.tagName -cne $tag -or $published.name -cne "Ally Bindings $tag — Preview" -or

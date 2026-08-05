@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "approved": false,
+  "testedCommit": "0000000000000000000000000000000000000000",
+  "testedAtUtc": "YYYY-MM-DDTHH:MM:SSZ",
+  "tester": "",
+  "deviceModel": "ROG Xbox Ally X",
+  "windowsVersion": "",
+  "armouryVersion": "",
+  "firmwareVersion": "",
+  "edgeVersion": "",
+  "evidenceBundleSha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "verdicts": {
+    "fullMirror": "FAIL",
+    "paddleOverlay": "FAIL",
+    "controllerOnlyRecovery": "FAIL",
+    "edgeSingleControllerCoexistence": "FAIL",
+    "commandCentreArmouryCompatibility": "FAIL",
+    "safeWithoutHidHide": "NO"
+  }
+}

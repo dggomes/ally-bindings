@@ -8,6 +8,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Thi
 
 ### Added
 
+- Add an opt-in complete physical-XInput to virtual-Xbox mirror with standard-button, stick, trigger and M1/M2 profile transforms.
+- Add fixed controller-only emergency recovery: hold View + Menu, then newly press and hold LT to disconnect virtual output and return to Default.
+- Add pure realtime pipeline, rear-paddle overlay and recovery state-machine coverage.
 - Add the standalone `AllyBindings.M1M2Probe` software diagnostic with bounded F11/F12 capture/suppression, XInput slot inventory, read-only ViGEmBus/HidHide service detection, and an explicit timed F12→A/F11→B virtual Xbox bridge.
 - Add a dedicated `AllyBindings.SoftwareProbe.Core` assembly for the privacy-bounded session model, atomic journal, named physical checkpoints, manifest and hashed evidence ZIP.
 - Add a guided PowerShell operator menu and complete Armoury/Remote Play/cold-boot/restoration runbook.
@@ -15,6 +18,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Thi
 
 ### Changed
 
+- Pin the physical XInput slot before ViGEm connects, globally intercept non-injected F11/F12 while virtual remapping is active, and fail open without hiding the physical controller.
 - Make the software-first F12/F11 path the next physical product gate and park further passive Armoury-capture work by default.
 - Keep Armoury as the sole authority for the one-time paddle assignment and final restoration; the probe performs no ASUS firmware operation.
 - Remove the unusable `SendInput` assignment helper after physical Armoury validation proved assignments are selected only through Armoury's virtual keyboard.

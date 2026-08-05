@@ -2,7 +2,7 @@
 
 ## Product boundary
 
-Ally Bindings is a local controller-mapping selector for the case where multiple streamed Xbox titles share one Windows Remote Play process. It does not modify Armoury Crate records or infer the game inside the video stream. M1/M2 firmware writes remain behind closed source-level validation gates. Passive protocol capture is retained only as a deeper diagnostic. Product proof now follows a software-first path: Armoury creates vendor-supported F12/F11 paddle assignments once, then a separate probe measures and temporarily bridges those inputs without opening an ASUS HID interface.
+Ally Bindings is a local controller-mapping selector for the case where multiple streamed Xbox titles share one Windows Remote Play process. It does not modify Armoury Crate records or infer the game inside the video stream. M1/M2 firmware writes remain behind closed source-level validation gates. Passive protocol capture is retained only as a deeper diagnostic. Product proof follows a software-first path: Armoury creates vendor-supported F12/F11 paddle assignments once, then Ally Bindings globally suppresses non-injected F12/F11 and interprets them locally. `WH_KEYBOARD_LL` cannot attribute those events to a device, so physical keyboard F11/F12 are unavailable while remapping is active and Armoury's injection flags remain a physical gate.
 
 ## Runtime shape
 
@@ -12,8 +12,10 @@ XInput controller
       ▼
 ┌─────────────────────────┐
 │ Windows host            │
-│ XInput monitor          │
+│ pinned XInput monitor   │
+│ F12/F11 paddle hook     │
 │ chord recognizer        │
+│ fixed recovery gesture  │
 │ controller UI router    │
 │ tray / WPF main window  │
 │ non-activating overlay  │
@@ -31,6 +33,7 @@ XInput controller
 ┌─────────────────────────┐
 │ Controller backend      │
 │ Preview (implemented)   │
+│ Full ViGEm mirror       │
 │ ASUS M1/M2 (locked)     │
 │ Physical/virtual (gate) │
 └─────────────────────────┘
@@ -49,6 +52,7 @@ Cross-platform .NET 8 library with no Windows UI dependency:
 - Pure mapping transform.
 - Backend health/apply contract.
 - Deterministic controller-chord carousel state machine.
+- Pure rear-paddle overlay, complete realtime mapping pipeline and immutable controller-only recovery state machine.
 - PII/input-history-free diagnostics projection.
 
 ### `AllyBindings.Windows`
@@ -65,7 +69,8 @@ Windows 10 2004+ WPF host:
 - Controller-aware binding-picker, profile-keyboard and decision-dialog layers; only Windows UAC and fatal pre-UI startup failures remain system-owned.
 - Integrated, temporarily elevated Windows USB ETW logger with an in-memory exact-prefix filter for Armoury M1/M2 feature reports.
 - Positively gated ASUS HID adapter whose custom and reset writes are source-disabled pending capture analysis.
-- Branded tray/executable icon, startup registration and Ctrl+Alt+F12 panic/default hotkey.
+- Complete ViGEm Xbox mirror with physical-slot pinning, F12→M1/F11→M2 capture, profile overlays and fault-driven virtual disconnect.
+- Branded tray/executable icon, startup registration and immutable controller-only emergency bypass.
 - A `CurrentUserOnly` local named-pipe activation channel: a normal second launch asks the existing sign-in-started tray process to reveal its window instead of opening a duplicate process.
 - Profile/shortcut editor and truthful backend state.
 
@@ -89,15 +94,16 @@ Separate Windows console diagnostic:
 
 ## Profile format
 
-The canonical path is `%LOCALAPPDATA%\AllyBindings\config.json`. The entire user state is one schema-versioned document so profile and shortcut changes commit together.
+The canonical path is `%LOCALAPPDATA%\AllyBindings\config.json`. The entire user state is one schema-versioned document so profile and shortcut changes commit together. Controller recovery and virtual startup faults also create `%LOCALAPPDATA%\AllyBindings\virtual-remapping-disabled`; startup checks this durable fail-safe before creating ViGEm output, and only a later explicit successful enable/save transaction clears it.
 
 ```json
 {
-  "schemaVersion": 3,
+  "schemaVersion": 4,
   "activeProfileId": "elden-ring",
   "controllerIndex": null,
   "runAtStartup": true,
   "enableAsusRearButtonMappings": false,
+  "enableVirtualControllerRemapping": false,
   "asusRearButtonMappingActive": false,
   "shortcut": {
     "buttons": ["View", "Menu"],
@@ -140,7 +146,7 @@ public interface IControllerBackend : IAsyncDisposable
 }
 ```
 
-Backend results distinguish a selected app profile from a mapping physically applied to controller output. The preview backend always keeps physical passthrough intact and returns `CommandAccepted = false`. In the capture-only build, `ArmouryProtocolValidation` prevents the Windows host from constructing a write-capable ASUS backend, and the backend independently rejects custom/reset operations by default.
+Backend results distinguish a selected app profile from output actually submitted. The preview backend keeps physical passthrough intact and returns `CommandAccepted = false`. The virtual backend mirrors the complete pinned physical XInput report, applies the pure mapping pipeline, overlays paddle state and submits one complete virtual Xbox report. `ArmouryProtocolValidation` still prevents construction of a write-capable ASUS backend.
 
 ### ASUS rear-button protocol boundary
 
@@ -148,7 +154,7 @@ Backend results distinguish a selected app profile from a mapping physically app
 - Positive HID gate: ASUS VID `0x0B05`, corroborated Ally embedded-controller PID `0x1ABE`/`0x1B4C`, openable interface, feature report `0x5A` whose own descriptor length is at least 50 bytes. PID `0x1B6E` is explicitly rejected as ProArt PZ13 hardware.
 - Mapping command: report `0x5A`, command `0xD1`, zone `0x08`.
 - Custom mapping reports populate only the requested primary paddle actions and explicitly clear both 11-byte secondary slots. The known native/default reset packet remains byte-for-byte unchanged.
-- `CustomWritesApproved` and `RecoveryWritesApproved` are both `false`; profile, panic, exit and stale-marker paths therefore send no ASUS report.
+- `CustomWritesApproved` and `RecoveryWritesApproved` are both `false`; profile, fixed controller-only emergency recovery, exit and stale-marker paths therefore send no ASUS report.
 - Native reset authorization depends only on `RecoveryWritesApproved`; custom mappings require both validation gates so they cannot be enabled without an approved recovery path.
 - `IAsusRearButtonDevice.ReadFeatureReportAsync` is a distinct write-incapable seam. Its HidSharp implementation reads report `0x5A` from every positively identified compatible interface exactly once, uses descriptor-sized buffers bounded to 50–64 bytes, serializes access with the existing HID gate, times out after three seconds and never retries or falls back to a write.
 - `AsusFeatureReportSnapshotService` is an unelevated evidence plane with no dependency on ETW, helper IPC or the controller backend. It revalidates exact model/interface identity at all four stages, retains bounded bytes plus hashes, runs a pure diff/expected-vector analyzer, writes one three-file ZIP, and permanently labels the output diagnostic-only with zero hardware-unlock authority.
@@ -158,16 +164,16 @@ Backend results distinguish a selected app profile from a mapping physically app
 - Sequence matching is diagnostic only. Every capture remains review-required and cannot unlock writes or clear recovery state until physical Ally validation binds the Windows-build-specific ETW schema, selected interface, control-transfer setup packet and payload boundary.
 - Filtered report JSON is hashed and bundled locally. No raw ETL/PCAP is created. Missing providers, oversized/dropped events, device ambiguity and target-identity changes fail closed.
 - The helper uses a fixed ETW session name so a later run reclaims any logger orphaned by an uncatchable hard process termination; normal cancellation and parent disconnect stop cooperatively.
-- No physical controller is hidden by any current component. The software probe can create temporary virtual output only during an explicit timed bridge command and never makes it persistent.
+- No physical controller is hidden by any current component. The diagnostic software probe creates temporary output only during its timed bridge command; the separate opt-in full-mirror validation backend persists only while enabled and is guarded by physical-slot pinning plus the durable fail-open latch.
 
-A real backend must additionally stream normalized input through `MappingEngine`, produce exactly one virtual Xbox device and prove fail-open recovery. No physical-device hide action belongs in the generic UI/core layer.
+The validation backend streams normalized input through `MappingEngine` and produces one virtual Xbox device. Promotion still requires packaged Windows and physical proof of fail-open recovery and single-controller coexistence. No physical-device hide action belongs in the generic UI/core layer.
 
 ## Safety invariants
 
 1. Never hide a physical controller before a healthy output device exists.
 2. Never claim a profile was applied when only app state changed.
 3. `Default` always exists and cannot carry remaps.
-4. Ctrl+Alt+F12 does not depend on the controller chord/profile.
+4. Fixed View + Menu hold followed by a newly pressed LT hold does not depend on the configurable profile chord.
 5. Disconnect cancels uncommitted selections.
 6. Startup registration is per-user, opt-in and removable.
 7. Launching the app and explicit feature snapshots install no driver and require no elevation. Explicit Armoury tap or USB ETW capture requests one-time elevation for the same executable's temporary helper and installs nothing.
@@ -175,7 +181,8 @@ A real backend must additionally stream normalized input through `MappingEngine`
 9. No injection into games, Xbox, anti-cheat or arbitrary processes. The opt-in diagnostic tap may temporarily inject only its embedded capture DLL into exact allowlisted x64 ASUS-signed Armoury processes under trusted system install roots; it has zero write authority and must be positively unloaded before completion.
 10. No custom or recovery M1/M2 report can be emitted while either source-level validation gate is closed.
 11. The software-probe artifact must contain no ASUS HID write API, generic HID writer, driver installer or physical-device hiding primitive—even as a dormant dependency.
-12. Evidence captures only F11/F12 transitions, capability status and fixed-choice named checkpoints; free-form notes, arbitrary keyboard input, device paths, usernames, machine names and process lists are outside the schema.
+12. The full-mirror validation runtime pins the live physical XInput monitor before ViGEm connects and never hides the physical controller. A dedicated non-WPF XInput safety poll recognizes recovery independently of UI routing, persists the restart latch before touching the virtual backend, then attempts synchronous output disconnect; a failure also disables the opt-in.
+13. Evidence captures only F11/F12 transitions, capability status and fixed-choice named checkpoints; free-form notes, arbitrary keyboard input, device paths, usernames, machine names and process lists are outside the schema.
 
 ## Release gate
 
